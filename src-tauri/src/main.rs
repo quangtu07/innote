@@ -5,6 +5,7 @@ mod instance;
 mod live;
 mod models;
 mod moonshine;
+mod mp3;
 mod nemo;
 mod session_logic;
 mod soniox;
@@ -1029,6 +1030,51 @@ fn audio_path(may: State<May>, id: String) -> std::result::Result<String, String
         Err("Bản thu chưa được hoàn tất".into())
     }
 }
+
+#[tauri::command]
+async fn choose_audio_export_path(
+    app: tauri::AppHandle,
+    may: State<'_, May>,
+    id: String,
+) -> std::result::Result<Option<String>, String> {
+    let s = storage::load(&may.root, &id).map_err(err)?;
+    let folder = app.path().download_dir().map_err(err)?.join("Innote");
+    let name = export_filename(&s.title, "mp3");
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>> {
+        std::fs::create_dir_all(&folder)?;
+        Ok(rfd::FileDialog::new()
+            .set_directory(&folder)
+            .set_file_name(&name)
+            .add_filter("Âm thanh MP3", &["mp3"])
+            .save_file()
+            .map(|path| path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(err)
+}
+
+#[tauri::command]
+async fn export_audio(
+    may: State<'_, May>,
+    id: String,
+    path: String,
+) -> std::result::Result<String, String> {
+    let source = storage::session_dir(&may.root, &id)
+        .map_err(err)?
+        .join("recording.wav");
+    if !source.exists() {
+        return Err("Bản thu chưa được hoàn tất".into());
+    }
+    let mut output = PathBuf::from(path);
+    output.set_extension("mp3");
+    tauri::async_runtime::spawn_blocking(move || -> std::result::Result<String, String> {
+        mp3::encode(&source, &output).map_err(err)?;
+        Ok(output.to_string_lossy().into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 fn open_folder(may: State<May>) -> std::result::Result<(), String> {
     Command::new("explorer.exe")
@@ -1605,6 +1651,8 @@ fn main() {
             edit_session,
             choose_export_path,
             export_session,
+            choose_audio_export_path,
+            export_audio,
             open_exports_folder,
             open_author_link,
             audio_path,

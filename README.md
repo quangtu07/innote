@@ -9,7 +9,7 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 - Ghi đồng thời **âm thanh cuộc họp** (WASAPI loopback) và **micro**.
 - Chép lời local bằng Whisper large-v3-turbo cho Việt/Anh; Nemotron cho Việt/Anh/Hàn/Trung xen kẽ.
 - Chọn ngôn ngữ giao diện: Tiếng Việt, English, 한국어, 中文（简体）.
-- Nghe lại, sửa từng đoạn, ghi chú, tìm kiếm và xuất `.md`, `.txt`, `.srt`.
+- Nghe lại, sửa từng đoạn, ghi chú, tìm kiếm và xuất `.md`, `.txt`, `.srt`; tải thêm bản ghi âm `.mp3`.
 - Tự thông báo và cập nhật khi có bản mới qua GitHub Releases.
 - Dữ liệu lưu tại `%LOCALAPPDATA%\Innote`, không tự gửi lên cloud.
 - Soniox là lựa chọn tắt mặc định; nếu bật, audio phiên đó được gửi tới Soniox và có thể tính phí.
@@ -124,7 +124,7 @@ Hiện tại cảnh báo SmartScreen là hành vi bình thường của bản c�
 1. Chọn **Âm thanh cuộc họp** và/hoặc **Micro của bạn**. Nên dùng tai nghe để giảm vọng.
 2. Chọn ngôn ngữ nhận dạng. Với cuộc họp xen kẽ, chọn **Đa ngôn ngữ** và tải model Nemotron khoảng 742 MB một lần.
 3. Bấm **Bắt đầu ghi**. Chữ trực tiếp hiện khi đang nói; bản đã chốt được lưu trên máy.
-4. Kết thúc, nghe lại, sửa nếu cần, ghi chú và xuất file.
+4. Kết thúc, nghe lại, sửa nếu cần, ghi chú và xuất file. Có thể tải bản chép `.md`/`.txt`/`.srt` và bản ghi âm `.mp3`.
 5. File xuất mới nằm trong `Tải xuống\Innote`. File `.md`/`.txt` có phần liên hệ tác giả ở cuối.
 
 ## Yêu cầu và dung lượng

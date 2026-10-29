@@ -518,6 +518,25 @@
       }
     });
   }
+  async function exportAudio() {
+    if (!meeting) return;
+    const id = meeting.id;
+    await action(async () => {
+      const destination = await invoke<string | null>(
+        "choose_audio_export_path",
+        { id },
+      );
+      if (!destination) return;
+      const path = await invoke<string>("export_audio", {
+        id,
+        path: destination,
+      });
+      if (selected === id) {
+        lastExport = path;
+        notify(tr.notifyExportSaved);
+      }
+    });
+  }
   async function seek(seconds: number) {
     if (audio) {
       audio.currentTime = seconds;
@@ -1337,8 +1356,8 @@
               >{/if}
           </div>
           <div class="transcript-tools">
-            {#if meeting?.segments.length}<div class="export-controls compact">
-                <button
+            {#if meeting && (meeting.segments.length || audioUrl)}<div class="export-controls compact">
+                {#if meeting.segments.length}<button
                   class="button secondary small"
                   title={tr.exportMdTitle}
                   disabled={busy}
@@ -1349,12 +1368,16 @@
                   disabled={busy}
                   onclick={() => exportText("txt")}><Download size={14} /> {tr.exportTxt}</button
                 ><button
-                  class="text-button"
+                  class="button secondary small"
                   title={tr.exportSrtTitle}
-                  aria-label={tr.exportSrtTitle}
                   disabled={busy}
-                  onclick={() => exportText("srt")}>SRT</button
-                >
+                  onclick={() => exportText("srt")}><Download size={14} /> {tr.exportSrt}</button
+                >{/if}{#if audioUrl}<button
+                  class="button secondary small"
+                  title={tr.exportMp3Title}
+                  disabled={busy}
+                  onclick={() => exportAudio()}><Download size={14} /> {tr.exportMp3}</button
+                >{/if}
               </div>{/if}
             {#if meeting}<label class="inline-search"
                 ><Search size={15} /><input

@@ -1,6 +1,6 @@
 [package]
 name = "innote"
-version = "0.6.3"
+version = "0.6.4"
 description = "Innote — ghi chép cuộc họp trên máy của bạn"
 edition = "2021"
 default-run = "innote"
@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["net", "time", "macros", "rt", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 libloading = "0.8"
-windows = { version = "0.62", features = ["Win32_System_Performance", "Win32_System_Threading", "Win32_Security"] }
+windows = { version = "0.62", features = ["Win32_System_Performance", "Win32_System_Threading", "Win32_Security", "Win32_Media_MediaFoundation"] }
 rfd = "0.15"
 tauri-plugin-updater = "2"
 
