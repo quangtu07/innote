@@ -16,7 +16,7 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 
 ## Tải và cài đặt
 
-1. Mở trang **Releases** của repository.
+1. Mở trang **Releases**: [github.com/quangtu07/innote/releases](https://github.com/quangtu07/innote/releases).
 2. Tải `Innote-Setup-<version>.exe` (không tải riêng file `.exe` trần hoặc thư mục portable nếu muốn tự cập nhật).
 3. Chạy bộ cài, chọn thư mục cài và hoàn tất.
 4. Mở **Innote**, chọn ngôn ngữ giao diện ở lần chạy đầu.
@@ -50,7 +50,7 @@ Bản cài hiện chưa ký Authenticode, nên Windows có thể hiện SmartScr
 Cần Windows x64, Node.js 20+, Rust 1.90+, Visual Studio 2022 Build Tools (C++), CMake, Python 3 và `libclang.dll` (đặt `LIBCLANG_PATH`).
 
 ```powershell
-git clone https://github.com/OWNER/innote.git
+git clone https://github.com/quangtu07/innote.git
 cd innote
 npm ci
 python scripts/prepare-moonshine.py
