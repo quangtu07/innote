@@ -72,68 +72,56 @@ npm run package -- --bundles nsis
 Bộ cài NSIS nằm trong `src-tauri\target\release\bundle\nsis\`.
 ## Phát hành và tự cập nhật
 
-### 1. Trỏ updater về repository
+### 1. Tạo khóa ký (chỉ làm một lần)
 
-Sau khi tạo repository GitHub, chạy một lần:
-
-```powershell
-python scripts/configure-github.py --repo OWNER/innote
-```
-
-Lệnh này đổi endpoint trong `src-tauri/tauri.conf.json`; chạy **trước khi build** vì endpoint được nhúng vào app.
-
-```text
-https://github.com/OWNER/innote/releases/latest/download/latest.json
-```
-
-Repo và file release phải **public** để app có thể tải cập nhật mà không cần token.
-
-### 2. Tạo khóa ký và giữ bí mật
+Nếu chưa có khóa:
 
 ```powershell
 npm run tauri signer generate -- -w $env:USERPROFILE\.tauri\innote.key
 ```
 
-Public key đã được đưa vào `src-tauri/tauri.conf.json`. Private key và mật khẩu phải được sao lưu ngoài repo. **Mất private key hoặc mật khẩu thì người dùng đã cài sẽ không nhận được bản cập nhật tiếp theo.**
+Public key đã có trong `src-tauri/tauri.conf.json`. Sao lưu private key + mật khẩu ngoài repo. Mất khóa/mật khẩu thì người đã cài sẽ không nhận được cập nhật.
 
-Khi build bản phát hành:
-
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$env:USERPROFILE\.tauri\innote.key" -Raw)
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "mật-khẩu-của-bạn"
-npm run package -- --bundles nsis
-```
-
-Kết quả có file setup và signature trong thư mục bundle; đổi tên/copy sang tên phát hành nếu cần:
-
-- `Innote-Setup-<version>.exe`
-- `Innote-Setup-<version>.exe.sig`
-
-### 3. Tạo `latest.json`
+### 2. Build và tạo 3 file phát hành bằng một lệnh
 
 ```powershell
-python scripts/make-latest-json.py `
-  --repo OWNER/innote `
-  --version 0.6.2 `
-  --installer "src-tauri\target\release\bundle\nsis\Innote_0.6.2_x64-setup.exe" `
-  --signature "src-tauri\target\release\bundle\nsis\Innote_0.6.2_x64-setup.exe.sig" `
-  --notes "Mô tả thay đổi" `
-  --output "release\latest.json"
+.\scripts\release.ps1 `
+  -Repo USERNAME/innote `
+  -Version 0.6.2 `
+  -Notes "Innote 0.6.2: in-app update notifications and updater support."
 ```
 
-### 4. Tạo GitHub Release
+Script tự:
+
+- trỏ updater về `https://github.com/USERNAME/innote/releases/latest/download/latest.json`
+- build binary + NSIS
+- ký bằng `%USERPROFILE%\.tauri\innote.key`
+- tạo `release\Innote-Setup-0.6.2.exe`
+- tạo `release\Innote-Setup-0.6.2.exe.sig`
+- tạo `release\latest.json`
+
+Sau đó commit cấu hình endpoint:
+
+```powershell
+git add src-tauri\tauri.conf.json
+git commit -m "Configure GitHub updater endpoint"
+```
+
+### 3. Tạo GitHub Release
 
 Tạo tag `v0.6.2`, rồi upload đúng **3 file**:
 
-1. `Innote-Setup-0.6.2.exe`
-2. `Innote-Setup-0.6.2.exe.sig`
-3. `latest.json`
+1. `release\Innote-Setup-0.6.2.exe`
+2. `release\Innote-Setup-0.6.2.exe.sig`
+3. `release\latest.json`
 
 Không upload source/build folder vào release. Endpoint `releases/latest/download/latest.json` sẽ được app đọc ở lần kiểm tra sau.
 
 Trong app, sau khoảng 5 giây sẽ kiểm tra nền. Khi có bản mới, banner hiện **Đã có bản Innote x.y.z** với **Cập nhật ngay** / **Để sau**. Nút cập nhật bị chặn khi đang ghi âm, đang thu thử hoặc đang sửa bản chép.
 
 > **Quan trọng:** bản 0.6.1 chưa có updater. Người dùng đang cài 0.6.1 phải tải và cài 0.6.2 thủ công một lần; từ 0.6.2 trở đi mới nhận thông báo cập nhật.
+
+Người dùng cuối chỉ cần tải file `.exe`; không cần Python, Node, Git hay PowerShell.
 
 ## Giấy phép và bên thứ ba
 
