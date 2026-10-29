@@ -18,9 +18,9 @@ if (!(Test-Path -LiteralPath $PasswordPath)) { throw "Không thấy password: $P
 $configPath = Join-Path $project "src-tauri\tauri.conf.json"
 $packagePath = Join-Path $project "package.json"
 $cargoPath = Join-Path $project "src-tauri\Cargo.toml"
-$config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+$config = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
 $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
-$cargo = Get-Content -LiteralPath $cargoPath -Raw
+$cargo = [IO.File]::ReadAllText($cargoPath, [Text.Encoding]::UTF8)
 
 if ($config.version -ne $Version -or $package.version -ne $Version) {
   throw "Version chưa đồng bộ. Cần cùng $Version trong package.json, package-lock.json, Cargo.toml, Cargo.lock và tauri.conf.json."
@@ -32,19 +32,30 @@ if ($cargo -notmatch $cargoVersionPattern) {
 
 $endpoint = "https://github.com/$repo/releases/latest/download/latest.json"
 $config.plugins.updater.endpoints = @($endpoint)
-$config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $configPath -Encoding utf8
+$configJson = $config | ConvertTo-Json -Depth 20
+[IO.File]::WriteAllText($configPath, $configJson + "`n", (New-Object Text.UTF8Encoding($false)))
 
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -LiteralPath $KeyPath -Raw)
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ((Get-Content -LiteralPath $PasswordPath -Raw).Trim())
+
+function Invoke-NpmBuild([string[]]$Arguments) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & npm.cmd @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $old
+  }
+  if ($code -ne 0) { throw "npm.cmd $($Arguments -join ' ') thất bại (exit $code)." }
+}
 
 Push-Location $project
 try {
   . .\scripts\environment.ps1
   Write-Host "Đang build Innote $Version..." -ForegroundColor Cyan
-  & npm.cmd run package -- --no-bundle -- --locked
-  if ($LASTEXITCODE -ne 0) { throw "Build binary thất bại." }
-  & npm.cmd run tauri -- bundle --bundles nsis --ci --no-binary-patching
-  if ($LASTEXITCODE -ne 0) { throw "Đóng gói NSIS/sign thất bại." }
+  Invoke-NpmBuild @("run", "package", "--", "--no-bundle", "--", "--locked")
+  Invoke-NpmBuild @("run", "tauri", "--", "bundle", "--bundles", "nsis", "--ci", "--no-binary-patching")
 
   $bundle = Join-Path $project "src-tauri\target\release\bundle\nsis"
   $rawSetup = Get-ChildItem -LiteralPath $bundle -Filter "Innote_${Version}_x64-setup.exe" | Select-Object -First 1
@@ -71,7 +82,8 @@ try {
     }
   }
   $latest = Join-Path $releaseDir "latest.json"
-  $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $latest -Encoding utf8
+  $latestJson = $manifest | ConvertTo-Json -Depth 6
+  [IO.File]::WriteAllText($latest, $latestJson + "`n", (New-Object Text.UTF8Encoding($false)))
 
   Write-Host ""
   Write-Host "Xong. Upload 3 file này vào GitHub Release v${Version}:" -ForegroundColor Green

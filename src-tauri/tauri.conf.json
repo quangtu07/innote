@@ -1,71 +1,71 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Innote",
-  "version": "0.6.2",
-  "identifier": "vn.thukymay.desktop",
-  "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Innote",
-        "width": 1180,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 640
-      }
-    ],
-    "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; media-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost",
-      "assetProtocol": {
-        "enable": true,
-        "scope": [
-          "$LOCALDATA/Innote/sessions/**",
-          "$LOCALDATA/Thư ký Mây/sessions/**"
-        ]
-      }
-    }
-  },
-  "bundle": {
-    "active": true,
-    "createUpdaterArtifacts": true,
-    "targets": [
-      "nsis"
-    ],
-    "shortDescription": "Ghi chép cuộc họp Việt–Anh",
-    "category": "Productivity",
-    "resources": {
-      "resources/licenses/": "licenses/",
-      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
-      "resources/live-runtime/moonshine.dll": "moonshine.dll",
-      "resources/live-runtime/onnxruntime.dll": "onnxruntime.dll",
-      "resources/live-models/": "live-models/",
-      "resources/runtime/concrt140.dll": "concrt140.dll",
-      "resources/runtime/msvcp140_1.dll": "msvcp140_1.dll",
-      "resources/runtime/msvcp140_2.dll": "msvcp140_2.dll",
-      "resources/runtime/msvcp140_atomic_wait.dll": "msvcp140_atomic_wait.dll",
-      "resources/runtime/msvcp140_codecvt_ids.dll": "msvcp140_codecvt_ids.dll",
-      "resources/runtime/msvcp140.dll": "msvcp140.dll",
-      "resources/runtime/vccorlib140.dll": "vccorlib140.dll",
-      "resources/runtime/vcruntime140_1.dll": "vcruntime140_1.dll",
-      "resources/runtime/vcruntime140.dll": "vcruntime140.dll",
-      "resources/nemo-runtime/": "nemo-runtime/"
-    },
-    "icon": [
-      "icons/icon.ico"
-    ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFRTQwOEU3M0E4RTlEMUIKUldRYm5ZNDY1d2prWHJxSVRGYVQ3c3UvM0hrUWo4ZFVDTXFHOWpUMTNOQm1NaHZpNCsxSlVFMjMK",
-      "endpoints": [
-        "https://github.com/OWNER/innote/releases/latest/download/latest.json"
-      ]
-    }
-  }
+    "$schema":  "https://schema.tauri.app/config/2",
+    "productName":  "Innote",
+    "version":  "0.6.2",
+    "identifier":  "vn.thukymay.desktop",
+    "build":  {
+                  "beforeDevCommand":  "npm run dev",
+                  "devUrl":  "http://127.0.0.1:1420",
+                  "beforeBuildCommand":  "npm run build",
+                  "frontendDist":  "../dist"
+              },
+    "app":  {
+                "windows":  [
+                                {
+                                    "label":  "main",
+                                    "title":  "Innote",
+                                    "width":  1180,
+                                    "height":  800,
+                                    "minWidth":  900,
+                                    "minHeight":  640
+                                }
+                            ],
+                "security":  {
+                                 "csp":  "default-src \u0027self\u0027; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; img-src \u0027self\u0027 asset: http://asset.localhost data:; media-src \u0027self\u0027 asset: http://asset.localhost; connect-src ipc: http://ipc.localhost",
+                                 "assetProtocol":  {
+                                                       "enable":  true,
+                                                       "scope":  [
+                                                                     "/Innote/sessions/**",
+                                                                     "/Thư ký Mây/sessions/**"
+                                                                 ]
+                                                   }
+                             }
+            },
+    "bundle":  {
+                   "active":  true,
+                   "createUpdaterArtifacts":  true,
+                   "targets":  [
+                                   "nsis"
+                               ],
+                   "shortDescription":  "Ghi chép cuộc họp Việt–Anh",
+                   "category":  "Productivity",
+                   "resources":  {
+                                     "resources/licenses/":  "licenses/",
+                                     "../THIRD_PARTY_NOTICES.md":  "THIRD_PARTY_NOTICES.md",
+                                     "resources/live-runtime/moonshine.dll":  "moonshine.dll",
+                                     "resources/live-runtime/onnxruntime.dll":  "onnxruntime.dll",
+                                     "resources/live-models/":  "live-models/",
+                                     "resources/runtime/concrt140.dll":  "concrt140.dll",
+                                     "resources/runtime/msvcp140_1.dll":  "msvcp140_1.dll",
+                                     "resources/runtime/msvcp140_2.dll":  "msvcp140_2.dll",
+                                     "resources/runtime/msvcp140_atomic_wait.dll":  "msvcp140_atomic_wait.dll",
+                                     "resources/runtime/msvcp140_codecvt_ids.dll":  "msvcp140_codecvt_ids.dll",
+                                     "resources/runtime/msvcp140.dll":  "msvcp140.dll",
+                                     "resources/runtime/vccorlib140.dll":  "vccorlib140.dll",
+                                     "resources/runtime/vcruntime140_1.dll":  "vcruntime140_1.dll",
+                                     "resources/runtime/vcruntime140.dll":  "vcruntime140.dll",
+                                     "resources/nemo-runtime/":  "nemo-runtime/"
+                                 },
+                   "icon":  [
+                                "icons/icon.ico"
+                            ]
+               },
+    "plugins":  {
+                    "updater":  {
+                                    "pubkey":  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFRTQwOEU3M0E4RTlEMUIKUldRYm5ZNDY1d2prWHJxSVRGYVQ3c3UvM0hrUWo4ZFVDTXFHOWpUMTNOQm1NaHZpNCsxSlVFMjMK",
+                                    "endpoints":  [
+                                                      "https://github.com/quangtu07/innote/releases/latest/download/latest.json"
+                                                  ]
+                                }
+                }
 }

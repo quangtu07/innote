@@ -4,7 +4,7 @@
 - Build có `createUpdaterArtifacts`, public key ký, endpoint GitHub Releases; thêm script `configure-github.py` và `make-latest-json.py`.
 - Thêm **LICENSE PolyForm Noncommercial 1.0.0** (source-available, không phải OSI open source), README cài đặt/build/phát hành, `.gitignore` cho repo public.
 - Repo public chỉ cần source + README + LICENSE + THIRD_PARTY_NOTICES + CHANGELOG; model/runtime lớn, release, test-results và tài liệu nội bộ bị loại khỏi Git.
-- **46 Rust/43 UI/0 Svelte warning**; payload 673 tài nguyên. Installer 78.894.634 byte SHA `01a71a...`; exe 13.880.832 byte SHA `6730c6...`.
+- **46 Rust/43 UI/0 Svelte warning**; payload 673 tài nguyên. Installer 78.883.574 byte SHA `9dfbaf...`; exe 13.880.832 byte SHA `a3426e...`.
 - Bản 0.6.1 chưa có updater; người dùng 0.6.1 cần cài 0.6.2 thủ công một lần.
 
 # 0.6.1 — 29/10/2026 — đổi tên sản phẩm thành Innote
