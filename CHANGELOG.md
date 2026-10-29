@@ -1,10 +1,11 @@
-# 0.6.4 — 29/10/2026 — tải MP3 và SRT
+# 0.6.4 — 29/10/2026 — tải MP3, SRT và logo mới
 
 - Thêm nút **Tải .mp3** cho bản ghi âm của phiên; chuyển WAV PCM 16 kHz sang MP3 bằng Windows Media Foundation, không cần FFmpeg/Python.
 - Đưa nút **Tải .srt** về cùng kiểu với **Tải .md** và **Tải .txt**, có icon tải xuống.
 - Bổ sung nhãn MP3/SRT cho cả 4 ngôn ngữ giao diện.
+- Đổi logo mây cũ sang mark **trang ghi chú + waveform**; áp dụng cho sidebar, màn hình chọn ngôn ngữ, empty state, favicon, icon cửa sổ/taskbar và installer.
 - 47 Rust test pass (thêm test encode WAV → MP3); Svelte 0 lỗi/0 cảnh báo.
-- Installer 78.892.253 byte SHA `cc274e...df0a6`; exe 13.941.248 byte SHA `d18fc0...36544`; MP3 test 913.551 byte, đọc lại được 114,14 giây.
+- Installer 78.899.959 byte SHA `45862c...41305`; exe 13.941.248 byte SHA `1b2f0e...ecf14`; MP3 test 913.551 byte, đọc lại được 114,14 giây.
 
 # 0.6.3 — 29/10/2026 — bản thử nghiệm luồng tự cập nhật
 

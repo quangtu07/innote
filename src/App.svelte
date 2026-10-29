@@ -5,8 +5,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import type { Segment } from "./types";
+  import Logo from "./Logo.svelte";
   import {
-    Cloud,
     Plus,
     Search,
     Settings,
@@ -740,7 +740,7 @@
   <div class="language-gate">
     <section class="language-panel" aria-labelledby="language-title">
       <div class="language-brand">
-        <span class="brand-mark"><Cloud size={24} strokeWidth={1.8} /></span>
+        <span class="brand-mark"><Logo size={24} /></span>
         <div>
           <strong>Innote</strong>
           <small>{tr.appTagline}</small>
@@ -771,7 +771,7 @@
       class="brand"
       style="background:transparent;padding:0;text-align:left"
       onclick={newMeeting}
-      ><span class="brand-mark"><Cloud size={24} strokeWidth={1.8} /></span
+      ><span class="brand-mark"><Logo size={24} /></span
       ><span>Innote<span class="brand-sub">{tr.appTagline}</span></span
       ></button
     >
@@ -1452,7 +1452,7 @@
               {#if !showLive}
               <div class="empty-transcript">
                 <span class="empty-mark"
-                  ><Cloud size={38} strokeWidth={1.2} /></span
+                  ><Logo size={36} strokeWidth={2.8} /></span
                 >
                 <h3>{emptyHeading}</h3>
                 <p>{emptyDescription}</p>
