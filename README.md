@@ -207,6 +207,10 @@ Không. App tải model khi bạn chọn model lần đầu. Model không tự t
 
 Bộ cài hiện cài cho người dùng hiện tại, thường không cần admin. Nếu Windows/WebView2 yêu cầu nâng quyền, chỉ chấp nhận khi file đến từ Releases chính thức.
 
+### Sau khi cập nhật, shortcut vẫn hiện logo cũ?
+
+Windows có thể giữ icon cache của shortcut cũ. Hãy đóng Innote, unpin shortcut cũ, mở Innote từ Start menu rồi pin lại; hoặc restart Explorer. Việc này không ảnh hưởng dữ liệu hay phiên họp.
+
 ### Tôi tải nhầm file `.sig` hoặc `latest.json` thì sao?
 
 Hai file đó không phải bộ cài. `.sig` dùng cho updater, `latest.json` là manifest cập nhật. Hãy quay lại Releases và tải file `Innote-Setup-<version>.exe`.

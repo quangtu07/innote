@@ -1,3 +1,9 @@
+# 0.6.5 — 29/10/2026 — logo installer/uninstaller
+
+- Gán `installerIcon` và `uninstallerIcon` của NSIS sang logo mới, để file Setup và bộ gỡ cài cũng hiện **trang ghi chú + waveform**, không còn icon NSIS mặc định.
+- Không thay đổi app runtime, dữ liệu hay engine.
+- Installer 78.900.849 byte SHA `6f14a9...5b687e`; exe 13.941.248 byte SHA `32b61d...ab066`; đã kiểm tra icon installer và uninstaller.
+
 # 0.6.4 — 29/10/2026 — tải MP3, SRT và logo mới
 
 - Thêm nút **Tải .mp3** cho bản ghi âm của phiên; chuyển WAV PCM 16 kHz sang MP3 bằng Windows Media Foundation, không cần FFmpeg/Python.
