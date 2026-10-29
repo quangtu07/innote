@@ -80,7 +80,7 @@ Sau khi tạo repository GitHub, chạy một lần:
 python scripts/configure-github.py --repo OWNER/innote
 ```
 
-Lệnh này đổi endpoint trong `src-tauri/tauri.conf.json` thành:
+Lệnh này đổi endpoint trong `src-tauri/tauri.conf.json`; chạy **trước khi build** vì endpoint được nhúng vào app.
 
 ```text
 https://github.com/OWNER/innote/releases/latest/download/latest.json
