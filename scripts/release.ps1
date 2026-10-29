@@ -42,7 +42,13 @@ function Invoke-NpmBuild([string[]]$Arguments) {
   $old = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    & npm.cmd @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+    & npm.cmd @Arguments 2>&1 | ForEach-Object {
+      if ($_ -is [System.Management.Automation.ErrorRecord]) {
+        Write-Host $_.Exception.Message
+      } else {
+        Write-Host $_
+      }
+    }
     $code = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $old
