@@ -1,3 +1,11 @@
+# 0.6.3 — 29/10/2026 — bản thử nghiệm luồng tự cập nhật
+
+- Bản thử nghiệm có version mới để xác nhận end-to-end: app 0.6.2 phát hiện 0.6.3, hiện banner, tải và cài rồi khởi động lại thành 0.6.3.
+- Không thay đổi engine ASR, dữ liệu hay định dạng phiên; chỉ bump version và tạo signed updater artifact.
+- Release này được publish như bản Latest bình thường để endpoint `releases/latest/download/latest.json` trả về 0.6.3.
+- **E2E đã pass**: banner `Đã có bản Innote 0.6.3`; tiến độ tải 13% → 27% → 53% → 82%; app tự cài và mở lại là 0.6.3; 5 phiên và 4 model được giữ nguyên.
+- Installer 78.887.480 byte SHA `4db477...65f5b`; exe 13.880.832 byte SHA `47b29d...9a808`; Release https://github.com/quangtu07/innote/releases/tag/v0.6.3.
+
 # 0.6.2 — 29/10/2026 — updater + chuẩn bị phát hành GitHub
 
 - Thêm **Tauri Updater** (`tauri-plugin-updater`) và banner **Đã có bản Innote x.y.z** + nút **Cập nhật ngay** / **Để sau**; chặn cập nhật khi đang ghi/thu thử/sửa.

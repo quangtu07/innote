@@ -1,6 +1,6 @@
 [package]
 name = "innote"
-version = "0.6.2"
+version = "0.6.3"
 description = "Innote — ghi chép cuộc họp trên máy của bạn"
 edition = "2021"
 default-run = "innote"
