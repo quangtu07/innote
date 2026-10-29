@@ -1,0 +1,33 @@
+{
+  "sdk": {
+    "version": "0.2.0",
+    "url": "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cpu.zip",
+    "sha256": "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8",
+    "filename": "nemo-windows.zip",
+    "dlls": [
+      "nemo_speech_asr_c.dll",
+      "nemo_speech_asr.dll",
+      "ggml.dll",
+      "ggml-base.dll",
+      "ggml-cpu.dll",
+      "vcomp140.dll"
+    ]
+  },
+  "model": {
+    "id": "nemotron-3.5-q8",
+    "filename": "nemotron-3.5-q8.gguf",
+    "bytes": 741548352,
+    "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+    "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/1c8deaecc64b91f034d73e08dd8b64625eb3395d/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+    "license": "OpenMDW-1.1"
+  },
+  "vad": {
+    "filename": "silero-v5.1.2.gguf",
+    "source": "src-tauri/resources/ggml-silero-v5.1.2.bin",
+    "converter": "scripts/nemo-vad.py",
+    "sha256": "5e2b8adfe52d8a6e89e47a3cd5075915b10c771a5c6654f05a5b69d89c1c26fb",
+    "license": "MIT",
+    "endpoint_ms": 400,
+    "masking": false
+  }
+}

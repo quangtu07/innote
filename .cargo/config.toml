@@ -1,0 +1,11 @@
+# Windows native ASR baseline. Rust's size-oriented release profile must not
+# remove optimization flags from CMake's C/C++ Release configuration.
+[env]
+CMAKE_CXX_FLAGS_RELEASE = "/O2 /Ob2 /DNDEBUG /utf-8"
+CMAKE_C_FLAGS_RELEASE = "/O2 /Ob2 /DNDEBUG"
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_F16C = "ON"
+GGML_FMA = "ON"
+GGML_AVX512 = "OFF"
