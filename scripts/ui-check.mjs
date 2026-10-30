@@ -708,6 +708,13 @@ try {
       await p.waitForFunction(() =>
         window.qa.calls.some((c) => c.cmd === "fetch_llm_models"),
       );
+      const modelDialog = p.locator("dialog.model-picker-dialog");
+      await modelDialog.waitFor();
+      assert(await modelDialog.isVisible());
+      await modelDialog.getByRole("textbox", { name: "Tìm kiếm tên model…" }).fill("gpt-4o");
+      await modelDialog.locator(".model-picker-item").filter({ hasText: "gpt-4o-mini" }).first().click();
+      await modelDialog.waitFor({ state: "hidden" });
+      assert.equal(await p.getByLabel("Model", { exact: true }).inputValue(), "gpt-4o-mini");
       await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
       await p.screenshot({ path: join(output, "ai-settings.png") });

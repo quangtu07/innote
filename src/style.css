@@ -1133,6 +1133,124 @@ h2 {
   margin-top: 18px;
 }
 
+.model-picker-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 22px 24px;
+}
+.model-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.model-picker-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 650;
+  color: #172d29;
+  margin: 0 0 4px;
+}
+.model-picker-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #687d71;
+}
+.model-picker-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid #cad8cf;
+  border-radius: 8px;
+  padding: 0 12px;
+  height: 38px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(18, 42, 28, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.model-picker-search-bar:focus-within {
+  border-color: #3b8266;
+  box-shadow: 0 0 0 3px rgba(59, 130, 102, 0.16);
+}
+.model-picker-search-bar input {
+  flex: 1;
+  min-width: 0;
+  border: 0 !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 13px;
+  color: #172d29;
+  padding: 0 !important;
+  height: 100% !important;
+}
+.model-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: min(48vh, 380px);
+  overflow-y: auto;
+  padding: 2px 4px 2px 0;
+  margin-bottom: 14px;
+}
+.model-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: #fbfdfb;
+  border: 1px solid #e1ebe4;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.model-picker-item:hover {
+  background: #f0f7f2;
+  border-color: #b7d6c2;
+  transform: translateX(2px);
+}
+.model-picker-item.selected {
+  background: #edf7f0;
+  border-color: #9eccaf;
+  font-weight: 600;
+}
+.model-picker-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12.5px;
+  color: #1e362c;
+  word-break: break-all;
+}
+.model-picker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1f6442;
+  background: #d8edd2;
+  padding: 2px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.model-picker-empty {
+  padding: 30px 10px;
+  text-align: center;
+  color: #798d81;
+  font-size: 13px;
+}
+.model-picker-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid #eef4f0;
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -1669,6 +1787,31 @@ h2 {
   font-size: 11.5px;
   line-height: 1.5;
   font-weight: 400;
+}
+.ai-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.ai-password-wrap input {
+  width: 100%;
+  padding-right: 38px !important;
+}
+.ai-eye-button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  color: #62776a;
+  background: transparent;
+  border-radius: 6px;
+}
+.ai-eye-button:hover {
+  color: #172d29;
+  background: #edf3ee;
 }
 .ai-key-row {
   margin-top: 18px;

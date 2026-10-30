@@ -33,6 +33,8 @@
     List,
     ClipboardList,
     Copy,
+    Eye,
+    EyeOff,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
   import {
@@ -125,6 +127,10 @@
   let smoothPrefsInitialized = false;
   let exportVersion: "original" | "smoothed" | "summary" = "original";
   let refining = false;
+  let showBaseUrl = false;
+  let modelPickerOpen = false;
+  let modelPickerDialog: HTMLDialogElement;
+  let modelPickerSearch = "";
   let systemLevel = 0;
   let micLevel = 0;
   let progress: { id: string; bytes: number; total: number } | null = null;
@@ -165,6 +171,10 @@
     tick().then(() => {
       if (smoothDialog && !smoothDialog.open) smoothDialog.showModal();
     });
+  $: if (modelPickerOpen)
+    tick().then(() => {
+      if (modelPickerDialog && !modelPickerDialog.open) modelPickerDialog.showModal();
+    });
 
   let lastExport = "";
   let testUrl = "";
@@ -198,6 +208,9 @@
     !["recording", "paused", "processing"].includes(meeting.status);
   $: llmConfigSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}`;
   $: llmConnected = llmConfigSignature === llmConnectionSignature;
+  $: filteredModels = smoothModels.filter((m) =>
+    m.toLowerCase().includes(modelPickerSearch.trim().toLowerCase()),
+  );
   function summaryHash(text: string) {
     let hash = 0;
     for (let index = 0; index < text.length; index += 1) {
@@ -662,7 +675,8 @@
         key: smoothKey.trim() || null,
       });
       smoothModels = models;
-      if (!smoothModel.trim() && models.length) smoothModel = models[0];
+      modelPickerSearch = "";
+      modelPickerOpen = true;
       notify(fill(tr.aiModelsFetched, { count: models.length }));
     });
   }
@@ -1405,6 +1419,8 @@
                   smoothProvider = value;
                   smoothModel = smoothDefaults[value];
                   smoothModels = [];
+                  modelPickerOpen = false;
+                  modelPickerSearch = "";
                   llmConnectionSignature = "";
                 }}
               >
@@ -1422,11 +1438,25 @@
                   placeholder={smoothDefaults[smoothProvider]}
                   autocomplete="off"
                   spellcheck="false"
-                  list="smooth-model-options"
                   oninput={() => {
                     llmConnectionSignature = "";
                   }}
-                /><button
+                />
+                {#if smoothModels.length > 0}
+                  <button
+                    type="button"
+                    class="button secondary small"
+                    title={tr.modelPickerOpen}
+                    onclick={() => {
+                      modelPickerSearch = "";
+                      modelPickerOpen = true;
+                    }}
+                  >
+                    <List size={14} /> {tr.modelPickerOpen}
+                  </button>
+                {/if}
+                <button
+                  type="button"
                   class="button secondary small"
                   disabled={busy || (!smoothKey.trim() && !data.llm_configured)}
                   onclick={() => fetchModels()}
@@ -1435,23 +1465,35 @@
               </div><span class="ai-hint">{tr.aiModelHint}</span></label
             >
             {#if smoothProvider === "openai-compatible"}<label class="ai-field ai-field-full"
-                >{tr.aiBaseUrl}<input
-                  bind:value={smoothBaseUrl}
-                  aria-label={tr.aiBaseUrl}
-                  placeholder={tr.aiBaseUrlHint}
-                  autocomplete="off"
-                  spellcheck="false"
-                  oninput={() => {
-                    llmConnectionSignature = "";
-                  }}
-                /></label
+                >{tr.aiBaseUrl}<div class="ai-password-wrap">
+                  <input
+                    type={showBaseUrl ? "text" : "password"}
+                    bind:value={smoothBaseUrl}
+                    aria-label={tr.aiBaseUrl}
+                    placeholder={tr.aiBaseUrlHint}
+                    autocomplete="off"
+                    spellcheck="false"
+                    oninput={() => {
+                      llmConnectionSignature = "";
+                    }}
+                  /><button
+                    type="button"
+                    class="icon-button ai-eye-button"
+                    title={showBaseUrl ? tr.hideBaseUrl : tr.showBaseUrl}
+                    aria-label={showBaseUrl ? tr.hideBaseUrl : tr.showBaseUrl}
+                    onclick={() => {
+                      showBaseUrl = !showBaseUrl;
+                    }}
+                  >
+                    {#if showBaseUrl}
+                      <EyeOff size={16} />
+                    {:else}
+                      <Eye size={16} />
+                    {/if}
+                  </button>
+                </div></label
               >{/if}
           </div>
-          <datalist id="smooth-model-options">
-            {#each smoothModels as modelId}
-              <option value={modelId}></option>
-            {/each}
-          </datalist>
           <div class="ai-key-row">
             <label class="ai-field"
               >{tr.aiKey}<div class="ai-key-input-wrap">
@@ -2516,6 +2558,106 @@
         onclick={() => createSummary()}
       >
         {busy ? tr.summaryCreating : meeting?.summary ? tr.summaryRegenerate : tr.summaryCreate}
+      </button>
+    </div>
+  </dialog>
+{/if}
+{#if modelPickerOpen}
+  <dialog
+    class="confirm-dialog model-picker-dialog"
+    bind:this={modelPickerDialog}
+    aria-labelledby="model-picker-title"
+    onclose={() => {
+      modelPickerOpen = false;
+    }}
+    oncancel={() => {
+      modelPickerOpen = false;
+    }}
+  >
+    <div class="model-picker-head">
+      <div>
+        <h2 id="model-picker-title"><List size={18} /> {tr.modelPickerTitle}</h2>
+        <p class="model-picker-subtitle">
+          {fill(tr.modelPickerCount, {
+            count: filteredModels.length,
+            total: smoothModels.length,
+          })}
+        </p>
+      </div>
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={tr.closeNotice}
+        title={tr.closeNotice}
+        onclick={() => {
+          modelPickerOpen = false;
+        }}
+      >
+        <X size={16} />
+      </button>
+    </div>
+
+    <div class="model-picker-search-bar">
+      <Search size={15} />
+      <input
+        type="text"
+        bind:value={modelPickerSearch}
+        placeholder={tr.modelPickerSearchPlaceholder}
+        aria-label={tr.modelPickerSearchPlaceholder}
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if modelPickerSearch}
+        <button
+          type="button"
+          class="icon-button small"
+          aria-label={tr.clearSearch}
+          onclick={() => {
+            modelPickerSearch = "";
+          }}
+        >
+          <X size={13} />
+        </button>
+      {/if}
+    </div>
+
+    <div class="model-picker-list" role="listbox">
+      {#each filteredModels as m}
+        <button
+          type="button"
+          class="model-picker-item"
+          class:selected={smoothModel === m}
+          role="option"
+          aria-selected={smoothModel === m}
+          onclick={() => {
+            if (smoothModel !== m) {
+              smoothModel = m;
+              llmConnectionSignature = "";
+            }
+            modelPickerOpen = false;
+          }}
+        >
+          <span class="model-picker-name">{m}</span>
+          {#if smoothModel === m}
+            <span class="model-picker-badge"><Check size={14} /> {tr.modelSelected}</span>
+          {/if}
+        </button>
+      {:else}
+        <div class="model-picker-empty">
+          <p>{tr.modelPickerEmpty}</p>
+        </div>
+      {/each}
+    </div>
+
+    <div class="model-picker-footer">
+      <button
+        type="button"
+        class="button secondary"
+        onclick={() => {
+          modelPickerOpen = false;
+        }}
+      >
+        {tr.editCancel}
       </button>
     </div>
   </dialog>

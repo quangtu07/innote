@@ -1,3 +1,10 @@
+# 0.7.9 — 31/10/2026 — che giấu Base URL và hộp thoại tìm kiếm chọn Model AI
+
+- **Bảo mật và che giấu Base URL (`showBaseUrl`):** Mặc định ẩn Base URL dưới dạng mật mã `••••••••••`, bổ sung nút mắt bật/tắt (Show/Hide) giúp người dùng kiểm tra hoặc sửa đổi mà không sợ lộ đường dẫn máy chủ AI riêng tư khi chia sẻ màn hình.
+- **Hộp thoại tìm kiếm và chọn Model AI:** Khi bấm "Lấy model", app mở ngay hộp thoại danh sách model (`model-picker-dialog`) có thanh tìm kiếm thời gian thực (`Search`), hiển thị số lượng model lọc được và cho phép bấm chọn model trực tiếp để gán vào thiết lập.
+- **Nút "Chọn model" tiện lợi:** Khi danh sách model đã được tải về, nút "Chọn model" hiển thị cạnh ô nhập giúp người dùng mở lại danh sách bất kỳ lúc nào mà không cần gọi lại API.
+- UI 48 test pass; Rust 54 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.8 — 30/10/2026 — dùng bản chép tức thì khi kết thúc, nút hiệu chỉnh chủ động và thêm PhoWhisper
 
 - **Dùng bản chép tức thì khi kết thúc ghi âm:** Khi bấm Kết thúc ghi, hệ thống chốt ngay các đoạn chép thực tế từ lúc nói vào danh sách segment chính thức (`completed` trong 0 giây). Không tự động chạy Whisper ngầm làm người dùng phải chờ đợi 20–30 giây và không còn bị Whisper tự ý sửa sai tên riêng ("thư ruồi", "Bốt",...).
