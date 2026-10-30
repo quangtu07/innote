@@ -190,7 +190,7 @@
   $: liveWords = meeting ? Array.from(new Map([...(meeting.live ?? []), ...(currentLive?.words ?? [])].map(w => [w.id, w])).values()).filter(w => w.end > meeting!.processed + 0.00001).sort((a,b) => a.start - b.start) : [];
   $: liveText = liveWords.map(w => w.text).join(" ");
   $: partialText = meeting && currentLive && currentLive.end > meeting.processed && ["recording", "paused"].includes(meeting.status) ? currentLive.partial.split(/\s+/).slice((currentLive.partialWords ?? []).filter(w => w.end <= meeting!.processed + 0.00001).length).join(" ") : "";
-  $: refinementPending = !!meeting && ["recording", "paused", "processing"].includes(meeting.status);
+  $: refinementPending = !!meeting && ["recording", "paused", "processing"].includes(meeting.status) && (meeting.segments.length > 0 || !!(liveText || partialText));
   $: showLive = !!meeting && ["recording", "paused", "processing", "interrupted"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
   $: liveSegment = meeting && showLive
     ? {

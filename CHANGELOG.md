@@ -1,3 +1,8 @@
+# 0.6.11 — 30/10/2026 — chỉ báo hiệu chỉnh khi có bản chép
+
+- Thông báo “Đang hiệu chỉnh…” và khóa nút tải bản chép chỉ hiện khi phiên có segment/live text để hiệu chỉnh; phiên chỉ ghi âm không hiện thông báo sai.
+- Không đổi hành vi 0.6.10 với phiên có chép lời.
+
 # 0.6.10 — 30/10/2026 — báo đang hiệu chỉnh cạnh nút tải
 
 - Hiện thông báo **“Đang hiệu chỉnh… Có thể tải bản chép khi xong.”** ngay cạnh tiêu đề bản chép khi `recording/paused/processing`.
