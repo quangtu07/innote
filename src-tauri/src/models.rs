@@ -6,7 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 pub const NEMO_ID: &str = "nemotron-3.5-q8";
-pub const CATALOG: [(&str, &str, u64, &str); 4] = [
+pub const PHOWHISPER_ID: &str = "phowhisper-small";
+pub const CATALOG: [(&str, &str, u64, &str); 5] = [
     (
         "base-q5_1",
         "Tiết kiệm tài nguyên",
@@ -24,6 +25,12 @@ pub const CATALOG: [(&str, &str, u64, &str); 4] = [
         "Ưu tiên độ chính xác",
         574041195,
         "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    ),
+    (
+        PHOWHISPER_ID,
+        "PhoWhisper · Tiếng Việt (VinAI)",
+        487601984,
+        "db8de368e822fce5dcdce7c0c4c80c4b554c27655516dea5ec8c093e22f58785",
     ),
     (
         NEMO_ID,
@@ -49,6 +56,8 @@ pub fn path(root: &Path, id: &str) -> Result<PathBuf> {
     anyhow::ensure!(CATALOG.iter().any(|x| x.0 == id), "Model không hợp lệ");
     Ok(root.join("models").join(if id == NEMO_ID {
         "nemotron-3.5-q8.gguf".into()
+    } else if id == PHOWHISPER_ID {
+        "ggml-PhoWhisper-small.bin".into()
     } else {
         format!("ggml-{id}.bin")
     }))
@@ -82,6 +91,8 @@ pub fn download(root: &Path, id: &str, mut progress: impl FnMut(u64, u64)) -> Re
         .build()?;
     let url = if id == NEMO_ID {
         "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/1c8deaecc64b91f034d73e08dd8b64625eb3395d/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf".into()
+    } else if id == PHOWHISPER_ID {
+        "https://huggingface.co/dongxiat/ggml-PhoWhisper-small/resolve/main/ggml-PhoWhisper-small.bin".into()
     } else {
         format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{id}.bin")
     };

@@ -329,6 +329,12 @@ const part2 = {
   notifySmoothed: "转写已润色，原始内容仍然保留。",
   smoothCopy: "复制润色版本",
   smoothCopied: "已复制润色版本。",
+  refineButton: "校正",
+  refineButtonTitle: "使用 PhoWhisper 校正转写",
+  refining: "正在校正…",
+  refiningBanner: "正在运行 AI PhoWhisper 模型校正转写，请稍候…",
+  notifyRefined: "转写校正已完成。",
+  modelLangsPhoWhisper: "越南语专用 · VinAI",
 };
 
 export const zh: Partial<UiStrings> = { ...part1, ...part2 };

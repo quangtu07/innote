@@ -170,6 +170,13 @@ async function setup(options = {}) {
           s.summary = null;
           return structuredClone(s);
         }
+        if (cmd === "refine_transcript") {
+          const s = qa.snapshot.sessions.find((s) => s.id === args.id);
+          s.segments = [
+            { id: "refined-1", start: 0, end: 5, text: "Bản chép đã hiệu chỉnh bằng PhoWhisper.", edited: false }
+          ];
+          return structuredClone(s);
+        }
         if (cmd === "audio_path") {
           if (qa.delayAudio)
             await new Promise((r) =>

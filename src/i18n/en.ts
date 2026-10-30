@@ -344,6 +344,12 @@ const part3 = {
   notifySmoothed: "Transcript smoothed. The original is still kept.",
   smoothCopy: "Copy smoothed transcript",
   smoothCopied: "Smoothed transcript copied.",
+  refineButton: "Refine",
+  refineButtonTitle: "Refine transcript using PhoWhisper",
+  refining: "Refining…",
+  refiningBanner: "Running AI PhoWhisper model to refine transcript. Please wait a moment…",
+  notifyRefined: "Transcript refined successfully.",
+  modelLangsPhoWhisper: "Vietnamese Specialist · VinAI",
 };
 
 export const en: Partial<UiStrings> = { ...part1, ...part2, ...part3 };

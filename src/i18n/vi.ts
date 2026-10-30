@@ -352,6 +352,12 @@ const part2 = {
   notifySmoothed: "Đã làm mịn bản chép. Bản gốc vẫn được giữ.",
   smoothCopy: "Sao chép bản làm mịn",
   smoothCopied: "Đã sao chép bản làm mịn.",
+  refineButton: "Hiệu chỉnh",
+  refineButtonTitle: "Hiệu chỉnh câu từ bằng PhoWhisper",
+  refining: "Đang hiệu chỉnh…",
+  refiningBanner: "Đang dùng mô hình AI PhoWhisper hiệu chỉnh lại câu từ. Vui lòng đợi trong giây lát…",
+  notifyRefined: "Đã hiệu chỉnh bản chép thành công.",
+  modelLangsPhoWhisper: "Chuyên Tiếng Việt · VinAI",
 };
 
 export const vi = { ...part1, ...part2 };

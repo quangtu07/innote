@@ -502,7 +502,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                 });
                 last_save = std::time::Instant::now();
             }
-            if !options.transcribe || failed || options.model == models::NEMO_ID {
+            if !options.transcribe || failed || true {
                 if stopped {
                     break;
                 }
@@ -592,11 +592,34 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                 s.error = Some(error);
             }
             s.duration = duration;
-            if options.model == models::NEMO_ID
-                && options.transcribe
-                && s.error.is_none()
-                && !failed
-            {
+            if options.transcribe && s.error.is_none() && !failed {
+                if s.segments.is_empty() && !s.live.is_empty() {
+                    let words = s.live.clone();
+                    let mut current_words = Vec::new();
+                    let mut seg_start = 0.0;
+                    for (i, w) in words.iter().enumerate() {
+                        if current_words.is_empty() {
+                            seg_start = w.start;
+                        }
+                        current_words.push(w.text.clone());
+                        let seg_end = w.end;
+                        let text_chunk = w.text.trim();
+                        let is_end = text_chunk.ends_with('.')
+                            || text_chunk.ends_with('?')
+                            || text_chunk.ends_with('!');
+                        if is_end || current_words.len() >= 14 || i == words.len() - 1 {
+                            s.segments.push(Segment {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                start: seg_start,
+                                end: seg_end,
+                                text: current_words.join(" "),
+                                edited: false,
+                            });
+                            current_words.clear();
+                        }
+                    }
+                    s.live.clear();
+                }
                 s.processed = duration;
             }
             s.status = if final_audio.is_err() || failed || s.error.is_some() {
@@ -927,6 +950,76 @@ async fn summarize_transcript(
                 source_hash,
             });
         })
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+#[tauri::command]
+async fn refine_transcript(
+    app: tauri::AppHandle,
+    may: State<'_, May>,
+    id: String,
+) -> std::result::Result<Session, String> {
+    let m = may.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
+        let s = storage::load(&m.root, &id)?;
+        anyhow::ensure!(
+            !["recording", "paused"].contains(&s.status.as_str()),
+            "Hãy đợi phiên ghi âm dừng trước khi hiệu chỉnh"
+        );
+        let dir = storage::session_dir(&m.root, &id)?;
+        let pho_path = models::path(&m.root, models::PHOWHISPER_ID)?;
+        let model_path = if pho_path.exists() {
+            pho_path
+        } else {
+            let p = models::path(&m.root, &s.model)?;
+            if p.exists() {
+                p
+            } else {
+                anyhow::bail!("Chưa tải model hiệu chỉnh. Vui lòng vào Cài đặt để tải model PhoWhisper hoặc model độ chính xác cao.");
+            }
+        };
+
+        let _ = m.edit(&id, |s| {
+            s.status = "processing".into();
+        });
+        let _ = app.emit("session-changed", id.clone());
+
+        let mut worker = Worker::new(&model_path)?;
+        let cancel = AtomicBool::new(false);
+        let mut processed = 0.0;
+        let duration = s.duration;
+        let mut refined_segments = Vec::new();
+
+        while processed < duration - 0.00001 {
+            let start = (processed - 1.5).max(0.);
+            let end = (processed + 20.).min(duration);
+            let path = engine::write_job(&dir, start, end)?;
+            let r = worker.process(
+                &WorkerJob {
+                    path: path.to_string_lossy().into(),
+                    offset: start,
+                    language: s.language.clone(),
+                },
+                &cancel,
+            )?;
+            if let Some(e) = r.error {
+                anyhow::bail!(e);
+            }
+            refined_segments.extend(r.segments);
+            processed = end;
+        }
+
+        let updated = m.edit(&id, |s| {
+            if !refined_segments.is_empty() {
+                s.segments = refined_segments;
+            }
+            s.processed = s.duration;
+            s.status = "completed".into();
+        })?;
+        let _ = app.emit("session-changed", id.clone());
+        Ok(updated)
     })
     .await
     .map_err(err)?
@@ -1837,6 +1930,7 @@ fn main() {
             open_folder,
             delete_session,
             resume_transcript,
+            refine_transcript,
             test_audio
         ])
         .on_window_event(|window, event| {

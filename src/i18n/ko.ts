@@ -351,6 +351,12 @@ const part2 = {
   notifySmoothed: "전사를 다듬었습니다. 원본은 그대로 보존됩니다.",
   smoothCopy: "다듬은 전사 복사",
   smoothCopied: "다듬은 전사를 복사했습니다.",
+  refineButton: "보정",
+  refineButtonTitle: "PhoWhisper로 전사 보정",
+  refining: "보정 중…",
+  refiningBanner: "AI PhoWhisper 모델로 전사를 보정하는 중입니다. 잠시만 기다려주세요…",
+  notifyRefined: "전사 보정을 완료했습니다.",
+  modelLangsPhoWhisper: "베트남어 전용 · VinAI",
 };
 
 export const ko: Partial<UiStrings> = { ...part1, ...part2 };

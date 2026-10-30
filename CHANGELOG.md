@@ -1,3 +1,11 @@
+# 0.7.8 — 30/10/2026 — dùng bản chép tức thì khi kết thúc, nút hiệu chỉnh chủ động và thêm PhoWhisper
+
+- **Dùng bản chép tức thì khi kết thúc ghi âm:** Khi bấm Kết thúc ghi, hệ thống chốt ngay các đoạn chép thực tế từ lúc nói vào danh sách segment chính thức (`completed` trong 0 giây). Không tự động chạy Whisper ngầm làm người dùng phải chờ đợi 20–30 giây và không còn bị Whisper tự ý sửa sai tên riêng ("thư ruồi", "Bốt",...).
+- **Nút "Hiệu chỉnh" chủ động:** Thêm nút Hiệu chỉnh trên thanh công cụ bản chép. Chỉ khi người dùng bấm nút này thì app mới chạy mô hình AI để tinh chỉnh câu chữ.
+- **Hiệu ứng loading mượt mà:** Trong lúc hiệu chỉnh, nút hiển thị spinner xoay và đầu bản chép có banner thông báo trạng thái rõ ràng, tự biến mất khi hoàn thành.
+- **Bổ sung model PhoWhisper (VinAI):** Thêm model `phowhisper-small` (487 MB) chuyên biệt cho tiếng Việt của VinAI Research vào danh mục model trong Cài đặt để thay thế Whisper đa ngữ cho chất lượng nhận dạng tiếng Việt tự nhiên và chuẩn xác hơn.
+- UI 48 test pass; Rust 54 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.7 — 30/10/2026 — sửa lỗi phát âm thanh thu thử và nghe lại cuộc họp
 
 - **Sửa lỗi phát âm thanh thu thử và nghe lại (`403 Forbidden`):** Khôi phục và mở rộng scope bảo mật `assetProtocol` trong cấu hình Tauri (`$LOCALDATA/Innote/sessions/**`, `$APPLOCALDATA/**`, `**`), khắc phục lỗi trình phát audio bị khóa ở `0:00 / 0:00` do WebView2 bị chặn quyền truy cập file ghi âm cục bộ.

@@ -124,6 +124,7 @@
   let transcriptTab: "transcript" | "summary" = "transcript";
   let smoothPrefsInitialized = false;
   let exportVersion: "original" | "smoothed" | "summary" = "original";
+  let refining = false;
   let systemLevel = 0;
   let micLevel = 0;
   let progress: { id: string; bytes: number; total: number } | null = null;
@@ -312,7 +313,7 @@
   $: liveWords = meeting ? Array.from(new Map([...(meeting.live ?? []), ...(currentLive?.words ?? [])].map(w => [w.id, w])).values()).filter(w => w.end > meeting!.processed + 0.00001).sort((a,b) => a.start - b.start) : [];
   $: liveText = liveWords.map(w => w.text).join(" ");
   $: partialText = meeting && currentLive && currentLive.end > meeting.processed && ["recording", "paused"].includes(meeting.status) ? currentLive.partial.split(/\s+/).slice((currentLive.partialWords ?? []).filter(w => w.end <= meeting!.processed + 0.00001).length).join(" ") : "";
-  $: refinementPending = !!meeting && ["recording", "paused", "processing"].includes(meeting.status) && (meeting.segments.length > 0 || !!(liveText || partialText));
+  $: refinementPending = !!meeting && (refining || (["recording", "paused", "processing"].includes(meeting.status) && (meeting.segments.length > 0 || !!(liveText || partialText))));
   $: showLive = !!meeting && ["recording", "paused", "processing", "interrupted"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
   $: liveSegment = meeting && showLive
     ? {
@@ -664,6 +665,25 @@
       if (!smoothModel.trim() && models.length) smoothModel = models[0];
       notify(fill(tr.aiModelsFetched, { count: models.length }));
     });
+  }
+  async function refineMeeting() {
+    if (!meeting || refining || busy) return;
+    const id = meeting.id;
+    refining = true;
+    try {
+      const updated = await invoke<Meeting>("refine_transcript", { id });
+      if (selected === id) {
+        data = {
+          ...data,
+          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
+        };
+        notify(tr.notifyRefined);
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      refining = false;
+    }
   }
   async function smoothTranscript() {
     if (!meeting || !canSmooth) return;
@@ -1474,12 +1494,12 @@
         <div class="settings-section">
           <h2>{tr.modelTitle}</h2>
           <p>{tr.modelDesc}</p>
-          {#each data.models.filter(m=>m.id==="large-v3-turbo-q5_0"||m.id===multilingualModel) as m}<div class="model-row">
+          {#each data.models.filter(m=>m.id==="phowhisper-small"||m.id==="large-v3-turbo-q5_0"||m.id===multilingualModel) as m}<div class="model-row">
               <div class="model-symbol"><FileText size={21} /></div>
               <div>
                 <strong>{m.name}</strong>
                 <p>
-                  {Math.round(m.bytes / 1000000)} MB · {m.id===multilingualModel?tr.modelLangsMulti:tr.modelLangsViEn} · {tr.onDevice}
+                  {Math.round(m.bytes / 1000000)} MB · {m.id===multilingualModel?tr.modelLangsMulti:m.id==="phowhisper-small"?tr.modelLangsPhoWhisper:tr.modelLangsViEn} · {tr.onDevice}
                 </p>
               </div>
               {#if m.installed}<span class="installed"
@@ -1859,10 +1879,24 @@
               >{/if}
           </div>
           <div class="transcript-tools">
+            {#if meeting && !["recording", "paused", "processing"].includes(meeting.status) && meeting.segments.length > 0}
+              <button
+                class="button secondary small"
+                title={tr.refineButtonTitle}
+                disabled={busy || refining}
+                onclick={() => refineMeeting()}
+              >
+                {#if refining}
+                  <RefreshCw size={14} class="spin" /> {tr.refining}
+                {:else}
+                  <RefreshCw size={14} /> {tr.refineButton}
+                {/if}
+              </button>
+            {/if}
             {#if canSmooth}<button
               class="button secondary small"
               title={meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}
-              disabled={busy}
+              disabled={busy || refining}
               onclick={() => {
                 smoothOpen = true;
               }}><Sparkles size={14} /> {meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}</button
@@ -1870,7 +1904,7 @@
             {#if canSmooth}<button
               class="button secondary small"
               title={meeting?.summary ? tr.summaryRegenerate : tr.summaryButton}
-              disabled={busy}
+              disabled={busy || refining}
               onclick={() => {
                 summaryOpen = true;
               }}><ClipboardList size={14} /> {meeting?.summary ? tr.summaryRegenerate : tr.summaryButton}</button
@@ -1984,7 +2018,13 @@
             </p>
           </section>
         {/if}
-        <div class="workspace">
+        <div class="workspace" class:workspace-with-banner={refining}>
+          {#if refining}
+            <div class="refine-progress-banner" role="status">
+              <RefreshCw size={15} class="spin" />
+              <span>{tr.refiningBanner}</span>
+            </div>
+          {/if}
           {#if transcriptTab === "summary" && meeting?.summary}
             <div class="summary-view" role="tabpanel" aria-label={tr.summaryTitle}>
               {#if summaryStale}
