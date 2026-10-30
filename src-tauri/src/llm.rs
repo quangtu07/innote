@@ -192,6 +192,24 @@ pub fn smooth(
     Ok(text)
 }
 
+pub fn test_connection(
+    provider: &str,
+    model: &str,
+    base_url: &str,
+    api_key: &str,
+) -> Result<()> {
+    let reply = smooth(
+        provider,
+        model,
+        base_url,
+        api_key,
+        "Kiểm tra kết nối.",
+        "Chỉ trả lời một từ: OK",
+    )?;
+    ensure!(!reply.trim().is_empty(), "AI không trả về nội dung kiểm tra");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

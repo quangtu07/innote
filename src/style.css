@@ -728,6 +728,23 @@ h2 {
   margin-top: 5px;
   resize: vertical;
 }
+.smooth-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.smooth-config,
+.smooth-connect-hint,
+.smooth-connected {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.smooth-connect-hint {
+  color: #7a5b25;
+}
+.smooth-connected {
+  color: var(--green);
+  font-weight: 550;
+}
 .transcript-tools {
   display: flex;
   align-items: center;
@@ -737,6 +754,26 @@ h2 {
 }
 .export-controls.compact {
   gap: 6px;
+}
+.export-version {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d5e0d8;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.export-version button {
+  border: 0;
+  background: #fff;
+  color: #65796c;
+  padding: 5px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.export-version button.active {
+  background: #e5f0e9;
+  color: var(--green);
+  font-weight: 600;
 }
 .export-controls.compact .text-button {
   padding: 4px 2px;

@@ -108,7 +108,11 @@
   let smoothKey = "";
   let smoothPrompt = "";
   let smoothPanelOpen = false;
+  let smoothOpen = false;
+  let smoothDialog: HTMLDialogElement;
+  let llmConnectionSignature = "";
   let smoothPrefsInitialized = false;
+  let exportVersion: "original" | "smoothed" = "original";
   let systemLevel = 0;
   let micLevel = 0;
   let progress: { id: string; bytes: number; total: number } | null = null;
@@ -131,6 +135,10 @@
   $: if (stopOpen)
     tick().then(() => {
       if (stopDialog && !stopDialog.open) stopDialog.showModal();
+    });
+  $: if (smoothOpen)
+    tick().then(() => {
+      if (smoothDialog && !smoothDialog.open) smoothDialog.showModal();
     });
 
   let lastExport = "";
@@ -163,6 +171,8 @@
     !!meeting &&
     meeting.segments.length > 0 &&
     !["recording", "paused", "processing"].includes(meeting.status);
+  $: llmConfigSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}|${data.llm_configured}`;
+  $: llmConnected = llmConfigSignature === llmConnectionSignature;
   $: if (smoothPrefsInitialized) {
     try {
       localStorage.setItem(
@@ -437,7 +447,9 @@
     editing = "";
     searchText = "";
     smoothPanelOpen = false;
+    smoothOpen = false;
     smoothPrompt = "";
+    exportVersion = "original";
     autoScroll = true;
     if (!["recording", "paused"].includes(s.status)) {
       try {
@@ -474,7 +486,9 @@
     error = "";
     provider = "local";
     smoothPanelOpen = false;
+    smoothOpen = false;
     smoothPrompt = "";
+    exportVersion = "original";
   }
   async function start() {
     await action(async () => {
@@ -526,11 +540,27 @@
         smoothKey = "";
       }
       data = { ...data, llm_configured: !clear };
+      llmConnectionSignature = "";
       notify(clear ? tr.notifyAiKeyCleared : tr.notifyAiKeyKept);
+    });
+  }
+  async function testLlmConnection() {
+    await action(async () => {
+      await invoke("test_llm_connection", {
+        provider: smoothProvider,
+        model: smoothModel,
+        baseUrl: smoothBaseUrl,
+      });
+      llmConnectionSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}|${data.llm_configured}`;
+      notify(tr.aiConnected);
     });
   }
   async function smoothTranscript() {
     if (!meeting || !canSmooth) return;
+    if (!llmConnected) {
+      error = tr.aiConnectFirst;
+      return;
+    }
     const id = meeting.id;
     await action(async () => {
       const updated = await invoke<Meeting>("smooth_transcript", {
@@ -546,6 +576,7 @@
           sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
         };
         smoothPanelOpen = true;
+        smoothOpen = false;
         smoothPrompt = "";
         notify(tr.notifySmoothed);
       }
@@ -612,6 +643,7 @@
         id,
         format,
         path: destination,
+        version: exportVersion,
       });
       if (selected === id) {
         lastExport = path;
@@ -1181,6 +1213,11 @@
           <p>
             {data.llm_configured ? tr.aiConfigured : tr.aiMissing} {tr.aiKeyNote}
           </p>
+          <button
+            class="button secondary"
+            disabled={busy}
+            onclick={() => testLlmConnection()}
+          >{llmConnected ? tr.aiConnected : tr.aiTestConnection}</button>
         </div>
         <div class="settings-section">
           <h2>{tr.modelTitle}</h2>
@@ -1540,11 +1577,28 @@
               title={meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}
               disabled={busy}
               onclick={() => {
-                smoothPanelOpen = true;
-                if (!meeting?.smoothed) void smoothTranscript();
+                smoothOpen = true;
               }}><Sparkles size={14} /> {meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}</button
             >{/if}
             {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
+                {#if meeting?.smoothed}<div
+                  class="export-version"
+                  role="group"
+                  aria-label={tr.exportVersion}
+                >
+                  <button
+                    class:active={exportVersion === "original"}
+                    onclick={() => {
+                      exportVersion = "original";
+                    }}>{tr.exportOriginal}</button
+                  >
+                  <button
+                    class:active={exportVersion === "smoothed"}
+                    onclick={() => {
+                      exportVersion = "smoothed";
+                    }}>{tr.exportSmoothed}</button
+                  >
+                </div>{/if}
                 {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
                   title={refinementPending ? tr.exportWaitRefinement : tr.exportMdTitle}
@@ -1612,26 +1666,16 @@
                   class="text-button"
                   onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
                 >
+                <button
+                  class="button secondary small"
+                  disabled={busy}
+                  onclick={() => {
+                    smoothOpen = true;
+                  }}><Sparkles size={14} /> {tr.smoothAgain}</button
+                >
               </div>
-              <label class="smooth-prompt"
-                >{tr.smoothPromptLabel}<textarea
-                  bind:value={smoothPrompt}
-                  placeholder={tr.smoothPromptPlaceholder}
-                  aria-label={tr.smoothPromptLabel}
-                ></textarea>
-              </label>
-              <button
-                class="button primary small"
-                disabled={busy}
-                onclick={() => smoothTranscript()}>{busy ? tr.smoothRunning : tr.smoothAgain}</button
-              >
             {:else}
               <p class="smooth-intro">{tr.smoothIntro}</p>
-              <button
-                class="button primary small"
-                disabled={busy}
-                onclick={() => smoothTranscript()}>{busy ? tr.smoothRunning : tr.smoothButton}</button
-              >
             {/if}
             <p class="smooth-note">
               {tr.smoothOriginalKept}
@@ -1778,6 +1822,76 @@
 {#if toast}<div class="toast" role="status">
     <Check size={17} />{toast}
   </div>{/if}
+{#if smoothOpen}
+  <dialog
+    class="confirm-dialog smooth-dialog"
+    bind:this={smoothDialog}
+    aria-labelledby="smooth-title"
+    onclose={() => {
+      smoothOpen = false;
+    }}
+    oncancel={() => {
+      smoothOpen = false;
+    }}
+  >
+    <h2 id="smooth-title">{tr.smoothHeading}</h2>
+    <p>{tr.smoothIntro}</p>
+    <p class="smooth-config">
+      {fill(tr.smoothUsing, {
+        provider: smoothProvider,
+        model: smoothModel || smoothDefaults[smoothProvider],
+      })}
+    </p>
+    {#if llmConnected}
+      <p class="smooth-connected" role="status">{tr.aiConnected}</p>
+    {:else}
+      <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
+      {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<p
+            class="smooth-connect-hint">{tr.aiNeedKey}</p
+          >{/if}
+      <button
+        class="button secondary small"
+        disabled={busy}
+        onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
+      >
+      {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<button
+            class="text-button"
+            disabled={busy}
+            onclick={() => {
+              smoothOpen = false;
+              page = "settings";
+            }}>{tr.aiOpenSettings}</button
+          >{/if}
+    {/if}
+    {#if meeting?.smoothed}
+      <label class="smooth-prompt"
+        >{tr.smoothPromptLabel}<textarea
+          bind:value={smoothPrompt}
+          placeholder={tr.smoothPromptPlaceholder}
+          aria-label={tr.smoothPromptLabel}
+        ></textarea>
+      </label>
+    {/if}
+    <div>
+      <button
+        class="button secondary"
+        onclick={() => {
+          smoothOpen = false;
+        }}>{tr.editCancel}</button
+      ><button
+        class="button primary"
+        disabled={busy || !llmConnected}
+        onclick={() => smoothTranscript()}
+        >{busy
+          ? tr.smoothRunning
+          : meeting?.smoothed
+            ? tr.smoothAgain
+            : tr.smoothButton}</button
+      >
+    </div>
+    <p class="smooth-note">{tr.smoothOriginalKept}</p>
+  </dialog>
+{/if}
 {#if deleteOpen}
   <dialog
     class="confirm-dialog"

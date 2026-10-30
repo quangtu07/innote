@@ -830,6 +830,23 @@ fn set_llm_key(may: State<May>, key: String) -> std::result::Result<(), String> 
     Ok(())
 }
 #[tauri::command]
+async fn test_llm_connection(
+    may: State<'_, May>,
+    provider: String,
+    model: String,
+    base_url: String,
+) -> std::result::Result<String, String> {
+    let m = may.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+        let api_key = m.llm_key.lock().unwrap().clone();
+        llm::test_connection(&provider, &model, &base_url, &api_key)?;
+        Ok("ok".into())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+#[tauri::command]
 async fn smooth_transcript(
     may: State<'_, May>,
     id: String,
@@ -1032,18 +1049,20 @@ fn export_session(
     id: String,
     format: String,
     path: Option<String>,
+    version: Option<String>,
 ) -> std::result::Result<String, String> {
     let s = storage::load(&may.root, &id).map_err(err)?;
+    let version = version.as_deref().unwrap_or("original");
     if let Some(path) = path.filter(|p| !p.trim().is_empty()) {
         let mut path = PathBuf::from(path);
         path.set_extension(&format);
-        return Ok(storage::export_file(&path, &s, &format)
+        return Ok(storage::export_file_version(&path, &s, &format, version)
             .map_err(err)?
             .to_string_lossy()
             .into());
     }
     let folder = app.path().download_dir().map_err(err)?.join("Innote");
-    Ok(storage::export_to(&folder, &s, &format)
+    Ok(storage::export_to_version(&folder, &s, &format, version)
         .map_err(err)?
         .to_string_lossy()
         .into())
@@ -1700,6 +1719,7 @@ fn main() {
             report_live_paint,
             set_soniox_key,
             set_llm_key,
+            test_llm_connection,
             smooth_transcript,
             refresh_devices,
             start,

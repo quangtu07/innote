@@ -139,6 +139,7 @@ async function setup(options = {}) {
           qa.snapshot.llm_configured = !!args.key;
           return;
         }
+        if (cmd === "test_llm_connection") return "ok";
         if (cmd === "smooth_transcript") {
           const s = qa.snapshot.sessions.find((s) => s.id === args.id);
           s.smoothed = {
@@ -553,6 +554,9 @@ try {
     async (p) => {
       await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
       await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
+      const dialog = p.getByRole("dialog");
+      await dialog.getByRole("button", { name: "Kiểm tra kết nối", exact: true }).click();
+      await dialog.getByRole("button", { name: "Làm mịn", exact: true }).click();
       await p
         .getByRole("region", { name: "Bản làm mịn bằng AI" })
         .getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true })
@@ -562,10 +566,30 @@ try {
         await p.getByText("Nội dung thử tiếng Việt.", { exact: true }).isVisible(),
       );
       await p
-        .getByRole("textbox", { name: "Yêu cầu thêm (không bắt buộc)" })
-        .fill("Giữ nguyên tên riêng");
+        .getByRole("group", { name: "Chọn bản để tải" })
+        .getByRole("button", { name: "Bản làm mịn", exact: true })
+        .click();
+      await p.getByRole("button", { name: "Tải .txt", exact: true }).click();
+      await p.waitForFunction(() =>
+        window.qa.calls.some((c) => c.cmd === "export_session"),
+      );
+      assert.equal(
+        await p.evaluate(
+          () =>
+            window.qa.calls.find((c) => c.cmd === "export_session").args
+              .version,
+        ),
+        "smoothed",
+      );
       await p
         .getByRole("region", { name: "Bản làm mịn bằng AI" })
+        .getByRole("button", { name: "Làm mịn lại", exact: true })
+        .click();
+      const rerunDialog = p.getByRole("dialog");
+      await rerunDialog
+        .getByRole("textbox", { name: "Yêu cầu thêm (không bắt buộc)" })
+        .fill("Giữ nguyên tên riêng");
+      await rerunDialog
         .getByRole("button", { name: "Làm mịn lại", exact: true })
         .click();
       await p.waitForFunction(

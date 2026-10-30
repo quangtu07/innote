@@ -138,6 +138,54 @@ pub fn stamp(seconds: f64, srt: bool) -> String {
     }
 }
 pub fn export(s: &Session, format: &str) -> String {
+    // Existing exports always use the original transcript.
+    export_version(s, format, "original")
+}
+pub fn export_version(s: &Session, format: &str, version: &str) -> String {
+    if version == "smoothed" {
+        if let Some(smoothed) = s.smoothed.as_ref() {
+            if format == "srt" {
+                return format!(
+                    "1\n00:00:00,000 --> {}\n{}\n\n",
+                    stamp(s.duration, true),
+                    smoothed.text
+                );
+            }
+            let mut out = if format == "md" {
+                format!("# {}\n\n", s.title)
+            } else {
+                format!("{}\n\n", s.title)
+            };
+            if s.status != "completed" {
+                out.push_str("BẢN CHƯA HOÀN TẤT — có thể còn nội dung chưa chép.\n\n");
+            }
+            out.push_str(smoothed.text.trim());
+            out.push_str("\n\n");
+            if !s.notes.is_empty() {
+                out.push_str(&format!("\nGhi chú\n{}\n", s.notes));
+            }
+            if format == "md" {
+                out.push_str(
+                    "\n---\n\n## Liên hệ tư vấn, hỗ trợ & lập trình\n\n\
+**Alex Linh**\n\n\
+- Zalo: **0962 239 818** — [zalo.me/0962239818](https://zalo.me/0962239818)\n\
+- Website: [alexlinh.io.vn](https://alexlinh.io.vn/)\n",
+                );
+            } else {
+                out.push_str(
+                    "\n----------------------------------------\n\
+LIÊN HỆ TƯ VẤN, HỖ TRỢ & LẬP TRÌNH\n\
+Alex Linh\n\
+Zalo: 0962 239 818\n\
+Website: https://alexlinh.io.vn/\n",
+                );
+            }
+            return out;
+        }
+    }
+    export_original(s, format)
+}
+fn export_original(s: &Session, format: &str) -> String {
     // Include durable streaming words if refinement failed or is still behind.
     let mut effective = s.clone();
     let words: Vec<_> = s
@@ -211,24 +259,46 @@ Website: https://alexlinh.io.vn/\n",
     out
 }
 pub fn export_file(path: &Path, s: &Session, format: &str) -> Result<PathBuf> {
+    export_file_version(path, s, format, "original")
+}
+pub fn export_file_version(
+    path: &Path,
+    s: &Session,
+    format: &str,
+    version: &str,
+) -> Result<PathBuf> {
     anyhow::ensure!(
         ["md", "txt", "srt"].contains(&format),
         "Định dạng xuất không hợp lệ"
     );
+    if version == "smoothed" && s.smoothed.is_none() {
+        anyhow::bail!("Chưa có bản làm mịn");
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let mut file = std::fs::File::create(path)?;
     use std::io::Write;
-    file.write_all(export(s, format).as_bytes())?;
+    file.write_all(export_version(s, format, version).as_bytes())?;
     file.sync_all()?;
     Ok(path.to_path_buf())
 }
 pub fn export_to(directory: &Path, s: &Session, format: &str) -> Result<PathBuf> {
+    export_to_version(directory, s, format, "original")
+}
+pub fn export_to_version(
+    directory: &Path,
+    s: &Session,
+    format: &str,
+    version: &str,
+) -> Result<PathBuf> {
     anyhow::ensure!(
         ["md", "txt", "srt"].contains(&format),
         "Định dạng xuất không hợp lệ"
     );
+    if version == "smoothed" && s.smoothed.is_none() {
+        anyhow::bail!("Chưa có bản làm mịn");
+    }
     std::fs::create_dir_all(directory)?;
     let clean: String = s
         .title
@@ -257,7 +327,7 @@ pub fn export_to(directory: &Path, s: &Session, format: &str) -> Result<PathBuf>
         .write(true)
         .create_new(true)
         .open(&path)?;
-    file.write_all(export(s, format).as_bytes())?;
+    file.write_all(export_version(s, format, version).as_bytes())?;
     file.sync_all()?;
     Ok(path)
 }
@@ -435,6 +505,31 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 #[test]
+    fn smoothed_export_uses_copy_without_touching_original() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let mut s: Session = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::new_v4().to_string(), "title": "QA", "created": "now",
+            "duration": 10., "status": "completed", "language": "vi", "model": "base-q5_1",
+            "processed": 10., "segments": [{"id":"a","start":0.,"end":10.,"text":"bản gốc","edited":false}],
+            "notes": "", "error": null, "warnings": []
+        }))
+        .unwrap();
+        s.smoothed = Some(crate::types::SmoothedTranscript {
+            text: "bản làm mịn".into(),
+            provider: "openai-compatible".into(),
+            model: "test".into(),
+            prompt: String::new(),
+            created: "now".into(),
+        });
+        assert!(export(&s, "txt").contains("bản gốc"));
+        assert!(export_version(&s, "txt", "smoothed").contains("bản làm mịn"));
+        assert!(export_version(&s, "txt", "smoothed").contains("bản làm mịn"));
+        assert!(!export_version(&s, "txt", "smoothed").contains("bản gốc"));
+        save(&dir, &s).unwrap();
+        assert_eq!(load(&dir, &s.id).unwrap().segments[0].text, "bản gốc");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn completed_session_drops_only_legacy_discontinuity_warnings() {
         let mut s: Session = serde_json::from_value(serde_json::json!({
             "id": uuid::Uuid::new_v4().to_string(), "title": "QA", "created": "now",

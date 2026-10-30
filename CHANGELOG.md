@@ -1,3 +1,11 @@
+# 0.7.1 — 30/10/2026 — dialog làm mịn, kiểm tra API key và chọn bản tải
+
+- Nút **Làm mịn** chỉ mở dialog; không gửi API ngay.
+- Dialog yêu cầu **Kiểm tra kết nối** thành công trước khi bật nút làm mịn; lỗi key/kết nối hiển thị rõ. Có lối mở Cài đặt khi thiếu key.
+- Bản gốc và bản làm mịn song song; thêm lựa chọn **Bản gốc / Bản làm mịn** cho các nút tải `.md/.txt/.srt` (`.mp3` không đổi).
+- Làm mịn lại dùng prompt trong dialog; prompt trống = làm mịn thường.
+- UI 46 test pass; Rust 51 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.0 — 30/10/2026 — làm mịn bản chép bằng AI
 
 - Thêm nút **Làm mịn** khi có bản chép cuối; gọi OpenAI, DeepSeek, Gemini hoặc endpoint OpenAI-compatible do người dùng cấu hình.
