@@ -1,3 +1,9 @@
+# 0.7.5 — 30/10/2026 — đưa tác giả/cài đặt xuống góc sidebar
+
+- Author card dùng `margin-top: auto` để luôn nằm sát đáy sidebar, cùng Cài đặt và dòng dữ liệu.
+- Không đổi dữ liệu/engine/UI khác.
+- UI 47 test pass; Rust 53 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.4 — 30/10/2026 — nút đổi tên/xóa rõ ràng trên card
 
 - Thay icon-only bị cắt bằng nút chữ **Đổi tên** và **Xóa** trong card; bố cục card dạng lưới, toolbar nằm bên phải, không bị che.
