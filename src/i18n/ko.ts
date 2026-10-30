@@ -263,6 +263,40 @@ const part2 = {
   gateTitle: "인터페이스 언어 선택",
   gateSubtitle: "Chọn ngôn ngữ · 언어 선택 · 选择界面语言",
   gateNote: "설정에서 언제든지 변경할 수 있습니다.",
+  aiTitle: "AI로 전사 다듬기",
+  aiDesc:
+    "외부 API로 맞춤법, 문장부호, 잘못 인식된 단어를 고칠 수 있습니다. 다듬기를 누를 때만 전사를 보내며 원본은 항상 보존됩니다.",
+  aiProvider: "제공자",
+  aiProviderOpenai: "OpenAI",
+  aiProviderDeepseek: "DeepSeek",
+  aiProviderGemini: "Gemini",
+  aiProviderCompatible: "OpenAI-compatible",
+  aiModel: "모델",
+  aiBaseUrl: "Base URL",
+  aiBaseUrlHint: "예: http://127.0.0.1:11434/v1",
+  aiKey: "다듬기 API 키",
+  aiKeyNote:
+    "키는 메모리에만 보관되며 앱을 닫으면 사라집니다. 회의나 내보내기 파일에 저장되지 않습니다.",
+  aiConfigured: "다듬기 키가 메모리에 있습니다.",
+  aiMissing: "다듬기 키가 없습니다. 로컬 전사는 그대로 사용할 수 있습니다.",
+  aiKeepKey: "다듬기 키 저장",
+  aiClearKey: "다듬기 키 삭제",
+  notifyAiKeyKept: "다듬기 키를 앱을 닫을 때까지 메모리에 보관합니다.",
+  notifyAiKeyCleared: "메모리에서 다듬기 키를 삭제했습니다.",
+  smoothButton: "다듬기",
+  smoothAgain: "다시 다듬기",
+  smoothHeading: "AI로 다듬은 전사",
+  smoothIntro:
+    "AI가 최종 전사를 읽고 맞춤법, 문장부호, 대문자만 고칩니다. 의미를 더하거나 빼거나 요약하거나 내용을 바꾸지 않습니다. 원본은 그대로 보존됩니다.",
+  smoothPromptLabel: "추가 요청 (선택)",
+  smoothPromptPlaceholder:
+    "예: 고유명사 수정, 문장부호 추가… 비워 두면 일반 다듬기를 합니다.",
+  smoothOriginalKept: "원본 전사는 위에 그대로 남아 있습니다.",
+  smoothResultBy: "다듬은 본 · {provider} · {model}",
+  smoothRunning: "다듬는 중…",
+  notifySmoothed: "전사를 다듬었습니다. 원본은 그대로 보존됩니다.",
+  smoothCopy: "다듬은 전사 복사",
+  smoothCopied: "다듬은 전사를 복사했습니다.",
 };
 
 export const ko: Partial<UiStrings> = { ...part1, ...part2 };

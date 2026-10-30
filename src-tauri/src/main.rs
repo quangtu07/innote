@@ -3,6 +3,7 @@ mod audio;
 mod engine;
 mod instance;
 mod live;
+mod llm;
 mod models;
 mod moonshine;
 mod mp3;
@@ -33,6 +34,7 @@ struct May {
     downloading: Arc<AtomicBool>,
     devices: Arc<Mutex<Vec<Device>>>,
     soniox_key: Arc<Mutex<String>>,
+    llm_key: Arc<Mutex<String>>,
 }
 struct Run {
     id: String,
@@ -290,6 +292,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         } else {
             vec![]
         },
+        smoothed: None,
     };
     storage::save(&may.root, &s)?;
     let run = Arc::new(Run {
@@ -814,7 +817,57 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
         data_dir: may.root.to_string_lossy().into(),
         active_id,
         soniox_configured: !may.soniox_key.lock().unwrap().is_empty(),
+        llm_configured: !may.llm_key.lock().unwrap().is_empty(),
     })
+}
+#[tauri::command]
+fn set_llm_key(may: State<May>, key: String) -> std::result::Result<(), String> {
+    let key = key.trim().to_string();
+    if key.chars().count() > 4096 {
+        return Err("API key quá dài".into());
+    }
+    *may.llm_key.lock().unwrap() = key;
+    Ok(())
+}
+#[tauri::command]
+async fn smooth_transcript(
+    may: State<'_, May>,
+    id: String,
+    provider: String,
+    model: String,
+    base_url: String,
+    prompt: String,
+) -> std::result::Result<Session, String> {
+    let m = may.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
+        let session = storage::load(&m.root, &id)?;
+        anyhow::ensure!(
+            !["recording", "paused", "processing"].contains(&session.status.as_str()),
+            "Hãy đợi bản chép lời hoàn tất trước khi làm mịn"
+        );
+        let original = session
+            .segments
+            .iter()
+            .map(|segment| segment.text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::ensure!(!original.is_empty(), "Chưa có bản chép lời để làm mịn");
+        let api_key = m.llm_key.lock().unwrap().clone();
+        let smoothed = llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt)?;
+        m.edit(&id, |s| {
+            s.smoothed = Some(SmoothedTranscript {
+                text: smoothed,
+                provider,
+                model,
+                prompt,
+                created: chrono::Utc::now().to_rfc3339(),
+            });
+        })
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 #[tauri::command]
 fn set_soniox_key(may: State<May>, key: String) -> std::result::Result<(), String> {
@@ -1352,6 +1405,7 @@ mod controller_tests {
             downloading: Arc::new(AtomicBool::new(false)),
             devices: Arc::new(Mutex::new(vec![])),
             soniox_key: Arc::new(Mutex::new(String::new())),
+            llm_key: Arc::new(Mutex::new(String::new())),
         }
     }
     #[test]
@@ -1405,6 +1459,7 @@ mod controller_tests {
             notes: "Giữ ghi chú".into(),
             error: None,
             warnings: vec![],
+            smoothed: None,
         };
         storage::save(&root, &session).unwrap();
         let may = may(root.clone());
@@ -1538,6 +1593,7 @@ fn main() {
                 notes: String::new(),
                 error: None,
                 warnings: vec![],
+                smoothed: None,
             };
             if let Some(text) = args.get(5).filter(|x| !x.is_empty()) {
                 s.segments.push(Segment {
@@ -1634,6 +1690,7 @@ fn main() {
         downloading: Arc::new(AtomicBool::new(false)),
         devices: Arc::new(Mutex::new(available)),
         soniox_key: Arc::new(Mutex::new(String::new())),
+        llm_key: Arc::new(Mutex::new(String::new())),
     };
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1642,6 +1699,8 @@ fn main() {
             snapshot,
             report_live_paint,
             set_soniox_key,
+            set_llm_key,
+            smooth_transcript,
             refresh_devices,
             start,
             pause,

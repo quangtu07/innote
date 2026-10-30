@@ -17,6 +17,15 @@ pub struct Segment {
     pub edited: bool,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SmoothedTranscript {
+    pub text: String,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub prompt: String,
+    pub created: String,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Session {
     pub id: String,
     pub title: String,
@@ -36,6 +45,9 @@ pub struct Session {
     pub error: Option<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// AI-smoothed copy. The original `segments` are never replaced.
+    #[serde(default)]
+    pub smoothed: Option<SmoothedTranscript>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -52,6 +64,8 @@ pub struct Snapshot {
     pub data_dir: String,
     pub active_id: Option<String>,
     pub soniox_configured: bool,
+    #[serde(default)]
+    pub llm_configured: bool,
 }
 #[derive(Serialize)]
 pub struct AudioTestResult {

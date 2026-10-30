@@ -29,6 +29,7 @@
     NotebookPen,
     CheckCheck,
     Globe,
+    Sparkles,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
   import {
@@ -92,6 +93,22 @@
   let transcribe = true;
   let provider = "local";
   let sonioxKey = "";
+  type SmoothProvider = "openai" | "deepseek" | "gemini" | "openai-compatible";
+  const smoothDefaults: Record<SmoothProvider, string> = {
+    openai: "gpt-4o-mini",
+    deepseek: "deepseek-chat",
+    gemini: "gemini-2.5-flash",
+    "openai-compatible": "",
+  };
+  const isSmoothProvider = (value: unknown): value is SmoothProvider =>
+    ["openai", "deepseek", "gemini", "openai-compatible"].includes(String(value));
+  let smoothProvider: SmoothProvider = "openai";
+  let smoothModel = smoothDefaults.openai;
+  let smoothBaseUrl = "";
+  let smoothKey = "";
+  let smoothPrompt = "";
+  let smoothPanelOpen = false;
+  let smoothPrefsInitialized = false;
   let systemLevel = 0;
   let micLevel = 0;
   let progress: { id: string; bytes: number; total: number } | null = null;
@@ -142,6 +159,24 @@
   let lastCount = 0;
   const desktop = "__TAURI_INTERNALS__" in window;
   $: meeting = data.sessions.find((s) => s.id === selected);
+  $: canSmooth =
+    !!meeting &&
+    meeting.segments.length > 0 &&
+    !["recording", "paused", "processing"].includes(meeting.status);
+  $: if (smoothPrefsInitialized) {
+    try {
+      localStorage.setItem(
+        "may.llm_preferences",
+        JSON.stringify({
+          provider: smoothProvider,
+          model: smoothModel,
+          baseUrl: smoothBaseUrl,
+        }),
+      );
+    } catch {
+      /* Keep the current configuration for this run. */
+    }
+  }
   $: active = data.sessions.find((s) => s.id === data.active_id);
   $: recording = !!active && ["recording", "paused"].includes(active.status);
   const multilingualModel="nemotron-3.5-q8";
@@ -401,6 +436,8 @@
     audioUrl = "";
     editing = "";
     searchText = "";
+    smoothPanelOpen = false;
+    smoothPrompt = "";
     autoScroll = true;
     if (!["recording", "paused"].includes(s.status)) {
       try {
@@ -436,6 +473,8 @@
     testQuiet = false;
     error = "";
     provider = "local";
+    smoothPanelOpen = false;
+    smoothPrompt = "";
   }
   async function start() {
     await action(async () => {
@@ -478,6 +517,47 @@
       }
       notify(clear ? tr.notifyKeyCleared : tr.notifyKeyKept);
     });
+  }
+  async function saveLlmKey(clear = false) {
+    await action(async () => {
+      try {
+        await invoke("set_llm_key", { key: clear ? "" : smoothKey });
+      } finally {
+        smoothKey = "";
+      }
+      data = { ...data, llm_configured: !clear };
+      notify(clear ? tr.notifyAiKeyCleared : tr.notifyAiKeyKept);
+    });
+  }
+  async function smoothTranscript() {
+    if (!meeting || !canSmooth) return;
+    const id = meeting.id;
+    await action(async () => {
+      const updated = await invoke<Meeting>("smooth_transcript", {
+        id,
+        provider: smoothProvider,
+        model: smoothModel,
+        baseUrl: smoothBaseUrl,
+        prompt: smoothPrompt,
+      });
+      if (id === meeting?.id) {
+        data = {
+          ...data,
+          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
+        };
+        smoothPanelOpen = true;
+        smoothPrompt = "";
+        notify(tr.notifySmoothed);
+      }
+    });
+  }
+  async function copySmoothed() {
+    try {
+      await navigator.clipboard.writeText(meeting?.smoothed?.text ?? "");
+      notify(tr.smoothCopied);
+    } catch (e) {
+      error = String(e);
+    }
   }
   async function togglePause() {
     if (active)
@@ -676,6 +756,25 @@
       }
     } catch {
       /* Invalid preferences fall back to available devices. */
+    }
+    try {
+      const llm = JSON.parse(
+        localStorage.getItem("may.llm_preferences") ?? "null",
+      );
+      if (llm) {
+        if (isSmoothProvider(llm.provider)) {
+          smoothProvider = llm.provider;
+          smoothModel =
+            typeof llm.model === "string" && llm.model.trim()
+              ? llm.model
+              : smoothDefaults[llm.provider as SmoothProvider];
+        }
+        if (typeof llm.baseUrl === "string") smoothBaseUrl = llm.baseUrl;
+      }
+    } catch {
+      /* Invalid AI preferences fall back to defaults. */
+    } finally {
+      smoothPrefsInitialized = true;
     }
     let alive = true;
     let unlisten: (() => void)[] = [];
@@ -1017,6 +1116,70 @@
             {data.soniox_configured
               ? tr.sonioxConfigured
               : tr.sonioxMissing} {tr.sonioxKeyNote}
+          </p>
+        </div>
+        <div class="settings-section">
+          <h2>{tr.aiTitle}</h2>
+          <p>{tr.aiDesc}</p>
+          <label
+            >{tr.aiProvider}<select
+              aria-label={tr.aiProvider}
+              value={smoothProvider}
+              disabled={busy}
+              onchange={(event) => {
+                const value = event.currentTarget.value as SmoothProvider;
+                smoothProvider = value;
+                smoothModel = smoothDefaults[value];
+              }}
+            >
+              <option value="openai">{tr.aiProviderOpenai}</option>
+              <option value="deepseek">{tr.aiProviderDeepseek}</option>
+              <option value="gemini">{tr.aiProviderGemini}</option>
+              <option value="openai-compatible">{tr.aiProviderCompatible}</option>
+            </select></label
+          >
+          <label
+            >{tr.aiModel}<input
+              bind:value={smoothModel}
+              aria-label={tr.aiModel}
+              placeholder={smoothDefaults[smoothProvider]}
+              autocomplete="off"
+              spellcheck="false"
+            /></label
+          >
+          {#if smoothProvider === "openai-compatible"}<label
+              >{tr.aiBaseUrl}<input
+                bind:value={smoothBaseUrl}
+                aria-label={tr.aiBaseUrl}
+                placeholder={tr.aiBaseUrlHint}
+                autocomplete="off"
+                spellcheck="false"
+              /></label
+            >{/if}
+          <label
+            >{tr.aiKey}<input
+              type="password"
+              aria-label={tr.aiKey}
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={smoothKey}
+              placeholder={tr.optional}
+            /></label
+          >
+          <div class="soniox-actions">
+            <button
+              class="button secondary"
+              disabled={busy || !smoothKey.trim()}
+              onclick={() => saveLlmKey()}>{tr.aiKeepKey}</button
+            >
+            <button
+              class="text-button"
+              disabled={busy || !data.llm_configured}
+              onclick={() => saveLlmKey(true)}>{tr.aiClearKey}</button
+            >
+          </div>
+          <p>
+            {data.llm_configured ? tr.aiConfigured : tr.aiMissing} {tr.aiKeyNote}
           </p>
         </div>
         <div class="settings-section">
@@ -1372,6 +1535,15 @@
               >{/if}
           </div>
           <div class="transcript-tools">
+            {#if canSmooth}<button
+              class="button secondary small"
+              title={meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}
+              disabled={busy}
+              onclick={() => {
+                smoothPanelOpen = true;
+                if (!meeting?.smoothed) void smoothTranscript();
+              }}><Sparkles size={14} /> {meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}</button
+            >{/if}
             {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
                 {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
@@ -1412,6 +1584,61 @@
               >{/if}
           </div>
         </div>
+        {#if smoothPanelOpen && meeting && canSmooth}
+          <section class="smooth-panel" aria-label={tr.smoothHeading}>
+            <div class="smooth-panel-head">
+              <h3><Sparkles size={16} /> {tr.smoothHeading}</h3>
+              <button
+                class="icon-button"
+                aria-label={tr.closeNotice}
+                title={tr.closeNotice}
+                onclick={() => {
+                  smoothPanelOpen = false;
+                }}><X size={15} /></button
+              >
+            </div>
+            {#if meeting.smoothed}
+              <p class="smooth-meta">
+                {fill(tr.smoothResultBy, {
+                  provider: meeting.smoothed.provider,
+                  model: meeting.smoothed.model,
+                })}
+              </p>
+              <div class="smooth-result">
+                <p>{meeting.smoothed.text}</p>
+              </div>
+              <div class="smooth-actions">
+                <button
+                  class="text-button"
+                  onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
+                >
+              </div>
+              <label class="smooth-prompt"
+                >{tr.smoothPromptLabel}<textarea
+                  bind:value={smoothPrompt}
+                  placeholder={tr.smoothPromptPlaceholder}
+                  aria-label={tr.smoothPromptLabel}
+                ></textarea>
+              </label>
+              <button
+                class="button primary small"
+                disabled={busy}
+                onclick={() => smoothTranscript()}>{busy ? tr.smoothRunning : tr.smoothAgain}</button
+              >
+            {:else}
+              <p class="smooth-intro">{tr.smoothIntro}</p>
+              <button
+                class="button primary small"
+                disabled={busy}
+                onclick={() => smoothTranscript()}>{busy ? tr.smoothRunning : tr.smoothButton}</button
+              >
+            {/if}
+            <p class="smooth-note">
+              {tr.smoothOriginalKept}
+              {data.llm_configured || smoothProvider === "openai-compatible" ? "" : ` ${tr.aiMissing}`}
+            </p>
+          </section>
+        {/if}
         <div class="workspace">
           <div
             class="transcript"

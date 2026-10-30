@@ -1,3 +1,11 @@
+# 0.7.0 — 30/10/2026 — làm mịn bản chép bằng AI
+
+- Thêm nút **Làm mịn** khi có bản chép cuối; gọi OpenAI, DeepSeek, Gemini hoặc endpoint OpenAI-compatible do người dùng cấu hình.
+- Kết quả làm mịn lưu riêng trong `smoothed`; **bản gốc `segments` không bị thay đổi**. UI hiển thị bản gốc và bản làm mịn, có nút sao chép.
+- Sau khi có kết quả, hiện ô **Yêu cầu thêm** và nút **Làm mịn lại**; để trống thì làm mịn bình thường. Prompt luôn nhắc AI không thêm/bớt/đổi nội dung.
+- API key chỉ giữ trong RAM; key không lưu vào phiên, preferences hay file xuất. Provider/model/base URL lưu trong preferences (không gồm key).
+- Thêm 3 Rust test cho endpoint/prompt/HTTP OpenAI-compatible; UI 46 test pass; Rust 51 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.6.11 — 30/10/2026 — chỉ báo hiệu chỉnh khi có bản chép
 
 - Thông báo “Đang hiệu chỉnh…” và khóa nút tải bản chép chỉ hiện khi phiên có segment/live text để hiệu chỉnh; phiên chỉ ghi âm không hiện thông báo sai.

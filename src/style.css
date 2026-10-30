@@ -671,6 +671,63 @@ h2 {
   color: var(--green);
   font-weight: 550;
 }
+.smooth-panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.smooth-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.smooth-panel-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 13px;
+}
+.smooth-meta,
+.smooth-intro,
+.smooth-note {
+  margin: 8px 0;
+  color: #65796c;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.smooth-result {
+  max-height: 230px;
+  overflow: auto;
+  border: 1px solid #dce7df;
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+.smooth-result p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.smooth-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.smooth-prompt {
+  display: block;
+  margin: 8px 0;
+}
+.smooth-prompt textarea {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin-top: 5px;
+  resize: vertical;
+}
 .transcript-tools {
   display: flex;
   align-items: center;

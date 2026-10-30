@@ -11,6 +11,13 @@ export interface Segment {
   text: string;
   edited: boolean;
 }
+export interface SmoothedTranscript {
+  text: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  created: string;
+}
 export interface Meeting {
   id: string;
   title: string;
@@ -26,6 +33,7 @@ export interface Meeting {
   notes: string;
   error: string | null;
   warnings: string[];
+  smoothed?: SmoothedTranscript | null;
 }
 export interface Model {
   id: string;
@@ -40,4 +48,5 @@ export interface Snapshot {
   data_dir: string;
   active_id: string | null;
   soniox_configured?: boolean;
+  llm_configured?: boolean;
 }

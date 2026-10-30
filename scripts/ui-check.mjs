@@ -135,6 +135,21 @@ async function setup(options = {}) {
           qa.snapshot.soniox_configured = !!args.key;
           return;
         }
+        if (cmd === "set_llm_key") {
+          qa.snapshot.llm_configured = !!args.key;
+          return;
+        }
+        if (cmd === "smooth_transcript") {
+          const s = qa.snapshot.sessions.find((s) => s.id === args.id);
+          s.smoothed = {
+            text: s.segments.map((x) => x.text).join("\n") + " (đã làm mịn)",
+            provider: args.provider,
+            model: args.model,
+            prompt: args.prompt,
+            created: "2026-10-30T00:00:00Z",
+          };
+          return structuredClone(s);
+        }
         if (cmd === "audio_path") {
           if (qa.delayAudio)
             await new Promise((r) =>
@@ -529,6 +544,57 @@ try {
               s.segments[0].edited && s.segments[0].text.includes("ngân sách"),
           ),
         ),
+      );
+    },
+  );
+  await check(
+    "AI smoothing keeps the original transcript and re-runs with an optional prompt",
+    {},
+    async (p) => {
+      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
+      await p
+        .getByRole("region", { name: "Bản làm mịn bằng AI" })
+        .getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true })
+        .waitFor();
+      await p.screenshot({ path: join(output, "ai-smoothing.png") });
+      assert(
+        await p.getByText("Nội dung thử tiếng Việt.", { exact: true }).isVisible(),
+      );
+      await p
+        .getByRole("textbox", { name: "Yêu cầu thêm (không bắt buộc)" })
+        .fill("Giữ nguyên tên riêng");
+      await p
+        .getByRole("region", { name: "Bản làm mịn bằng AI" })
+        .getByRole("button", { name: "Làm mịn lại", exact: true })
+        .click();
+      await p.waitForFunction(
+        () =>
+          window.qa.calls.filter((c) => c.cmd === "smooth_transcript").length ===
+          2,
+      );
+      const calls = await p.evaluate(() =>
+        window.qa.calls
+          .filter((c) => c.cmd === "smooth_transcript")
+          .map((c) => c.args.prompt),
+      );
+      assert.deepEqual(calls, ["", "Giữ nguyên tên riêng"]);
+    },
+  );
+  await check(
+    "AI smoothing key is kept in memory from Settings",
+    {},
+    async (p) => {
+      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
+      assert.equal(
+        await p.getByLabel("Nhà cung cấp", { exact: true }).inputValue(),
+        "openai",
+      );
+      await p.getByLabel("API key cho làm mịn").fill("sk-test");
+      await p.getByRole("button", { name: "Lưu key làm mịn", exact: true }).click();
+      await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
+      assert(
+        await p.getByText("Đã có key làm mịn trong bộ nhớ.", { exact: false }).isVisible(),
       );
     },
   );

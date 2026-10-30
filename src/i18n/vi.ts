@@ -263,6 +263,40 @@ const part2 = {
   gateTitle: "Chọn ngôn ngữ giao diện",
   gateSubtitle: "Choose your language · 언어 선택 · 选择界面语言",
   gateNote: "Bạn có thể đổi lại trong Cài đặt.",
+  aiTitle: "Làm mịn bản chép bằng AI",
+  aiDesc:
+    "Tùy chọn dùng API bên ngoài để sửa lỗi chính tả, dấu câu và từ bị nhận dạng sai. Chỉ gửi bản chép khi bạn bấm Làm mịn; bản gốc luôn được giữ.",
+  aiProvider: "Nhà cung cấp",
+  aiProviderOpenai: "OpenAI",
+  aiProviderDeepseek: "DeepSeek",
+  aiProviderGemini: "Gemini",
+  aiProviderCompatible: "OpenAI-compatible",
+  aiModel: "Model",
+  aiBaseUrl: "Base URL",
+  aiBaseUrlHint: "Ví dụ: http://127.0.0.1:11434/v1",
+  aiKey: "API key cho làm mịn",
+  aiKeyNote:
+    "Key chỉ giữ trong RAM và mất khi đóng app. Key không được lưu vào phiên hay file xuất.",
+  aiConfigured: "Đã có key làm mịn trong bộ nhớ.",
+  aiMissing: "Chưa có key làm mịn. Bạn vẫn có thể dùng bản chép local bình thường.",
+  aiKeepKey: "Lưu key làm mịn",
+  aiClearKey: "Xóa key làm mịn",
+  notifyAiKeyKept: "Đã giữ key làm mịn trong bộ nhớ đến khi đóng app.",
+  notifyAiKeyCleared: "Đã xóa key làm mịn khỏi bộ nhớ.",
+  smoothButton: "Làm mịn",
+  smoothAgain: "Làm mịn lại",
+  smoothHeading: "Bản làm mịn bằng AI",
+  smoothIntro:
+    "AI sẽ đọc bản chép cuối và chỉ sửa lỗi chính tả, dấu câu, viết hoa. Không thêm bớt ý, không tóm tắt, không đổi nội dung. Bản gốc vẫn được giữ.",
+  smoothPromptLabel: "Yêu cầu thêm (không bắt buộc)",
+  smoothPromptPlaceholder:
+    "Ví dụ: sửa tên riêng, thêm dấu câu… Để trống để làm mịn bình thường.",
+  smoothOriginalKept: "Bản gốc vẫn được giữ nguyên bên trên.",
+  smoothResultBy: "Bản làm mịn · {provider} · {model}",
+  smoothRunning: "Đang làm mịn…",
+  notifySmoothed: "Đã làm mịn bản chép. Bản gốc vẫn được giữ.",
+  smoothCopy: "Sao chép bản làm mịn",
+  smoothCopied: "Đã sao chép bản làm mịn.",
 };
 
 export const vi = { ...part1, ...part2 };

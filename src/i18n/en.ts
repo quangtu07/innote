@@ -256,6 +256,40 @@ const part3 = {
   gateTitle: "Choose your interface language",
   gateSubtitle: "Chọn ngôn ngữ · 언어 선택 · 选择界面语言",
   gateNote: "You can change this later in Settings.",
+  aiTitle: "Smooth transcript with AI",
+  aiDesc:
+    "Optionally use an external API to fix spelling, punctuation and clearly misheard words. The transcript is sent only when you press Smooth; the original is always kept.",
+  aiProvider: "Provider",
+  aiProviderOpenai: "OpenAI",
+  aiProviderDeepseek: "DeepSeek",
+  aiProviderGemini: "Gemini",
+  aiProviderCompatible: "OpenAI-compatible",
+  aiModel: "Model",
+  aiBaseUrl: "Base URL",
+  aiBaseUrlHint: "Example: http://127.0.0.1:11434/v1",
+  aiKey: "Smoothing API key",
+  aiKeyNote:
+    "The key stays in memory and is lost when the app closes. It is never saved in meetings or exports.",
+  aiConfigured: "A smoothing key is in memory.",
+  aiMissing: "No smoothing key yet. Local transcript remains fully usable.",
+  aiKeepKey: "Save smoothing key",
+  aiClearKey: "Remove smoothing key",
+  notifyAiKeyKept: "Smoothing key kept in memory until the app closes.",
+  notifyAiKeyCleared: "Smoothing key removed from memory.",
+  smoothButton: "Smooth",
+  smoothAgain: "Smooth again",
+  smoothHeading: "AI-smoothed transcript",
+  smoothIntro:
+    "AI reads the final transcript and only fixes spelling, punctuation and capitalization. It must not add or remove meaning, summarize or change content. The original stays untouched.",
+  smoothPromptLabel: "Additional request (optional)",
+  smoothPromptPlaceholder:
+    "For example: fix proper names, add punctuation… Leave empty for normal smoothing.",
+  smoothOriginalKept: "The original transcript remains above.",
+  smoothResultBy: "Smoothed · {provider} · {model}",
+  smoothRunning: "Smoothing…",
+  notifySmoothed: "Transcript smoothed. The original is still kept.",
+  smoothCopy: "Copy smoothed transcript",
+  smoothCopied: "Smoothed transcript copied.",
 };
 
 export const en: Partial<UiStrings> = { ...part1, ...part2, ...part3 };
