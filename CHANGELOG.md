@@ -1,3 +1,11 @@
+# 0.6.6 — 30/10/2026 — một bản chép lời duy nhất
+
+- Bỏ box **Chép trực tiếp** tách riêng khỏi bản chép lời.
+- Khi đang ghi/đang tạm dừng, text live được nối vào cuối danh sách bản chép như một đoạn đang chờ hiệu chỉnh.
+- Khi phiên đã dừng, bị ngắt hoặc hoàn tất, chỉ hiển thị bản chép theo đoạn đã chốt; không còn hai chế độ chép trùng nhau.
+- Không thay đổi dữ liệu, engine hay định dạng xuất.
+- Installer 78.895.614 byte SHA `714224...8ca8`; phiên interrupted chỉ còn 2 segment, không còn box live/“Chép trực tiếp”.
+
 # 0.6.5 — 29/10/2026 — logo installer/uninstaller
 
 - Gán `installerIcon` và `uninstallerIcon` của NSIS sang logo mới, để file Setup và bộ gỡ cài cũng hiện **trang ghi chú + waveform**, không còn icon NSIS mặc định.

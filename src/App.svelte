@@ -184,7 +184,16 @@
   $: liveWords = meeting ? Array.from(new Map([...(meeting.live ?? []), ...(currentLive?.words ?? [])].map(w => [w.id, w])).values()).filter(w => w.end > meeting!.processed + 0.00001).sort((a,b) => a.start - b.start) : [];
   $: liveText = liveWords.map(w => w.text).join(" ");
   $: partialText = meeting && currentLive && currentLive.end > meeting.processed && ["recording", "paused"].includes(meeting.status) ? currentLive.partial.split(/\s+/).slice((currentLive.partialWords ?? []).filter(w => w.end <= meeting!.processed + 0.00001).length).join(" ") : "";
-  $: showLive = !!meeting && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
+  $: showLive = !!meeting && ["recording", "paused"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
+  $: liveSegment = meeting && showLive
+    ? {
+        id: "live-preview",
+        start: liveWords[0]?.start ?? meeting.processed,
+        end: Math.max(meeting.processed, currentLive?.end ?? 0, liveWords[liveWords.length - 1]?.end ?? 0),
+        text: `${liveText}${liveText && partialText ? " " : ""}${partialText}`,
+        edited: false,
+      }
+    : null;
   // Keep DOM mutation outside the reactive statement: assigning scrollTop to a
   // bound node inside it invalidates that same dependency and can starve rendering.
   async function followLive(_text: string, _partial: string, follow: boolean) {
@@ -1462,11 +1471,18 @@
               </div>
               {/if}
             {/each}
-            {#if showLive}
-              <article class="live-transcript" aria-label={tr.liveAria}>
-                <div class="live-heading"><span class:live-dot={recording}></span> {tr.liveHeading} <small>{meeting?.model===multilingualModel?tr.liveRecognizing:tr.liveWaiting}</small></div>
-                <p data-live-caption>{liveText}{liveText && partialText ? " " : ""}<span class="live-partial">{partialText}</span></p>
-                <small>{meeting?.model===multilingualModel?tr.liveMultiNote:tr.liveWhisperNote}</small>
+            {#if liveSegment}
+              <article class="segment pending" aria-label={tr.liveAria}>
+                <button
+                  class="timestamp"
+                  title={tr.playFromHere}
+                  disabled={!audioUrl}
+                  onclick={() => seek(liveSegment.start)}>{clock(liveSegment.start)}</button
+                >
+                <div class="segment-body">
+                  <p data-live-caption>{liveSegment.text}</p>
+                  <small>{meeting?.status === "recording" ? tr.liveRecognizing : tr.liveWaiting}</small>
+                </div>
               </article>
             {/if}
           </div>

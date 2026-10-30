@@ -768,6 +768,16 @@ h2 {
   padding: 15px 0;
   border-bottom: 1px solid #f0f3ef;
 }
+.segment.pending {
+  margin: 10px 0 4px;
+  padding: 14px 12px;
+  background: #f2f8f3;
+  border: 1px solid #dcebe1;
+  border-radius: 12px;
+}
+.segment.pending .segment-body small {
+  color: #4b735c;
+}
 .segment:last-child {
   border: 0;
 }
