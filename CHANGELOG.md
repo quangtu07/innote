@@ -1,3 +1,9 @@
+# 0.6.10 — 30/10/2026 — báo đang hiệu chỉnh cạnh nút tải
+
+- Hiện thông báo **“Đang hiệu chỉnh… Có thể tải bản chép khi xong.”** ngay cạnh tiêu đề bản chép khi `recording/paused/processing`.
+- 3 nút `.md/.txt/.srt` vẫn khóa trong lúc chờ; `.mp3` vẫn tải được. Thông báo tự mất và nút tự bật khi hiệu chỉnh xong.
+- Không đổi dữ liệu/engine/định dạng xuất.
+
 # 0.6.9 — 30/10/2026 — ẩn nhãn hiệu chỉnh, chặn tải bản chép chưa xong
 
 - Ẩn dòng **“Đang hiệu chỉnh…”** dưới đoạn live; text vẫn hiển thị bình thường.

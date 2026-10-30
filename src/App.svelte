@@ -1364,6 +1364,9 @@
         <div class="transcript-heading">
           <div>
             <h2>{tr.transcript}</h2>
+            {#if refinementPending}<span class="refining-note" role="status"
+                >{tr.exportWaitRefinement}</span
+              >{/if}
             {#if meeting && ["recording", "paused", "processing"].includes(meeting.status)}<span
                 >{fill(tr.processedProgress, { status: meeting?.model===multilingualModel?tr.processedCommitted:tr.processedCorrected, processed: clock(meeting.processed), duration: clock(meeting.duration) })}</span
               >{/if}

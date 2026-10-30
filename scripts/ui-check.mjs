@@ -416,6 +416,7 @@ try {
     await p.getByRole('article',{name:'Bản chép trực tiếp'}).getByText('Đang nói trực tiếp',{exact:true}).waitFor({timeout:500});
     assert.equal(await p.getByText('Đang nhận dạng',{exact:true}).count(),0);
     assert.equal(await p.getByText('Đang hiệu chỉnh…',{exact:true}).count(),0);
+    await p.getByText('Đang hiệu chỉnh… Có thể tải bản chép khi xong.',{exact:true}).waitFor();
     assert(await p.getByRole('button',{name:'Tải .md',exact:true}).isDisabled());
     assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='report_live_paint').length),0);
     await send({id:ids[2],audit_epoch_unix_ms:Date.now()-2000,update:{text:"Đang nói trực tiếp",start:0,end:2,final_text:false,words:[]}});

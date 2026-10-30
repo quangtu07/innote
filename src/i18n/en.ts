@@ -171,7 +171,7 @@ const part3 = {
   exportMp3Title: "Download audio recording as MP3",
   exportMp3: "Download .mp3",
   exportWaitRefinement:
-    "Whisper is still refining the transcript. Please wait before downloading.",
+    "Refining transcript… You can download once it finishes.",
   searchContent: "Search content",
   searchTranscript: "Search transcript",
   notesTitle: "Your notes",

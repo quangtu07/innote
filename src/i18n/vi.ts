@@ -167,7 +167,7 @@ const part2 = {
   exportMp3Title: "Tải bản ghi âm MP3",
   exportMp3: "Tải .mp3",
   exportWaitRefinement:
-    "Whisper đang hiệu chỉnh bản chép, vui lòng đợi xong để tải.",
+    "Đang hiệu chỉnh… Có thể tải bản chép khi xong.",
   searchContent: "Tìm trong nội dung",
   searchTranscript: "Tìm trong bản chép lời",
   notesTitle: "Ghi chú của bạn",

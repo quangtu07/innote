@@ -160,7 +160,7 @@ const part2 = {
   exportSrt: "下载 .srt",
   exportMp3Title: "下载 MP3 录音",
   exportMp3: "下载 .mp3",
-  exportWaitRefinement: "Whisper 正在校正转写，请完成后再下载。",
+  exportWaitRefinement: "正在校正转写… 完成后即可下载。",
   searchContent: "搜索内容",
   searchTranscript: "搜索转写",
   notesTitle: "你的笔记",

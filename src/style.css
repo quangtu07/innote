@@ -667,6 +667,10 @@ h2 {
   font-size: 11px;
   color: #65796c;
 }
+.transcript-heading .refining-note {
+  color: var(--green);
+  font-weight: 550;
+}
 .transcript-tools {
   display: flex;
   align-items: center;

@@ -168,7 +168,7 @@ const part2 = {
   exportMp3Title: "녹음 MP3 다운로드",
   exportMp3: ".mp3 다운로드",
   exportWaitRefinement:
-    "Whisper가 아직 전사를 보정 중입니다. 완료 후 다운로드하세요.",
+    "전사 보정 중… 완료 후 다운로드할 수 있습니다.",
   searchContent: "내용 검색",
   searchTranscript: "전사 검색",
   notesTitle: "내 메모",
