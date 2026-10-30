@@ -843,6 +843,7 @@ async fn test_llm_connection(
         let api_key = key
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
         llm::test_connection(&provider, &model, &base_url, &api_key)?;
         Ok("ok".into())
     })
@@ -862,6 +863,7 @@ async fn fetch_llm_models(
         let api_key = key
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
         llm::fetch_models(&provider, &base_url, &api_key)
     })
     .await
@@ -911,6 +913,7 @@ async fn summarize_transcript(
         let api_key = key
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
         let summary_text =
             llm::summarize(&provider, &model, &base_url, &api_key, &transcript, &style, &prompt)?;
         m.edit(&id, |s| {
@@ -961,6 +964,7 @@ async fn smooth_transcript(
         let api_key = key
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
         let smoothed = llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt)?;
         m.edit(&id, |s| {
             s.smoothed = Some(SmoothedTranscript {

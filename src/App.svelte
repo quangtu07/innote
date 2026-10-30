@@ -634,6 +634,10 @@
     });
   }
   async function testLlmConnection() {
+    if (!smoothKey.trim() && !data.llm_configured) {
+      error = tr.aiKeyRequired;
+      return;
+    }
     await action(async () => {
       await invoke("test_llm_connection", {
         provider: smoothProvider,
@@ -646,6 +650,10 @@
     });
   }
   async function fetchModels() {
+    if (!smoothKey.trim() && !data.llm_configured) {
+      error = tr.aiKeyRequired;
+      return;
+    }
     await action(async () => {
       const models = await invoke<string[]>("fetch_llm_models", {
         provider: smoothProvider,
@@ -1397,7 +1405,7 @@
                   }}
                 /><button
                   class="button secondary small"
-                  disabled={busy}
+                  disabled={busy || (!smoothKey.trim() && !data.llm_configured)}
                   onclick={() => fetchModels()}
                   >{busy ? tr.aiFetchingModels : tr.aiFetchModels}</button
                 >
@@ -1430,13 +1438,13 @@
                   autocomplete="off"
                   spellcheck="false"
                   bind:value={smoothKey}
-                  placeholder={tr.optional}
+                  placeholder={tr.aiKeyPlaceholder}
                   oninput={() => {
                     llmConnectionSignature = "";
                   }}
                 /><button
                   class="button secondary"
-                  disabled={busy}
+                  disabled={busy || (!smoothKey.trim() && !data.llm_configured)}
                   onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
                 >
               </div></label
@@ -1964,7 +1972,7 @@
             {/if}
             <p class="smooth-note">
               {tr.smoothOriginalKept}
-              {data.llm_configured || smoothProvider === "openai-compatible" ? "" : ` ${tr.aiMissing}`}
+              {data.llm_configured ? "" : ` ${tr.aiMissing}`}
             </p>
           </section>
         {/if}
@@ -2320,7 +2328,7 @@
       <p class="smooth-connected" role="status">{tr.aiConnected}</p>
     {:else}
       <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
-      {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<p
+      {#if !data.llm_configured}<p
             class="smooth-connect-hint">{tr.aiNeedKey}</p
           >{/if}
       <button
@@ -2328,7 +2336,7 @@
         disabled={busy}
         onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
       >
-      {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<button
+      {#if !data.llm_configured}<button
             class="text-button"
             disabled={busy}
             onclick={() => {
@@ -2421,7 +2429,7 @@
         <p class="smooth-connected" role="status">{tr.aiConnected}</p>
       {:else}
         <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
-        {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<p
+        {#if !data.llm_configured}<p
             class="smooth-connect-hint"
           >{tr.aiNeedKey}</p>{/if}
         <div class="summary-connect-row">
@@ -2430,7 +2438,7 @@
             disabled={busy}
             onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
           >
-          {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<button
+          {#if !data.llm_configured}<button
               class="text-button"
               disabled={busy}
               onclick={() => {

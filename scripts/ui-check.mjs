@@ -585,9 +585,22 @@ try {
     {},
     async (p) => {
       await openMeeting(p, "Cuộc họp Alpha");
+      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
+      await p.getByLabel("API key cho AI").fill("sk-test");
+      await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
+      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
+
       await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
       const dialog = p.getByRole("dialog");
-      await dialog.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
+      if (
+        await dialog
+          .getByRole("button", { name: "Kiểm tra API", exact: true })
+          .isVisible()
+          .catch(() => false)
+      ) {
+        await dialog.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
+      }
       await dialog.getByRole("button", { name: "Làm mịn", exact: true }).click();
       await p
         .getByRole("region", { name: "Bản làm mịn bằng AI" })
@@ -643,9 +656,9 @@ try {
     async (p) => {
       await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
-      await p.getByLabel("API key cho làm mịn").fill("sk-test");
+      await p.getByLabel("API key cho AI").fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
-      await p.getByRole("button", { name: "Lưu key làm mịn", exact: true }).click();
+      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await openMeeting(p, "Cuộc họp Alpha");
 
       await p.getByRole("button", { name: "Tóm tắt", exact: true }).click();
@@ -682,17 +695,17 @@ try {
         await p.getByLabel("Nhà cung cấp", { exact: true }).inputValue(),
         "openai",
       );
-      await p.getByLabel("API key cho làm mịn").fill("sk-test");
+      await p.getByLabel("API key cho AI").fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       await p.getByRole("button", { name: "Lấy model", exact: true }).click();
       await p.waitForFunction(() =>
         window.qa.calls.some((c) => c.cmd === "fetch_llm_models"),
       );
-      await p.getByRole("button", { name: "Lưu key làm mịn", exact: true }).click();
+      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
       await p.screenshot({ path: join(output, "ai-settings.png") });
       assert(
-        await p.getByText("Đã có key làm mịn trong bộ nhớ.", { exact: false }).isVisible(),
+        await p.getByText("Đã có API key trong bộ nhớ.", { exact: false }).isVisible(),
       );
     },
   );

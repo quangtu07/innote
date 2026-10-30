@@ -233,12 +233,10 @@ pub fn smooth(
 
     let (url, body, key) = match provider.as_str() {
         "openai" | "deepseek" | "openai-compatible" => {
-            if provider != "openai-compatible" {
-                ensure!(
-                    !api_key.trim().is_empty(),
-                    "Cần nhập API key cho nhà cung cấp này"
-                );
-            }
+            ensure!(
+                !api_key.trim().is_empty(),
+                "Cần nhập API key cho nhà cung cấp này"
+            );
             let url = chat_endpoint(&provider, base_url)?;
             let body = json!({
                 "model": model,
@@ -252,6 +250,7 @@ pub fn smooth(
             (url, body, api_key.trim().to_string())
         }
         "gemini" => {
+            ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
             let url = gemini_endpoint(model, api_key)?;
             let body = json!({
                 "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -337,12 +336,10 @@ pub fn summarize(
 
     let (url, body, key) = match provider.as_str() {
         "openai" | "deepseek" | "openai-compatible" => {
-            if provider != "openai-compatible" {
-                ensure!(
-                    !api_key.trim().is_empty(),
-                    "Cần nhập API key cho nhà cung cấp này"
-                );
-            }
+            ensure!(
+                !api_key.trim().is_empty(),
+                "Cần nhập API key cho nhà cung cấp này"
+            );
             let url = chat_endpoint(&provider, base_url)?;
             let body = json!({
                 "model": model,
@@ -357,6 +354,7 @@ pub fn summarize(
             (url, body, api_key.trim().to_string())
         }
         "gemini" => {
+            ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
             let url = gemini_endpoint(model, api_key)?;
             let body = json!({
                 "system_instruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
@@ -413,12 +411,10 @@ pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec
         .context("Không tạo được HTTP client")?;
     let (url, key) = match provider.as_str() {
         "openai" | "deepseek" | "openai-compatible" => {
-            if provider != "openai-compatible" {
-                ensure!(
-                    !api_key.trim().is_empty(),
-                    "Cần nhập API key cho nhà cung cấp này"
-                );
-            }
+            ensure!(
+                !api_key.trim().is_empty(),
+                "Cần nhập API key cho nhà cung cấp này"
+            );
             (models_endpoint(&provider, base_url)?, api_key.trim())
         }
         "gemini" => {
@@ -561,7 +557,7 @@ mod tests {
             "openai-compatible",
             "test-model",
             &format!("http://{address}/v1"),
-            "",
+            "test-key",
             "Nội dung gốc",
             "",
         )
@@ -591,7 +587,7 @@ mod tests {
         let models = fetch_models(
             "openai-compatible",
             &format!("http://{address}/v1"),
-            "",
+            "test-key",
         )
         .unwrap();
         assert_eq!(models, vec!["model-a", "model-b"]);
