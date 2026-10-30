@@ -363,6 +363,7 @@ mod tests {
             notes: "Đã chốt · Agreed · 합의했습니다 · 已确认".into(),
             error: None,
             warnings: vec![],
+            smoothed: None,
         };
         save(&dir, &s).unwrap();
         let mut loaded = load(&dir, &s.id).unwrap();
@@ -415,6 +416,7 @@ mod tests {
             notes: "Giữ ghi chú".into(),
             error: None,
             warnings: vec![],
+            smoothed: None,
         };
         save(&dir, &s).unwrap();
         recover(&dir).unwrap();
