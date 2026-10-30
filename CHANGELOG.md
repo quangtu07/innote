@@ -1,3 +1,9 @@
+# 0.7.4 — 30/10/2026 — nút đổi tên/xóa rõ ràng trên card
+
+- Thay icon-only bị cắt bằng nút chữ **Đổi tên** và **Xóa** trong card; bố cục card dạng lưới, toolbar nằm bên phải, không bị che.
+- Thêm nhãn ngắn 4 locale; giữ nguyên confirm xóa và sửa tên inline.
+- UI 47 test pass; Rust 53 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.3 — 30/10/2026 — danh sách cuộc họp trong sidebar
 
 - Bỏ danh sách cuộc họp dài khỏi sidebar; thêm nút **Danh sách cuộc họp** kèm số lượng.

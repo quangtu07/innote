@@ -305,6 +305,8 @@ const part2 = {
   titleRequired: "회의 이름은 비워 둘 수 없습니다.",
   notifyRenamed: "회의 이름을 변경했습니다.",
   closeMeetings: "회의 목록 닫기",
+  renameShort: "이름 변경",
+  deleteShort: "삭제",
   smoothUsing: "{provider} · {model} 사용",
   notifyAiKeyKept: "다듬기 키를 앱을 닫을 때까지 메모리에 보관합니다.",
   notifyAiKeyCleared: "메모리에서 다듬기 키를 삭제했습니다.",

@@ -284,6 +284,8 @@ const part2 = {
   titleRequired: "会议名称不能为空。",
   notifyRenamed: "会议已重命名。",
   closeMeetings: "关闭会议列表",
+  renameShort: "重命名",
+  deleteShort: "删除",
   smoothUsing: "使用 {provider} · {model}",
   notifyAiKeyKept: "润色 key 将保存在内存中，直到关闭应用。",
   notifyAiKeyCleared: "已从内存中删除润色 key。",

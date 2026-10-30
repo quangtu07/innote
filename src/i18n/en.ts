@@ -298,6 +298,8 @@ const part3 = {
   titleRequired: "Meeting name cannot be empty.",
   notifyRenamed: "Meeting renamed.",
   closeMeetings: "Close meeting list",
+  renameShort: "Rename",
+  deleteShort: "Delete",
   smoothUsing: "Using {provider} · {model}",
   notifyAiKeyKept: "Smoothing key kept in memory until the app closes.",
   notifyAiKeyCleared: "Smoothing key removed from memory.",

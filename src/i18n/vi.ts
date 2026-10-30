@@ -306,6 +306,8 @@ const part2 = {
   titleRequired: "Tên cuộc họp không được để trống.",
   notifyRenamed: "Đã đổi tên cuộc họp.",
   closeMeetings: "Đóng danh sách",
+  renameShort: "Đổi tên",
+  deleteShort: "Xóa",
   smoothUsing: "Dùng {provider} · {model}",
   notifyAiKeyKept: "Đã giữ key làm mịn trong bộ nhớ đến khi đóng app.",
   notifyAiKeyCleared: "Đã xóa key làm mịn khỏi bộ nhớ.",

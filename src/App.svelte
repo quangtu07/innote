@@ -1962,16 +1962,16 @@
           </button>
           <div class="meeting-card-actions">
             <button
-              class="icon-button"
+              class="card-action"
               title={tr.renameMeeting}
               aria-label={`${tr.renameMeeting}: ${s.title}`}
-              onclick={() => startRename(s)}><Pencil size={15} /></button
+              onclick={() => startRename(s)}><Pencil size={14} /><span>{tr.renameShort}</span></button
             >
             <button
-              class="icon-button danger"
+              class="card-action danger"
               title={tr.deleteMeeting}
               aria-label={`${tr.deleteMeeting}: ${s.title}`}
-              onclick={() => askDelete(s)}><Trash2 size={15} /></button
+              onclick={() => askDelete(s)}><Trash2 size={14} /><span>{tr.deleteShort}</span></button
             >
           </div>
           {#if renamingId === s.id}
