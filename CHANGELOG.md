@@ -1,3 +1,10 @@
+# 0.7.7 — 30/10/2026 — sửa lỗi phát âm thanh thu thử và nghe lại cuộc họp
+
+- **Sửa lỗi phát âm thanh thu thử và nghe lại (`403 Forbidden`):** Khôi phục và mở rộng scope bảo mật `assetProtocol` trong cấu hình Tauri (`$LOCALDATA/Innote/sessions/**`, `$APPLOCALDATA/**`, `**`), khắc phục lỗi trình phát audio bị khóa ở `0:00 / 0:00` do WebView2 bị chặn quyền truy cập file ghi âm cục bộ.
+- **Tải lại trình phát audio tin cậy:** Bọc thẻ `<audio>` trong block `{#key testUrl}` / `{#key audioUrl}`, thêm thuộc tính `preload="auto"` và gọi hàm `.load()` đồng bộ ngay khi có bản thu mới.
+- **Bắt buộc API key cho mọi chức năng AI:** Khóa các nút kiểm tra/lấy model khi chưa có key, chặn từ tầng Rust backend nếu gọi API thiếu key.
+- UI 48 test pass; Rust 54 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.6 — 30/10/2026 — tóm tắt cuộc họp AI, sửa lỗi AI JSON và làm đẹp cài đặt
 
 - **Tóm tắt cuộc họp AI (`Session.summary`):** Tùy chọn 3 phong cách (Tổng quan ngắn, Quyết định & việc cần làm, Đầy đủ) và 2 nguồn (Bản gốc / Bản làm mịn); tab chuyển đổi mượt mà giữa Bản chép lời và Tóm tắt; cảnh báo khi bản chép thay đổi; hỗ trợ sao chép, tải .md/.txt/.srt và xóa tóm tắt.

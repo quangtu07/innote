@@ -977,6 +977,9 @@
           testFeedback += ` ${fill(tr.testQuiet, { sources: quiet.join(" + ") })}`;
         testQuiet = quiet.length > 0;
         notify(tr.testDone);
+        tick().then(() => {
+          testAudio?.load();
+        });
       });
       if (!testUrl)
         testLabel = tr.testNoRecording;
@@ -1694,13 +1697,18 @@
                     ? fill(tr.testCount, { seconds: testSeconds })
                     : tr.savingTest}{/if}
               </p>{/if}
-            {#if testUrl}<audio
-                bind:this={testAudio}
-                class="test-audio"
-                controls
-                src={testUrl}
-                aria-label={tr.testAudio}
-              ></audio>{/if}
+            {#if testUrl}
+              {#key testUrl}
+                <audio
+                  bind:this={testAudio}
+                  class="test-audio"
+                  controls
+                  preload="auto"
+                  src={testUrl}
+                  aria-label={tr.testAudio}
+                ></audio>
+              {/key}
+            {/if}
             {#if testFeedback}<p
                 class="test-feedback"
                 class:quiet={testQuiet}
@@ -2155,13 +2163,18 @@
               transcript.scrollTop = transcript.scrollHeight;
             }}><ArrowDown size={14} /> {tr.jumpLatest}</button
           >{/if}
-        {#if audioUrl}<audio
-            class="playback"
-            controls
-            bind:this={audio}
-            src={audioUrl}
-            aria-label={tr.playbackAria}
-          ></audio>{/if}
+        {#if audioUrl}
+          {#key audioUrl}
+            <audio
+              class="playback"
+              controls
+              preload="auto"
+              bind:this={audio}
+              src={audioUrl}
+              aria-label={tr.playbackAria}
+            ></audio>
+          {/key}
+        {/if}
         <footer class="meeting-footer">
           <div class="save-state">
             <Check size={15} /><span
