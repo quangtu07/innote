@@ -293,6 +293,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
             vec![]
         },
         smoothed: None,
+        summary: None,
     };
     storage::save(&may.root, &s)?;
     let run = Arc::new(Run {
@@ -866,6 +867,71 @@ async fn fetch_llm_models(
     .await
     .map_err(err)?
     .map_err(err)
+}
+#[tauri::command]
+async fn summarize_transcript(
+    may: State<'_, May>,
+    id: String,
+    provider: String,
+    model: String,
+    base_url: String,
+    prompt: String,
+    style: String,
+    source: String,
+    key: Option<String>,
+) -> std::result::Result<Session, String> {
+    let m = may.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
+        let session = storage::load(&m.root, &id)?;
+        anyhow::ensure!(
+            !["recording", "paused", "processing"].contains(&session.status.as_str()),
+            "Hãy đợi bản chép lời hoàn tất trước khi tóm tắt"
+        );
+        let (transcript, source_name) = if source == "smoothed" {
+            match session.smoothed.as_ref() {
+                Some(smoothed) => (smoothed.text.clone(), "smoothed".to_string()),
+                None => anyhow::bail!("Chưa có bản làm mịn để tóm tắt"),
+            }
+        } else {
+            let text = session
+                .segments
+                .iter()
+                .map(|segment| segment.text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::ensure!(!text.is_empty(), "Chưa có bản chép lời để tóm tắt");
+            (text, "original".to_string())
+        };
+        let mut hasher: u64 = 0;
+        for byte in transcript.bytes() {
+            hasher = hasher.wrapping_mul(31).wrapping_add(byte as u64);
+        }
+        let source_hash = format!("{}", hasher & 0xffffffff);
+        let api_key = key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        let summary_text =
+            llm::summarize(&provider, &model, &base_url, &api_key, &transcript, &style, &prompt)?;
+        m.edit(&id, |s| {
+            s.summary = Some(SummarizedTranscript {
+                text: summary_text,
+                provider,
+                model,
+                source: source_name,
+                prompt,
+                created: chrono::Utc::now().to_rfc3339(),
+                source_hash,
+            });
+        })
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+#[tauri::command]
+fn delete_summary(may: State<May>, id: String) -> std::result::Result<Session, String> {
+    may.edit(&id, |s| s.summary = None).map_err(err)
 }
 #[tauri::command]
 async fn smooth_transcript(
@@ -1503,6 +1569,7 @@ mod controller_tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            summary: None,
         };
         storage::save(&root, &session).unwrap();
         let may = may(root.clone());
@@ -1637,6 +1704,7 @@ fn main() {
                 error: None,
                 warnings: vec![],
                 smoothed: None,
+                summary: None,
             };
             if let Some(text) = args.get(5).filter(|x| !x.is_empty()) {
                 s.segments.push(Segment {
@@ -1746,6 +1814,8 @@ fn main() {
             test_llm_connection,
             fetch_llm_models,
             smooth_transcript,
+            summarize_transcript,
+            delete_summary,
             refresh_devices,
             start,
             pause,

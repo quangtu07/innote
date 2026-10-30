@@ -18,6 +18,15 @@ export interface SmoothedTranscript {
   prompt: string;
   created: string;
 }
+export interface Summary {
+  text: string;
+  provider: string;
+  model: string;
+  source: string;
+  prompt: string;
+  created: string;
+  source_hash?: string;
+}
 export interface Meeting {
   id: string;
   title: string;
@@ -34,6 +43,7 @@ export interface Meeting {
   error: string | null;
   warnings: string[];
   smoothed?: SmoothedTranscript | null;
+  summary?: Summary | null;
 }
 export interface Model {
   id: string;

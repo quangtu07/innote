@@ -26,6 +26,18 @@ pub struct SmoothedTranscript {
     pub created: String,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SummarizedTranscript {
+    pub text: String,
+    pub provider: String,
+    pub model: String,
+    pub source: String,
+    #[serde(default)]
+    pub prompt: String,
+    pub created: String,
+    #[serde(default)]
+    pub source_hash: String,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Session {
     pub id: String,
     pub title: String,
@@ -48,6 +60,9 @@ pub struct Session {
     /// AI-smoothed copy. The original `segments` are never replaced.
     #[serde(default)]
     pub smoothed: Option<SmoothedTranscript>,
+    /// AI summary, stored separately from the transcript.
+    #[serde(default)]
+    pub summary: Option<SummarizedTranscript>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelInfo {

@@ -79,17 +79,97 @@ fn user_prompt(original: &str, additional: &str) -> String {
 }
 
 fn openai_text(value: &Value) -> Option<String> {
-    let content = &value["choices"][0]["message"]["content"];
+    let choice = &value["choices"][0];
+    let content = &choice["message"]["content"];
     if let Some(text) = content.as_str() {
         return Some(text.to_string());
     }
-    content.as_array().map(|parts| {
-        parts
+    if let Some(parts) = content.as_array() {
+        let joined = parts
             .iter()
             .filter_map(|part| part.get("text").and_then(Value::as_str))
             .collect::<Vec<_>>()
-            .join("")
-    })
+            .join("");
+        if !joined.is_empty() {
+            return Some(joined);
+        }
+    }
+    if let Some(text) = choice["text"].as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(delta) = choice["delta"]["content"].as_str() {
+        return Some(delta.to_string());
+    }
+    None
+}
+
+fn parse_ai_response(raw: &str, provider: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_start_matches('\u{feff}');
+
+    // Support streaming/SSE chunks if an OpenAI-compatible proxy forces text/event-stream
+    if trimmed.starts_with("data:") || trimmed.contains("\ndata:") || trimmed.contains("\r\ndata:")
+    {
+        let mut full_text = String::new();
+        let mut has_sse_content = false;
+        for line in trimmed.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("data:") {
+                let rest = rest.trim();
+                if rest.is_empty() || rest == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<Value>(rest) {
+                    if let Some(err) = v.get("error") {
+                        let msg = err
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .or_else(|| err.as_str())
+                            .unwrap_or("Lỗi từ AI");
+                        bail!("AI báo lỗi: {msg}");
+                    }
+                    if let Some(t) = v["choices"][0]["delta"]["content"].as_str() {
+                        full_text.push_str(t);
+                        has_sse_content = true;
+                    } else if let Some(t) = v["choices"][0]["message"]["content"].as_str() {
+                        full_text.push_str(t);
+                        has_sse_content = true;
+                    } else if let Some(t) = v["choices"][0]["text"].as_str() {
+                        full_text.push_str(t);
+                        has_sse_content = true;
+                    }
+                }
+            }
+        }
+        if has_sse_content && !full_text.trim().is_empty() {
+            return Ok(clean_response(&full_text));
+        }
+    }
+
+    let json_candidate = clean_response(trimmed);
+    let value: Value = serde_json::from_str(&json_candidate)
+        .or_else(|_| serde_json::from_str(trimmed))
+        .map_err(|e| {
+            let snippet: String = trimmed.chars().take(200).collect();
+            anyhow::anyhow!("AI trả về JSON không hợp lệ: {e}. Nội dung phản hồi: {snippet}")
+        })?;
+
+    if let Some(err) = value.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| err.as_str())
+            .unwrap_or("Lỗi từ AI");
+        bail!("AI báo lỗi: {msg}");
+    }
+
+    let text = if provider == "gemini" {
+        gemini_text(&value)
+    } else {
+        openai_text(&value)
+    }
+    .context("Không tìm thấy nội dung trong phản hồi AI")?;
+
+    Ok(clean_response(&text))
 }
 
 fn gemini_text(value: &Value) -> Option<String> {
@@ -166,7 +246,8 @@ pub fn smooth(
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1
+                "temperature": 0.1,
+                "stream": false
             });
             (url, body, api_key.trim().to_string())
         }
@@ -182,7 +263,10 @@ pub fn smooth(
         _ => bail!("Nhà cung cấp AI không hợp lệ"),
     };
 
-    let mut request = client.post(&url).json(&body);
+    let mut request = client
+        .post(&url)
+        .header("Accept", "application/json")
+        .json(&body);
     if !key.is_empty() {
         request = request.bearer_auth(key);
     }
@@ -193,15 +277,113 @@ pub fn smooth(
         let detail: String = raw.chars().take(500).collect();
         bail!("AI trả về lỗi {status}: {detail}");
     }
-    let value: Value = serde_json::from_str(&raw).context("AI trả về JSON không hợp lệ")?;
-    let text = if provider == "gemini" {
-        gemini_text(&value)
-    } else {
-        openai_text(&value)
-    }
-    .context("Không tìm thấy nội dung trong phản hồi AI")?;
-    let text = clean_response(&text);
+    let text = parse_ai_response(&raw, &provider)?;
     ensure!(!text.is_empty(), "AI trả về bản làm mịn rỗng");
+    Ok(text)
+}
+
+const SUMMARY_SYSTEM: &str = "Bạn là trợ lý tóm tắt cuộc họp. Chỉ dùng thông tin có trong bản chép được cung cấp. Tuyệt đối không thêm ý ngoài, không suy đoán, không bịa nội dung. Nếu bản chép không đề cập điều gì thì ghi \"Không đề cập\". Giữ nguyên tên riêng, con số và mốc thời gian. Trả về bằng đúng ngôn ngữ gốc của bản chép, không dịch. Kết quả trình bày dạng Markdown với các đề mục.";
+
+fn summary_prompt(transcript: &str, style: &str, additional: &str) -> String {
+    let focus = match style.trim() {
+        "decisions" => "Tập trung vào QUYẾT ĐỊNH và VIỆC CẦN LÀM. Khi có việc cần làm, chỉ ghi người phụ trách/thời hạn nếu bản chép nói rõ.",
+        "full" => "Cho bản tóm tắt đầy đủ hơn nhưng vẫn ngắn gọn và có cấu trúc.",
+        _ => "Cho bản tóm tắt ngắn gọn 3–6 gạch đầu dòng.",
+    };
+    let mut prompt = format!(
+        "BẢN CHÉP CUỘC HỌP:\n{transcript}\n\nYÊU CẦU: {focus}"
+    );
+    let additional = additional.trim();
+    if !additional.is_empty() {
+        prompt.push_str(&format!("\n\nLƯU Ý THÊM CỦA NGƯỜI DÙNG: {additional}"));
+    }
+    prompt.push_str(
+        "\n\nTrả về Markdown:\n## Tóm tắt ngắn\n...\n## Quyết định\n...\n## Việc cần làm\n...\n## Rủi ro / câu hỏi mở\n...\nKhông thêm ghi chú ngoài bản chép.",
+    );
+    prompt
+}
+
+pub fn summarize(
+    provider: &str,
+    model: &str,
+    base_url: &str,
+    api_key: &str,
+    transcript: &str,
+    style: &str,
+    additional: &str,
+) -> Result<String> {
+    let provider = provider.trim().to_ascii_lowercase();
+    let model = if model.trim().is_empty() {
+        default_model(&provider)?
+    } else {
+        model.trim()
+    };
+    ensure!(!model.trim().is_empty(), "Cần nhập model AI");
+    ensure!(!transcript.trim().is_empty(), "Bản chép lời đang trống");
+    ensure!(
+        transcript.chars().count() <= 160_000,
+        "Bản chép quá dài để tóm tắt. Hãy chia nhỏ cuộc họp."
+    );
+    ensure!(
+        additional.chars().count() <= 4_000,
+        "Yêu cầu thêm quá dài (tối đa 4.000 ký tự)"
+    );
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .context("Không tạo được HTTP client")?;
+    let prompt = summary_prompt(transcript, style, additional);
+
+    let (url, body, key) = match provider.as_str() {
+        "openai" | "deepseek" | "openai-compatible" => {
+            if provider != "openai-compatible" {
+                ensure!(
+                    !api_key.trim().is_empty(),
+                    "Cần nhập API key cho nhà cung cấp này"
+                );
+            }
+            let url = chat_endpoint(&provider, base_url)?;
+            let body = json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": SUMMARY_SYSTEM},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 1600,
+                "stream": false
+            });
+            (url, body, api_key.trim().to_string())
+        }
+        "gemini" => {
+            let url = gemini_endpoint(model, api_key)?;
+            let body = json!({
+                "system_instruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1600}
+            });
+            (url, body, String::new())
+        }
+        _ => bail!("Nhà cung cấp AI không hợp lệ"),
+    };
+
+    let mut request = client
+        .post(&url)
+        .header("Accept", "application/json")
+        .json(&body);
+    if !key.is_empty() {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().context("Không gửi được yêu cầu tới AI")?;
+    let status = response.status();
+    let raw = response.text().context("Không đọc được phản hồi AI")?;
+    if !status.is_success() {
+        let detail: String = raw.chars().take(500).collect();
+        bail!("AI trả về lỗi {status}: {detail}");
+    }
+    let text = parse_ai_response(&raw, &provider)?;
+    ensure!(!text.is_empty(), "AI trả về bản tóm tắt rỗng");
     Ok(text)
 }
 
@@ -331,6 +513,30 @@ mod tests {
     fn response_cleanup_removes_code_fence_but_keeps_text() {
         assert_eq!(clean_response("```text\nXin chào\n```"), "Xin chào");
         assert_eq!(clean_response("  Xin chào  "), "Xin chào");
+    }
+
+    #[test]
+    fn parse_ai_response_handles_sse_and_bom_and_json() {
+        let json_ok = r#"{"choices":[{"message":{"content":"Bản làm mịn."}}]}"#;
+        assert_eq!(
+            parse_ai_response(json_ok, "openai").unwrap(),
+            "Bản làm mịn."
+        );
+
+        let sse_stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Hôm \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"nay.\"}}]}\n\ndata: [DONE]\n";
+        assert_eq!(
+            parse_ai_response(sse_stream, "openai-compatible").unwrap(),
+            "Hôm nay."
+        );
+
+        let bom_json = format!("\u{feff}{json_ok}");
+        assert_eq!(
+            parse_ai_response(&bom_json, "openai").unwrap(),
+            "Bản làm mịn."
+        );
+
+        let err_json = r#"{"error":{"message":"API key không hợp lệ"}}"#;
+        assert!(parse_ai_response(err_json, "openai").is_err());
     }
 
     #[test]

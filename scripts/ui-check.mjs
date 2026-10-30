@@ -152,6 +152,24 @@ async function setup(options = {}) {
           };
           return structuredClone(s);
         }
+        if (cmd === "summarize_transcript") {
+          const s = qa.snapshot.sessions.find((s) => s.id === args.id);
+          s.summary = {
+            text: "## Tóm tắt ngắn\n- Ý chính cuộc họp 1\n- Ý chính cuộc họp 2\n\n## Quyết định\n- Đã thông qua ngân sách",
+            provider: args.provider,
+            model: args.model,
+            source: args.source,
+            prompt: args.prompt,
+            created: "2026-10-30T00:00:00Z",
+            source_hash: "12345678",
+          };
+          return structuredClone(s);
+        }
+        if (cmd === "delete_summary") {
+          const s = qa.snapshot.sessions.find((s) => s.id === args.id);
+          s.summary = null;
+          return structuredClone(s);
+        }
         if (cmd === "audio_path") {
           if (qa.delayAudio)
             await new Promise((r) =>
@@ -617,6 +635,42 @@ try {
           .map((c) => c.args.prompt),
       );
       assert.deepEqual(calls, ["", "Giữ nguyên tên riêng"]);
+    },
+  );
+  await check(
+    "Meeting summary dialog generates, switches tabs, and renders structured content",
+    {},
+    async (p) => {
+      await openMeeting(p, "Cuộc họp Alpha");
+      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
+      await p.getByLabel("API key cho làm mịn").fill("sk-test");
+      await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
+      await p.getByRole("button", { name: "Lưu key làm mịn", exact: true }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
+
+      await p.getByRole("button", { name: "Tóm tắt", exact: true }).click();
+      const dialog = p.locator("dialog.summary-dialog");
+      await dialog.waitFor();
+      assert(await dialog.isVisible());
+
+      await dialog.getByLabel("Kiểu tóm tắt").selectOption("decisions");
+      await dialog.getByRole("button", { name: "Tạo tóm tắt", exact: true }).click();
+      await dialog.waitFor({ state: "hidden" });
+
+      assert(await p.getByRole("tab", { name: "Tóm tắt" }).isVisible());
+      assert(await p.getByText("Ý chính cuộc họp 1").isVisible());
+      assert(await p.getByText("Đã thông qua ngân sách").isVisible());
+
+      await p.getByRole("tab", { name: "Bản chép lời" }).click();
+      assert(await p.getByText("Nội dung thử tiếng Việt.").isVisible());
+
+      await p.getByRole("tab", { name: "Tóm tắt" }).click();
+      assert(await p.getByText("Ý chính cuộc họp 1").isVisible());
+      await p.screenshot({ path: join(output, "meeting-summary.png") });
+
+      await p.getByRole("button", { name: "Xóa tóm tắt", exact: true }).click();
+      await p.waitForFunction(() => !window.qa.snapshot.sessions[0].summary);
+      assert.equal(await p.getByRole("tab", { name: "Tóm tắt" }).count(), 0);
     },
   );
   await check(

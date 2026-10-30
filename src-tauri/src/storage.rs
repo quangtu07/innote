@@ -142,6 +142,41 @@ pub fn export(s: &Session, format: &str) -> String {
     export_version(s, format, "original")
 }
 pub fn export_version(s: &Session, format: &str, version: &str) -> String {
+    if version == "summary" {
+        if let Some(summary) = s.summary.as_ref() {
+            if format == "srt" {
+                return format!(
+                    "1\n00:00:00,000 --> {}\n{}\n\n",
+                    stamp(s.duration, true),
+                    summary.text
+                );
+            }
+            let mut out = if format == "md" {
+                format!("# Tóm tắt: {}\n\n", s.title)
+            } else {
+                format!("TÓM TẮT: {}\n\n", s.title)
+            };
+            out.push_str(summary.text.trim());
+            out.push_str("\n\n");
+            if format == "md" {
+                out.push_str(
+                    "\n---\n\n## Liên hệ tư vấn, hỗ trợ & lập trình\n\n\
+**Alex Linh**\n\n\
+- Zalo: **0962 239 818** — [zalo.me/0962239818](https://zalo.me/0962239818)\n\
+- Website: [alexlinh.io.vn](https://alexlinh.io.vn/)\n",
+                );
+            } else {
+                out.push_str(
+                    "\n----------------------------------------\n\
+LIÊN HỆ TƯ VẤN, HỖ TRỢ & LẬP TRÌNH\n\
+Alex Linh\n\
+Zalo: 0962 239 818\n\
+Website: https://alexlinh.io.vn/\n",
+                );
+            }
+            return out;
+        }
+    }
     if version == "smoothed" {
         if let Some(smoothed) = s.smoothed.as_ref() {
             if format == "srt" {
@@ -274,6 +309,9 @@ pub fn export_file_version(
     if version == "smoothed" && s.smoothed.is_none() {
         anyhow::bail!("Chưa có bản làm mịn");
     }
+    if version == "summary" && s.summary.is_none() {
+        anyhow::bail!("Chưa có bản tóm tắt");
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -298,6 +336,9 @@ pub fn export_to_version(
     );
     if version == "smoothed" && s.smoothed.is_none() {
         anyhow::bail!("Chưa có bản làm mịn");
+    }
+    if version == "summary" && s.summary.is_none() {
+        anyhow::bail!("Chưa có bản tóm tắt");
     }
     std::fs::create_dir_all(directory)?;
     let clean: String = s
@@ -434,6 +475,7 @@ mod tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            summary: None,
         };
         save(&dir, &s).unwrap();
         let mut loaded = load(&dir, &s.id).unwrap();
@@ -487,6 +529,7 @@ mod tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            summary: None,
         };
         save(&dir, &s).unwrap();
         recover(&dir).unwrap();
@@ -527,6 +570,23 @@ mod tests {
         assert!(!export_version(&s, "txt", "smoothed").contains("bản gốc"));
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir, &s.id).unwrap().segments[0].text, "bản gốc");
+        s.summary = Some(crate::types::SummarizedTranscript {
+            text: "bản tóm tắt ý chính".into(),
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
+            source: "original".into(),
+            prompt: String::new(),
+            created: "now".into(),
+            source_hash: "12345".into(),
+        });
+        assert!(export_version(&s, "txt", "summary").contains("bản tóm tắt ý chính"));
+        assert!(export_version(&s, "md", "summary").contains("bản tóm tắt ý chính"));
+        assert!(!export_version(&s, "txt", "summary").contains("bản gốc"));
+        save(&dir, &s).unwrap();
+        assert_eq!(
+            load(&dir, &s.id).unwrap().summary.unwrap().text,
+            "bản tóm tắt ý chính"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

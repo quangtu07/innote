@@ -1,3 +1,10 @@
+# 0.7.6 — 30/10/2026 — tóm tắt cuộc họp AI, sửa lỗi AI JSON và làm đẹp cài đặt
+
+- **Tóm tắt cuộc họp AI (`Session.summary`):** Tùy chọn 3 phong cách (Tổng quan ngắn, Quyết định & việc cần làm, Đầy đủ) và 2 nguồn (Bản gốc / Bản làm mịn); tab chuyển đổi mượt mà giữa Bản chép lời và Tóm tắt; cảnh báo khi bản chép thay đổi; hỗ trợ sao chép, tải .md/.txt/.srt và xóa tóm tắt.
+- **Sửa lỗi AI JSON:** Tự động phát hiện và bóc tách stream SSE (`data: ...`), BOM UTF-8, code fence markdown; truyền `"stream": false` tường minh ngăn các gateway/proxy ép stream gây lỗi `AI trả về JSON không hợp lệ`.
+- **Hiện đại hóa UI/UX Cài đặt:** Dropdown custom mềm mại với mũi tên SVG, chiều cao chuẩn hóa 38px cho tất cả ô nhập liệu và nút bấm, căn chỉnh thẳng hàng API key và nút kiểm tra, card AI sáng sủa với đèn LED trạng thái.
+- UI 48 test pass; Rust 54 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.5 — 30/10/2026 — đưa tác giả/cài đặt xuống góc sidebar
 
 - Author card dùng `margin-top: auto` để luôn nằm sát đáy sidebar, cùng Cài đặt và dòng dữ liệu.

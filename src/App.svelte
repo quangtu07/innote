@@ -31,6 +31,8 @@
     Globe,
     Sparkles,
     List,
+    ClipboardList,
+    Copy,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
   import {
@@ -113,8 +115,15 @@
   let smoothDialog: HTMLDialogElement;
   let smoothModels: string[] = [];
   let llmConnectionSignature = "";
+  type SummaryStyle = "overview" | "decisions" | "full";
+  let summaryStyle: SummaryStyle = "overview";
+  let summarySource: "original" | "smoothed" = "original";
+  let summaryPrompt = "";
+  let summaryOpen = false;
+  let summaryDialog: HTMLDialogElement;
+  let transcriptTab: "transcript" | "summary" = "transcript";
   let smoothPrefsInitialized = false;
-  let exportVersion: "original" | "smoothed" = "original";
+  let exportVersion: "original" | "smoothed" | "summary" = "original";
   let systemLevel = 0;
   let micLevel = 0;
   let progress: { id: string; bytes: number; total: number } | null = null;
@@ -146,6 +155,10 @@
   $: if (meetingsOpen)
     tick().then(() => {
       if (meetingsDialog && !meetingsDialog.open) meetingsDialog.showModal();
+    });
+  $: if (summaryOpen)
+    tick().then(() => {
+      if (summaryDialog && !summaryDialog.open) summaryDialog.showModal();
     });
   $: if (smoothOpen)
     tick().then(() => {
@@ -184,6 +197,59 @@
     !["recording", "paused", "processing"].includes(meeting.status);
   $: llmConfigSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}`;
   $: llmConnected = llmConfigSignature === llmConnectionSignature;
+  function summaryHash(text: string) {
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = (hash * 31 + text.charCodeAt(index)) | 0;
+    }
+    return String(hash >>> 0);
+  }
+  $: summaryCurrentHash = (() => {
+    if (!meeting || !meeting.summary) return "";
+    const source =
+      meeting.summary.source === "smoothed"
+        ? meeting.smoothed?.text ?? ""
+        : meeting.segments.map((s) => s.text).join("\n");
+    return summaryHash(source);
+  })();
+  $: summaryStale = !!meeting?.summary?.source_hash && summaryCurrentHash !== meeting.summary.source_hash;
+  function parseSummarySections(text: string) {
+    const lines = text.split("\n");
+    const sections: { title?: string; items: string[]; text?: string }[] = [];
+    let currentTitle: string | undefined = undefined;
+    let currentItems: string[] = [];
+    let currentParagraphs: string[] = [];
+
+    function flush() {
+      if (
+        currentTitle !== undefined ||
+        currentItems.length > 0 ||
+        currentParagraphs.length > 0
+      ) {
+        sections.push({
+          title: currentTitle,
+          items: [...currentItems],
+          text: currentParagraphs.join("\n").trim() || undefined,
+        });
+        currentItems = [];
+        currentParagraphs = [];
+      }
+    }
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line.startsWith("#")) {
+        flush();
+        currentTitle = line.replace(/^#+\s*/, "");
+      } else if (line.startsWith("- ") || line.startsWith("* ")) {
+        currentItems.push(line.replace(/^[-*]\s*/, ""));
+      } else if (line.length > 0) {
+        currentParagraphs.push(line);
+      }
+    }
+    flush();
+    return sections;
+  }
   $: if (smoothPrefsInitialized) {
     try {
       localStorage.setItem(
@@ -467,6 +533,8 @@
     exportVersion = "original";
     meetingsOpen = false;
     renamingId = "";
+    summaryOpen = false;
+    transcriptTab = "transcript";
     autoScroll = true;
     if (!["recording", "paused"].includes(s.status)) {
       try {
@@ -508,6 +576,8 @@
     exportVersion = "original";
     meetingsOpen = false;
     renamingId = "";
+    summaryOpen = false;
+    transcriptTab = "transcript";
   }
   async function start() {
     await action(async () => {
@@ -626,6 +696,87 @@
     try {
       await navigator.clipboard.writeText(meeting?.smoothed?.text ?? "");
       notify(tr.smoothCopied);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  async function createSummary() {
+    if (!meeting || !canSmooth) return;
+    if (!llmConnected) {
+      error = tr.aiConnectFirst;
+      return;
+    }
+    const id = meeting.id;
+    await action(async () => {
+      await invoke("test_llm_connection", {
+        provider: smoothProvider,
+        model: smoothModel,
+        baseUrl: smoothBaseUrl,
+        key: smoothKey.trim() || null,
+      });
+      llmConnectionSignature = llmConfigSignature;
+      const updated = await invoke<Meeting>("summarize_transcript", {
+        id,
+        provider: smoothProvider,
+        model: smoothModel,
+        baseUrl: smoothBaseUrl,
+        prompt: summaryPrompt,
+        style: summaryStyle,
+        source: summarySource,
+        key: smoothKey.trim() || null,
+      });
+      if (id === meeting?.id) {
+        data = {
+          ...data,
+          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
+        };
+        transcriptTab = "summary";
+        summaryOpen = false;
+        summaryPrompt = "";
+        notify(tr.notifySummaryCreated);
+      }
+    });
+  }
+  async function deleteSummary() {
+    if (!meeting?.summary) return;
+    const id = meeting.id;
+    await action(async () => {
+      const updated = await invoke<Meeting>("delete_summary", { id });
+      if (id === meeting?.id) {
+        data = {
+          ...data,
+          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
+        };
+        transcriptTab = "transcript";
+        notify(tr.notifySummaryDeleted);
+      }
+    });
+  }
+  async function exportSummary(format: "md" | "txt") {
+    if (!meeting?.summary) return;
+    const id = meeting.id;
+    await action(async () => {
+      const destination = await invoke<string | null>("choose_export_path", {
+        id,
+        format,
+      });
+      if (!destination) return;
+      const path = await invoke<string>("export_session", {
+        id,
+        format,
+        path: destination,
+        version: "summary",
+      });
+      if (selected === id) {
+        lastExport = path;
+        notify(tr.notifyExportSaved);
+      }
+    });
+  }
+  async function copySummary() {
+    try {
+      await navigator.clipboard.writeText(meeting?.summary?.text ?? "");
+      notify(tr.summaryCopied);
     } catch (e) {
       error = String(e);
     }
@@ -1252,7 +1403,7 @@
                 >
               </div><span class="ai-hint">{tr.aiModelHint}</span></label
             >
-            {#if smoothProvider === "openai-compatible"}<label class="ai-field"
+            {#if smoothProvider === "openai-compatible"}<label class="ai-field ai-field-full"
                 >{tr.aiBaseUrl}<input
                   bind:value={smoothBaseUrl}
                   aria-label={tr.aiBaseUrl}
@@ -1272,22 +1423,23 @@
           </datalist>
           <div class="ai-key-row">
             <label class="ai-field"
-              >{tr.aiKey}<input
-                type="password"
-                aria-label={tr.aiKey}
-                autocomplete="off"
-                spellcheck="false"
-                bind:value={smoothKey}
-                placeholder={tr.optional}
-                oninput={() => {
-                  llmConnectionSignature = "";
-                }}
-              /></label
-            >
-            <button
-              class="button secondary"
-              disabled={busy}
-              onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
+              >{tr.aiKey}<div class="ai-key-input-wrap">
+                <input
+                  type="password"
+                  aria-label={tr.aiKey}
+                  autocomplete="off"
+                  spellcheck="false"
+                  bind:value={smoothKey}
+                  placeholder={tr.optional}
+                  oninput={() => {
+                    llmConnectionSignature = "";
+                  }}
+                /><button
+                  class="button secondary"
+                  disabled={busy}
+                  onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
+                >
+              </div></label
             >
           </div>
           <p class="ai-hint">{tr.aiTestBeforeSave}</p>
@@ -1653,7 +1805,36 @@
 
         <div class="transcript-heading">
           <div>
-            <h2>{tr.transcript}</h2>
+            {#if meeting?.summary}
+              <div class="transcript-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  class="transcript-tab"
+                  class:active={transcriptTab === "transcript"}
+                  aria-selected={transcriptTab === "transcript"}
+                  onclick={() => {
+                    transcriptTab = "transcript";
+                  }}>{tr.summaryTabTranscript}</button
+                >
+                <button
+                  type="button"
+                  role="tab"
+                  class="transcript-tab"
+                  class:active={transcriptTab === "summary"}
+                  aria-selected={transcriptTab === "summary"}
+                  onclick={() => {
+                    transcriptTab = "summary";
+                  }}
+                  ><ClipboardList size={14} /> {tr.summaryTabSummary}{#if summaryStale}<span
+                      class="tab-dot"
+                      title={tr.summaryStale}
+                    ></span>{/if}</button
+                >
+              </div>
+            {:else}
+              <h2>{tr.transcript}</h2>
+            {/if}
             {#if refinementPending}<span class="refining-note" role="status"
                 >{tr.exportWaitRefinement}</span
               >{/if}
@@ -1670,8 +1851,16 @@
                 smoothOpen = true;
               }}><Sparkles size={14} /> {meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}</button
             >{/if}
+            {#if canSmooth}<button
+              class="button secondary small"
+              title={meeting?.summary ? tr.summaryRegenerate : tr.summaryButton}
+              disabled={busy}
+              onclick={() => {
+                summaryOpen = true;
+              }}><ClipboardList size={14} /> {meeting?.summary ? tr.summaryRegenerate : tr.summaryButton}</button
+            >{/if}
             {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
-                {#if meeting?.smoothed}<div
+                {#if meeting?.smoothed || meeting?.summary}<div
                   class="export-version"
                   role="group"
                   aria-label={tr.exportVersion}
@@ -1682,12 +1871,18 @@
                       exportVersion = "original";
                     }}>{tr.exportOriginal}</button
                   >
-                  <button
+                  {#if meeting?.smoothed}<button
                     class:active={exportVersion === "smoothed"}
                     onclick={() => {
                       exportVersion = "smoothed";
                     }}>{tr.exportSmoothed}</button
-                  >
+                  >{/if}
+                  {#if meeting?.summary}<button
+                    class:active={exportVersion === "summary"}
+                    onclick={() => {
+                      exportVersion = "summary";
+                    }}>{tr.exportSummary}</button
+                  >{/if}
                 </div>{/if}
                 {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
@@ -1774,6 +1969,82 @@
           </section>
         {/if}
         <div class="workspace">
+          {#if transcriptTab === "summary" && meeting?.summary}
+            <div class="summary-view" role="tabpanel" aria-label={tr.summaryTitle}>
+              {#if summaryStale}
+                <div class="summary-stale-banner" role="status">
+                  <AlertCircle size={16} />
+                  <span>{tr.summaryStale}</span>
+                  <button
+                    class="button secondary small"
+                    disabled={busy}
+                    onclick={() => {
+                      summaryOpen = true;
+                    }}>{tr.summaryRegenerate}</button
+                  >
+                </div>
+              {/if}
+              <div class="summary-meta-bar">
+                <span class="summary-meta-text">
+                  {fill(tr.summaryMeta, {
+                    source:
+                      meeting.summary.source === "smoothed"
+                        ? tr.summarySourceSmoothed
+                        : tr.summarySourceOriginal,
+                    provider: meeting.summary.provider,
+                    model: meeting.summary.model,
+                  })}
+                </span>
+                <div class="summary-toolbar">
+                  <button
+                    class="button secondary small"
+                    title={tr.summaryCopy}
+                    onclick={() => copySummary()}
+                    ><Copy size={13} /> {tr.summaryCopy}</button
+                  >
+                  <button
+                    class="button secondary small"
+                    title={tr.summaryDownload}
+                    onclick={() => exportSummary("md")}
+                    ><Download size={13} /> {tr.summaryDownload}</button
+                  >
+                  <button
+                    class="button secondary small"
+                    title={tr.summaryRegenerate}
+                    disabled={busy}
+                    onclick={() => {
+                      summaryOpen = true;
+                    }}><RefreshCw size={13} /> {tr.summaryRegenerate}</button
+                  >
+                  <button
+                    class="icon-button danger small"
+                    title={tr.summaryDelete}
+                    aria-label={tr.summaryDelete}
+                    disabled={busy}
+                    onclick={() => deleteSummary()}
+                    ><Trash2 size={14} /></button
+                  >
+                </div>
+              </div>
+              <div class="summary-card">
+                {#each parseSummarySections(meeting.summary.text) as section}
+                  {#if section.title}
+                    <h3 class="summary-section-title">{section.title}</h3>
+                  {/if}
+                  {#if section.text}
+                    <p class="summary-paragraph">{section.text}</p>
+                  {/if}
+                  {#if section.items.length}
+                    <ul class="summary-list">
+                      {#each section.items as item}
+                        <li>{item}</li>
+                      {/each}
+                    </ul>
+                  {/if}
+                {/each}
+              </div>
+            </div>
+          {:else}
           <div
             class="transcript"
             bind:this={transcript}
@@ -1853,6 +2124,7 @@
               </article>
             {/if}
           </div>
+          {/if}
           {#if showNotes && meeting}<aside class="notes-panel">
               <h3>{tr.notesTitle}</h3>
               <p>{tr.notesHint}</p>
@@ -2092,6 +2364,99 @@
       >
     </div>
     <p class="smooth-note">{tr.smoothOriginalKept}</p>
+  </dialog>
+{/if}
+{#if summaryOpen}
+  <dialog
+    class="confirm-dialog summary-dialog"
+    bind:this={summaryDialog}
+    aria-labelledby="summary-dialog-title"
+    onclose={() => {
+      summaryOpen = false;
+    }}
+    oncancel={() => {
+      summaryOpen = false;
+    }}
+  >
+    <h2 id="summary-dialog-title"><ClipboardList size={18} /> {tr.summaryTitle}</h2>
+    <div class="summary-form">
+      {#if meeting?.smoothed}
+        <label class="summary-field"
+          ><span>{tr.summarySource}</span><select
+            bind:value={summarySource}
+            disabled={busy}
+            aria-label={tr.summarySource}
+          >
+            <option value="original">{tr.summarySourceOriginal}</option>
+            <option value="smoothed">{tr.summarySourceSmoothed}</option>
+          </select></label
+        >
+      {/if}
+      <label class="summary-field"
+        ><span>{tr.summaryStyle}</span><select
+          bind:value={summaryStyle}
+          disabled={busy}
+          aria-label={tr.summaryStyle}
+        >
+          <option value="overview">{tr.summaryStyleOverview}</option>
+          <option value="decisions">{tr.summaryStyleDecisions}</option>
+          <option value="full">{tr.summaryStyleFull}</option>
+        </select></label
+      >
+      <label class="summary-field"
+        ><span>{tr.summaryPromptLabel}</span><textarea
+          bind:value={summaryPrompt}
+          placeholder={tr.summaryPromptPlaceholder}
+          aria-label={tr.summaryPromptLabel}
+          rows="3"
+        ></textarea></label
+      >
+      <p class="smooth-config">
+        {fill(tr.smoothUsing, {
+          provider: smoothProvider,
+          model: smoothModel || smoothDefaults[smoothProvider],
+        })}
+      </p>
+      {#if llmConnected}
+        <p class="smooth-connected" role="status">{tr.aiConnected}</p>
+      {:else}
+        <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
+        {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<p
+            class="smooth-connect-hint"
+          >{tr.aiNeedKey}</p>{/if}
+        <div class="summary-connect-row">
+          <button
+            class="button secondary small"
+            disabled={busy}
+            onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
+          >
+          {#if !data.llm_configured && smoothProvider !== "openai-compatible"}<button
+              class="text-button"
+              disabled={busy}
+              onclick={() => {
+                summaryOpen = false;
+                page = "settings";
+              }}>{tr.aiOpenSettings}</button
+            >{/if}
+        </div>
+      {/if}
+    </div>
+    <div class="summary-dialog-footer">
+      <button
+        class="button secondary"
+        disabled={busy}
+        onclick={() => {
+          summaryOpen = false;
+        }}>{tr.editCancel}</button
+      >
+      <button
+        class="button primary"
+        disabled={busy || !llmConnected}
+        onclick={() => createSummary()}
+      >
+        {busy ? tr.summaryCreating : meeting?.summary ? tr.summaryRegenerate : tr.summaryCreate}
+      </button>
+    </div>
   </dialog>
 {/if}
 {#if deleteOpen}
