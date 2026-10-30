@@ -503,7 +503,7 @@ try {
           .getByText("Đã chốt ngân sách và thời hạn.", { exact: true })
           .isVisible(),
       );
-      for (const [format, name] of [["md", "Tải .md"], ["txt", "Tải .txt"], ["srt", "Tải phụ đề SRT"]]) {
+      for (const [format, name] of [["md", "Tải .md"], ["txt", "Tải .txt"], ["srt", "Tải .srt"]]) {
         await p.getByRole("button", { name, exact: true }).click();
         await p.waitForFunction(
           (n) => window.qa.exports.length === n,
