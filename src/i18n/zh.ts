@@ -188,7 +188,7 @@ const part2 = {
   liveAria: "实时转写",
   liveHeading: "实时转写 · 本地",
   liveRecognizing: "识别中",
-  liveWaiting: "等待校正",
+  liveWaiting: "正在校正转写…",
   liveMultiNote: "实时文字可能会变化。已确认的发言会保存在本机，可编辑和导出。",
   liveWhisperNote:
     "实时文字可能会变化。已识别的句子会保存在本机；Whisper 会在后台校正。",

@@ -1,3 +1,9 @@
+# 0.6.8 — 30/10/2026 — làm rõ trạng thái hiệu chỉnh
+
+- Giữ bước Whisper hiệu chỉnh và nhãn trạng thái dưới đoạn live; đổi nhãn từ “Chờ hiệu chỉnh” thành **“Đang hiệu chỉnh…”** cho dễ hiểu.
+- Vẫn cho xuất bản chép trong lúc chờ, nhưng nhãn báo rõ đoạn đó có thể còn thay đổi.
+- Không thay đổi dữ liệu, engine hay luồng kết thúc/lưu bản thu.
+
 # 0.6.7 — 30/10/2026 — kết thúc là lưu, không hủy bản chép
 
 - Bấm **Kết thúc** mở cảnh báo xác nhận; xác nhận là dừng ghi ngay, lưu bản thu và giữ bản chép lời hiện có.

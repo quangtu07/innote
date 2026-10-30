@@ -197,7 +197,7 @@ const part2 = {
   liveAria: "실시간 전사",
   liveHeading: "실시간 전사 · 로컬",
   liveRecognizing: "인식 중",
-  liveWaiting: "보정 대기",
+  liveWaiting: "전사 보정 중…",
   liveMultiNote:
     "실시간 텍스트는 변경될 수 있습니다. 확정된 발화는 기기에 저장되어 수정하고 내보낼 수 있습니다.",
   liveWhisperNote:

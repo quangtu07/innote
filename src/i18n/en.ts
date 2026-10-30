@@ -201,7 +201,7 @@ const part3 = {
   liveAria: "Live transcript",
   liveHeading: "Live transcription · Local",
   liveRecognizing: "Recognizing",
-  liveWaiting: "Waiting for refinement",
+  liveWaiting: "Refining transcript…",
   liveMultiNote:
     "Live text may change. Committed turns are saved on this device for editing and export.",
   liveWhisperNote:

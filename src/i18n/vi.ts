@@ -196,7 +196,7 @@ const part2 = {
   liveAria: "Bản chép trực tiếp",
   liveHeading: "Chép trực tiếp · Local",
   liveRecognizing: "Đang nhận dạng",
-  liveWaiting: "Chờ hiệu chỉnh",
+  liveWaiting: "Đang hiệu chỉnh…",
   liveMultiNote:
     "Chữ tạm có thể thay đổi. Lượt đã chốt được lưu trên máy để bạn sửa và xuất.",
   liveWhisperNote:
