@@ -15,7 +15,7 @@ pub fn default_model(provider: &str) -> Result<&'static str> {
     }
 }
 
-fn chat_endpoint(provider: &str, base_url: &str) -> Result<String> {
+fn resolved_base(provider: &str, base_url: &str) -> Result<String> {
     let base = if base_url.trim().is_empty() {
         match provider {
             "openai" => "https://api.openai.com/v1".into(),
@@ -26,17 +26,30 @@ fn chat_endpoint(provider: &str, base_url: &str) -> Result<String> {
     } else {
         base_url.trim().trim_end_matches('/').to_string()
     };
-    let url = if base.ends_with("/chat/completions") {
-        base
-    } else {
-        format!("{base}/chat/completions")
-    };
-    let parsed = reqwest::Url::parse(&url).context("Base URL không hợp lệ")?;
+    let parsed = reqwest::Url::parse(&base).context("Base URL không hợp lệ")?;
     ensure!(
         matches!(parsed.scheme(), "http" | "https"),
         "Base URL phải là http hoặc https"
     );
-    Ok(url)
+    Ok(base)
+}
+
+fn chat_endpoint(provider: &str, base_url: &str) -> Result<String> {
+    let base = resolved_base(provider, base_url)?;
+    Ok(if base.ends_with("/chat/completions") {
+        base
+    } else {
+        format!("{base}/chat/completions")
+    })
+}
+
+fn models_endpoint(provider: &str, base_url: &str) -> Result<String> {
+    let base = resolved_base(provider, base_url)?;
+    Ok(if base.ends_with("/models") {
+        base
+    } else {
+        format!("{base}/models")
+    })
 }
 
 fn gemini_endpoint(model: &str, key: &str) -> Result<String> {
@@ -210,6 +223,74 @@ pub fn test_connection(
     Ok(())
 }
 
+pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec<String>> {
+    let provider = provider.trim().to_ascii_lowercase();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .context("Không tạo được HTTP client")?;
+    let (url, key) = match provider.as_str() {
+        "openai" | "deepseek" | "openai-compatible" => {
+            if provider != "openai-compatible" {
+                ensure!(
+                    !api_key.trim().is_empty(),
+                    "Cần nhập API key cho nhà cung cấp này"
+                );
+            }
+            (models_endpoint(&provider, base_url)?, api_key.trim())
+        }
+        "gemini" => {
+            ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
+            (
+                format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+                    api_key.trim()
+                ),
+                "",
+            )
+        }
+        _ => bail!("Nhà cung cấp AI không hợp lệ"),
+    };
+    let mut request = client.get(&url);
+    if !key.is_empty() {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().context("Không gửi được yêu cầu lấy model")?;
+    let status = response.status();
+    let raw = response.text().context("Không đọc được danh sách model")?;
+    if !status.is_success() {
+        let detail: String = raw.chars().take(300).collect();
+        bail!("API trả về lỗi {status}: {detail}");
+    }
+    let value: Value = serde_json::from_str(&raw).context("API trả về JSON không hợp lệ")?;
+    let mut models = Vec::new();
+    if provider == "gemini" {
+        if let Some(items) = value["models"].as_array() {
+            for item in items {
+                if let Some(name) = item["name"].as_str() {
+                    let supported = item["supportedGenerationMethods"]
+                        .as_array()
+                        .map(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
+                        .unwrap_or(true);
+                    if supported {
+                        models.push(name.strip_prefix("models/").unwrap_or(name).to_string());
+                    }
+                }
+            }
+        }
+    } else if let Some(items) = value["data"].as_array() {
+        models.extend(
+            items
+                .iter()
+                .filter_map(|item| item["id"].as_str().map(str::to_string)),
+        );
+    }
+    models.sort();
+    models.dedup();
+    ensure!(!models.is_empty(), "API không trả về model nào");
+    Ok(models)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +361,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, "Xin chào");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn openai_compatible_model_list_roundtrip() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 8192];
+            let _ = stream.read(&mut request);
+            let body = r#"{"data":[{"id":"model-b"},{"id":"model-a"},{"id":"model-a"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let models = fetch_models(
+            "openai-compatible",
+            &format!("http://{address}/v1"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(models, vec!["model-a", "model-b"]);
         server.join().unwrap();
     }
 }

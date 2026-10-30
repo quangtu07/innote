@@ -140,6 +140,7 @@ async function setup(options = {}) {
           return;
         }
         if (cmd === "test_llm_connection") return "ok";
+        if (cmd === "fetch_llm_models") return ["gpt-4o-mini", "gpt-4o"];
         if (cmd === "smooth_transcript") {
           const s = qa.snapshot.sessions.find((s) => s.id === args.id);
           s.smoothed = {
@@ -555,7 +556,7 @@ try {
       await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
       await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
       const dialog = p.getByRole("dialog");
-      await dialog.getByRole("button", { name: "Kiểm tra kết nối", exact: true }).click();
+      await dialog.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       await dialog.getByRole("button", { name: "Làm mịn", exact: true }).click();
       await p
         .getByRole("region", { name: "Bản làm mịn bằng AI" })
@@ -615,8 +616,14 @@ try {
         "openai",
       );
       await p.getByLabel("API key cho làm mịn").fill("sk-test");
+      await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
+      await p.getByRole("button", { name: "Lấy model", exact: true }).click();
+      await p.waitForFunction(() =>
+        window.qa.calls.some((c) => c.cmd === "fetch_llm_models"),
+      );
       await p.getByRole("button", { name: "Lưu key làm mịn", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
+      await p.screenshot({ path: join(output, "ai-settings.png") });
       assert(
         await p.getByText("Đã có key làm mịn trong bộ nhớ.", { exact: false }).isVisible(),
       );

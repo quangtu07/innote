@@ -1126,6 +1126,116 @@ h2 {
   max-width: 650px;
   margin: 0 0 19px;
 }
+.ai-settings {
+  background: linear-gradient(135deg, #fbfefc, #f2f8f4);
+  border: 1px solid #d7e6db;
+  border-radius: 14px;
+  padding: 18px 20px 16px;
+}
+.ai-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.ai-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 7px;
+}
+.ai-heading p {
+  margin: 0;
+  max-width: 650px;
+  color: #5e7264;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.ai-status {
+  flex: 0 0 auto;
+  border: 1px solid #d5e0d8;
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: #65796c;
+  background: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ai-status.connected {
+  color: var(--green);
+  background: #e8f5ec;
+  border-color: #b9dcc5;
+}
+.ai-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 16px;
+}
+.ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #52645f;
+  font-size: 12px;
+}
+.ai-field input,
+.ai-field select {
+  width: 100%;
+}
+.ai-model-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ai-model-row input {
+  min-width: 0;
+}
+.ai-model-row .button {
+  flex: 0 0 auto;
+  min-height: 35px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+.ai-hint {
+  color: #74867a;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.ai-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.ai-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.ai-key-state {
+  color: #65796c;
+  font-size: 12px;
+}
+.ai-key-note {
+  margin: 12px 0 0 !important;
+  color: #74867a !important;
+  font-size: 11px !important;
+}
+@media (max-width: 720px) {
+  .ai-grid {
+    grid-template-columns: 1fr;
+  }
+  .ai-key-row {
+    grid-template-columns: 1fr;
+  }
+  .ai-heading {
+    flex-direction: column;
+  }
+}
 .model-row {
   display: flex;
   align-items: center;

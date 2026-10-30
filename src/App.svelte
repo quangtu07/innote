@@ -110,6 +110,7 @@
   let smoothPanelOpen = false;
   let smoothOpen = false;
   let smoothDialog: HTMLDialogElement;
+  let smoothModels: string[] = [];
   let llmConnectionSignature = "";
   let smoothPrefsInitialized = false;
   let exportVersion: "original" | "smoothed" = "original";
@@ -171,7 +172,7 @@
     !!meeting &&
     meeting.segments.length > 0 &&
     !["recording", "paused", "processing"].includes(meeting.status);
-  $: llmConfigSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}|${data.llm_configured}`;
+  $: llmConfigSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}`;
   $: llmConnected = llmConfigSignature === llmConnectionSignature;
   $: if (smoothPrefsInitialized) {
     try {
@@ -540,7 +541,7 @@
         smoothKey = "";
       }
       data = { ...data, llm_configured: !clear };
-      llmConnectionSignature = "";
+      if (clear) llmConnectionSignature = "";
       notify(clear ? tr.notifyAiKeyCleared : tr.notifyAiKeyKept);
     });
   }
@@ -550,9 +551,22 @@
         provider: smoothProvider,
         model: smoothModel,
         baseUrl: smoothBaseUrl,
+        key: smoothKey.trim() || null,
       });
-      llmConnectionSignature = `${smoothProvider}|${smoothModel}|${smoothBaseUrl}|${data.llm_configured}`;
+      llmConnectionSignature = llmConfigSignature;
       notify(tr.aiConnected);
+    });
+  }
+  async function fetchModels() {
+    await action(async () => {
+      const models = await invoke<string[]>("fetch_llm_models", {
+        provider: smoothProvider,
+        baseUrl: smoothBaseUrl,
+        key: smoothKey.trim() || null,
+      });
+      smoothModels = models;
+      if (!smoothModel.trim() && models.length) smoothModel = models[0];
+      notify(fill(tr.aiModelsFetched, { count: models.length }));
     });
   }
   async function smoothTranscript() {
@@ -563,12 +577,20 @@
     }
     const id = meeting.id;
     await action(async () => {
+      await invoke("test_llm_connection", {
+        provider: smoothProvider,
+        model: smoothModel,
+        baseUrl: smoothBaseUrl,
+        key: smoothKey.trim() || null,
+      });
+      llmConnectionSignature = llmConfigSignature;
       const updated = await invoke<Meeting>("smooth_transcript", {
         id,
         provider: smoothProvider,
         model: smoothModel,
         baseUrl: smoothBaseUrl,
         prompt: smoothPrompt,
+        key: smoothKey.trim() || null,
       });
       if (id === meeting?.id) {
         data = {
@@ -1150,58 +1172,99 @@
               : tr.sonioxMissing} {tr.sonioxKeyNote}
           </p>
         </div>
-        <div class="settings-section">
-          <h2>{tr.aiTitle}</h2>
-          <p>{tr.aiDesc}</p>
-          <label
-            >{tr.aiProvider}<select
-              aria-label={tr.aiProvider}
-              value={smoothProvider}
-              disabled={busy}
-              onchange={(event) => {
-                const value = event.currentTarget.value as SmoothProvider;
-                smoothProvider = value;
-                smoothModel = smoothDefaults[value];
-              }}
+        <div class="settings-section ai-settings">
+          <div class="ai-heading">
+            <div>
+              <h2><Sparkles size={18} /> {tr.aiTitle}</h2>
+              <p>{tr.aiDesc}</p>
+            </div>
+            <span class:connected={llmConnected} class="ai-status"
+              >{llmConnected ? tr.aiConnected : tr.aiNotConnected}</span
             >
-              <option value="openai">{tr.aiProviderOpenai}</option>
-              <option value="deepseek">{tr.aiProviderDeepseek}</option>
-              <option value="gemini">{tr.aiProviderGemini}</option>
-              <option value="openai-compatible">{tr.aiProviderCompatible}</option>
-            </select></label
-          >
-          <label
-            >{tr.aiModel}<input
-              bind:value={smoothModel}
-              aria-label={tr.aiModel}
-              placeholder={smoothDefaults[smoothProvider]}
-              autocomplete="off"
-              spellcheck="false"
-            /></label
-          >
-          {#if smoothProvider === "openai-compatible"}<label
-              >{tr.aiBaseUrl}<input
-                bind:value={smoothBaseUrl}
-                aria-label={tr.aiBaseUrl}
-                placeholder={tr.aiBaseUrlHint}
+          </div>
+          <div class="ai-grid">
+            <label class="ai-field"
+              >{tr.aiProvider}<select
+                aria-label={tr.aiProvider}
+                value={smoothProvider}
+                disabled={busy}
+                onchange={(event) => {
+                  const value = event.currentTarget.value as SmoothProvider;
+                  smoothProvider = value;
+                  smoothModel = smoothDefaults[value];
+                  smoothModels = [];
+                  llmConnectionSignature = "";
+                }}
+              >
+                <option value="openai">{tr.aiProviderOpenai}</option>
+                <option value="deepseek">{tr.aiProviderDeepseek}</option>
+                <option value="gemini">{tr.aiProviderGemini}</option>
+                <option value="openai-compatible">{tr.aiProviderCompatible}</option>
+              </select></label
+            >
+            <label class="ai-field"
+              >{tr.aiModel}<div class="ai-model-row">
+                <input
+                  bind:value={smoothModel}
+                  aria-label={tr.aiModel}
+                  placeholder={smoothDefaults[smoothProvider]}
+                  autocomplete="off"
+                  spellcheck="false"
+                  list="smooth-model-options"
+                  oninput={() => {
+                    llmConnectionSignature = "";
+                  }}
+                /><button
+                  class="button secondary small"
+                  disabled={busy}
+                  onclick={() => fetchModels()}
+                  >{busy ? tr.aiFetchingModels : tr.aiFetchModels}</button
+                >
+              </div><span class="ai-hint">{tr.aiModelHint}</span></label
+            >
+            {#if smoothProvider === "openai-compatible"}<label class="ai-field"
+                >{tr.aiBaseUrl}<input
+                  bind:value={smoothBaseUrl}
+                  aria-label={tr.aiBaseUrl}
+                  placeholder={tr.aiBaseUrlHint}
+                  autocomplete="off"
+                  spellcheck="false"
+                  oninput={() => {
+                    llmConnectionSignature = "";
+                  }}
+                /></label
+              >{/if}
+          </div>
+          <datalist id="smooth-model-options">
+            {#each smoothModels as modelId}
+              <option value={modelId}></option>
+            {/each}
+          </datalist>
+          <div class="ai-key-row">
+            <label class="ai-field"
+              >{tr.aiKey}<input
+                type="password"
+                aria-label={tr.aiKey}
                 autocomplete="off"
                 spellcheck="false"
+                bind:value={smoothKey}
+                placeholder={tr.optional}
+                oninput={() => {
+                  llmConnectionSignature = "";
+                }}
               /></label
-            >{/if}
-          <label
-            >{tr.aiKey}<input
-              type="password"
-              aria-label={tr.aiKey}
-              autocomplete="off"
-              spellcheck="false"
-              bind:value={smoothKey}
-              placeholder={tr.optional}
-            /></label
-          >
-          <div class="soniox-actions">
+            >
             <button
               class="button secondary"
-              disabled={busy || !smoothKey.trim()}
+              disabled={busy}
+              onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
+            >
+          </div>
+          <p class="ai-hint">{tr.aiTestBeforeSave}</p>
+          <div class="ai-actions">
+            <button
+              class="button primary"
+              disabled={busy || !smoothKey.trim() || !llmConnected}
               onclick={() => saveLlmKey()}>{tr.aiKeepKey}</button
             >
             <button
@@ -1209,15 +1272,11 @@
               disabled={busy || !data.llm_configured}
               onclick={() => saveLlmKey(true)}>{tr.aiClearKey}</button
             >
+            <span class="ai-key-state"
+              >{data.llm_configured ? tr.aiConfigured : tr.aiMissing}</span
+            >
           </div>
-          <p>
-            {data.llm_configured ? tr.aiConfigured : tr.aiMissing} {tr.aiKeyNote}
-          </p>
-          <button
-            class="button secondary"
-            disabled={busy}
-            onclick={() => testLlmConnection()}
-          >{llmConnected ? tr.aiConnected : tr.aiTestConnection}</button>
+          <p class="ai-key-note">{tr.aiKeyNote}</p>
         </div>
         <div class="settings-section">
           <h2>{tr.modelTitle}</h2>

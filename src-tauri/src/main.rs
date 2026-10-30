@@ -835,12 +835,33 @@ async fn test_llm_connection(
     provider: String,
     model: String,
     base_url: String,
+    key: Option<String>,
 ) -> std::result::Result<String, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<String> {
-        let api_key = m.llm_key.lock().unwrap().clone();
+        let api_key = key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
         llm::test_connection(&provider, &model, &base_url, &api_key)?;
         Ok("ok".into())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+#[tauri::command]
+async fn fetch_llm_models(
+    may: State<'_, May>,
+    provider: String,
+    base_url: String,
+    key: Option<String>,
+) -> std::result::Result<Vec<String>, String> {
+    let m = may.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>> {
+        let api_key = key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        llm::fetch_models(&provider, &base_url, &api_key)
     })
     .await
     .map_err(err)?
@@ -854,6 +875,7 @@ async fn smooth_transcript(
     model: String,
     base_url: String,
     prompt: String,
+    key: Option<String>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
@@ -870,7 +892,9 @@ async fn smooth_transcript(
             .collect::<Vec<_>>()
             .join("\n");
         anyhow::ensure!(!original.is_empty(), "Chưa có bản chép lời để làm mịn");
-        let api_key = m.llm_key.lock().unwrap().clone();
+        let api_key = key
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
         let smoothed = llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt)?;
         m.edit(&id, |s| {
             s.smoothed = Some(SmoothedTranscript {
@@ -1720,6 +1744,7 @@ fn main() {
             set_soniox_key,
             set_llm_key,
             test_llm_connection,
+            fetch_llm_models,
             smooth_transcript,
             refresh_devices,
             start,

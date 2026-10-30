@@ -1,3 +1,11 @@
+# 0.7.2 — 30/10/2026 — cài đặt AI đẹp hơn, test API trước khi lưu, fetch model
+
+- Làm lại khu **Làm mịn bản chép bằng AI** trong Cài đặt thành card có provider/model/base URL, trạng thái API, nút **Kiểm tra API** và **Lấy model**.
+- Nút **Lưu key làm mịn** chỉ bật sau khi kiểm tra API thành công; test nhận key đang nhập (chưa cần lưu).
+- **Lấy model** gọi `/models` (OpenAI/DeepSeek/OpenAI-compatible) hoặc Gemini models; danh sách đổ vào datalist, vẫn nhập tay được model ID.
+- Khi bấm làm mịn, app kiểm tra API lại một lần nữa trước khi gọi làm mịn thật.
+- UI 46 test; Rust 53 (thêm test fetch model); Svelte 0.
+
 # 0.7.1 — 30/10/2026 — dialog làm mịn, kiểm tra API key và chọn bản tải
 
 - Nút **Làm mịn** chỉ mở dialog; không gửi API ngay.
