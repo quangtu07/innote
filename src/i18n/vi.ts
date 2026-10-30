@@ -138,6 +138,11 @@ const part1 = {
   pause: "Tạm dừng",
   stop: "Kết thúc",
   stopProcessing: "Dừng chép, giữ bản thu",
+  stopConfirmTitle: "Kết thúc và lưu cuộc họp?",
+  stopConfirmBody:
+    "Innote sẽ dừng ghi, lưu bản thu và giữ nguyên bản chép lời hiện có. Bạn có thể nghe lại và xuất file sau.",
+  stopKeep: "Tiếp tục ghi",
+  stopConfirm: "Kết thúc và lưu",
   deleteMeeting: "Xóa cuộc họp",
   stateRecording: "Đang ghi",
   statePaused: "Tạm dừng",
@@ -174,7 +179,7 @@ const part2 = {
   emptyRecordedText: "Bạn có thể nghe lại hoặc tải model để chép lời sau.",
   emptyInterruptedTitle: "Bản thu đã được giữ lại",
   emptyInterruptedText:
-    "Bạn có thể nghe lại bản thu và nhấn Chép tiếp để thử xử lý phần còn thiếu.",
+    "Bản thu và bản chép hiện có được giữ trên máy. Bạn có thể nghe lại và xuất file.",
   emptyCompletedTitle: "Chưa tìm thấy lời nói",
   emptyCompletedText:
     "Hãy nghe lại và kiểm tra nguồn âm thanh. Bản thu vẫn được giữ trên máy.",
@@ -232,7 +237,7 @@ const part2 = {
     "Chưa thấy tín hiệu từ {sources}. Hãy phát âm thanh hoặc nói vào micro rồi thu thử lại. Im lặng không có nghĩa thiết bị hỏng.",
   testDone: "Đã thu thử 5 giây. Nhấn phát để kiểm tra.",
   testNoRecording: "Chưa tạo được bản thu thử. Kiểm tra nguồn và thử lại.",
-  notifyStopped: "Đã dừng ghi. Innote đang lưu và xử lý phần còn lại.",
+  notifyStopped: "Đã kết thúc. Bản thu và bản chép lời đang được lưu.",
   notifyKeyCleared: "Đã xóa key khỏi bộ nhớ. Áp dụng cho phiên mới.",
   notifyKeyKept: "Đã giữ key trong bộ nhớ đến khi đóng app.",
   notifyModelReady: "Model đã sẵn sàng.",

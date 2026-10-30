@@ -376,7 +376,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                     ));
                     if s.model == models::NEMO_ID {
                         s.error = Some(
-                            "Nhận dạng đa ngôn ngữ đã ngắt; có thể Chép tiếp từ bản thu.".into(),
+                            "Nhận dạng đa ngôn ngữ đã ngắt; bản thu và bản chép hiện có vẫn được giữ.".into(),
                         );
                     }
                 });
@@ -662,7 +662,7 @@ fn stream_preview(
             );
             anyhow::ensure!(
                 drain_deadline.is_none_or(|d| std::time::Instant::now() < d),
-                "Bộ chép trực tiếp chưa xả hết audio; có thể chép tiếp từ bản thu"
+                "Bộ chép trực tiếp chưa xả hết audio; bản thu và bản chép hiện có vẫn được giữ"
             );
             match rx.recv_timeout(std::time::Duration::from_millis(100)) {
                 Ok(line) => {

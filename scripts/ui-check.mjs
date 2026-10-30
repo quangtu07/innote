@@ -529,17 +529,54 @@ try {
     },
   );
   await check(
-    "Interrupted meeting resumes locally and keeps its saved content",
+    "Interrupted meeting keeps its saved transcript without a resume action",
     { interrupted: true },
     async (p) => {
       await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
       await p
-        .getByRole("button", { name: "Chép tiếp bằng local", exact: true })
-        .click();
-      await p.getByText("Đã hoàn tất", { exact: true }).waitFor();
+        .getByText("Nội dung thử tiếng Việt.", { exact: true })
+        .waitFor();
       assert.equal(
-        await p.evaluate(() => window.qa.snapshot.sessions[0].notes),
-        "Ghi chú Alpha",
+        await p
+          .getByRole("button", {
+            name: "Chép tiếp bằng local",
+            exact: true,
+          })
+          .count(),
+        0,
+      );
+      assert.equal(await p.getByText("Cần kiểm tra", { exact: true }).count(), 1);
+    },
+  );
+  await check(
+    "Finish asks for confirmation and keeps the transcript",
+    { active: true },
+    async (p) => {
+      await p.getByRole("button", { name: /Phiên đang ghi/ }).click();
+      await p.getByRole("button", { name: "Kết thúc", exact: true }).click();
+      const dialog = p.getByRole("dialog");
+      await dialog
+        .getByText("Kết thúc và lưu cuộc họp?", { exact: true })
+        .waitFor();
+      await dialog
+        .getByRole("button", { name: "Tiếp tục ghi", exact: true })
+        .click();
+      assert.equal(await p.getByRole("dialog").count(), 0);
+      await p.getByRole("button", { name: "Kết thúc", exact: true }).click();
+      await dialog
+        .getByRole("button", { name: "Kết thúc và lưu", exact: true })
+        .click();
+      await p.waitForFunction(() =>
+        window.qa.calls.some((c) => c.cmd === "stop"),
+      );
+      assert.equal(
+        await p
+          .getByRole("button", {
+            name: "Dừng chép, giữ bản thu",
+            exact: true,
+          })
+          .count(),
+        0,
       );
     },
   );

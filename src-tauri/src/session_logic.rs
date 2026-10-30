@@ -7,7 +7,7 @@ pub fn reconcile_visible_state(s: &mut Session, active_id: Option<&str>) {
     {
         s.status = "interrupted".into();
         if s.error.is_none() {
-            s.error = Some("Phiên đã dừng. Bản thu được giữ trên máy; hãy kiểm tra thư mục dữ liệu rồi nghe lại hoặc Chép tiếp.".into());
+            s.error = Some("Phiên đã dừng. Bản thu và bản chép hiện có được giữ trên máy.".into());
         }
     }
 }

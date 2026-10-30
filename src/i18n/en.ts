@@ -142,6 +142,11 @@ const part2 = {
   pause: "Pause",
   stop: "Finish",
   stopProcessing: "Stop transcribing, keep recording",
+  stopConfirmTitle: "Finish and save this meeting?",
+  stopConfirmBody:
+    "Innote will stop recording, save the audio, and keep the current transcript unchanged. You can listen and export it later.",
+  stopKeep: "Keep recording",
+  stopConfirm: "Finish and save",
   deleteMeeting: "Delete meeting",
   stateRecording: "Recording",
   statePaused: "Paused",
@@ -179,7 +184,7 @@ const part3 = {
     "You can listen again or download the model to transcribe later.",
   emptyInterruptedTitle: "Recording preserved",
   emptyInterruptedText:
-    "Listen to the recording and press Resume to try processing what is missing.",
+    "The recording and current transcript are kept on this device. You can listen and export them.",
   emptyCompletedTitle: "No speech found",
   emptyCompletedText:
     "Listen back and check the audio source. The recording is still kept on this device.",
@@ -239,7 +244,7 @@ const part3 = {
   testNoRecording:
     "Could not create a test recording. Check the source and try again.",
   notifyStopped:
-    "Recording stopped. Innote is saving and processing the remainder.",
+    "Finished. The audio and transcript are being saved.",
   notifyKeyCleared: "Key removed from memory. Applies to new sessions.",
   notifyKeyKept: "Key kept in memory until the app closes.",
   notifyModelReady: "Model is ready.",

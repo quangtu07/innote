@@ -141,6 +141,11 @@ const part2 = {
   pause: "일시정지",
   stop: "종료",
   stopProcessing: "전사 중지, 녹음 유지",
+  stopConfirmTitle: "회의를 종료하고 저장할까요?",
+  stopConfirmBody:
+    "Innote가 녹음을 중지하고 오디오를 저장하며 현재 전사 내용을 그대로 유지합니다. 나중에 다시 듣고 내보낼 수 있습니다.",
+  stopKeep: "계속 녹음",
+  stopConfirm: "종료 및 저장",
   deleteMeeting: "회의 삭제",
   stateRecording: "녹음 중",
   statePaused: "일시정지",
@@ -175,7 +180,7 @@ const part2 = {
   emptyRecordedText: "다시 듣거나 나중에 전사할 모델을 다운로드할 수 있습니다.",
   emptyInterruptedTitle: "녹음이 보존되었습니다",
   emptyInterruptedText:
-    "녹음을 다시 듣고 계속을 눌러 누락된 부분 처리를 시도하세요.",
+    "녹음과 현재 전사가 기기에 보관됩니다. 다시 듣고 내보낼 수 있습니다.",
   emptyCompletedTitle: "음성을 찾지 못했습니다",
   emptyCompletedText:
     "다시 듣고 오디오 소스를 확인하세요. 녹음은 기기에 보관됩니다.",
@@ -232,7 +237,7 @@ const part2 = {
     "{sources}에서 신호가 없습니다. 소리를 재생하거나 마이크에 말한 뒤 다시 테스트하세요. 조용하다고 장치가 고장 난 것은 아닙니다.",
   testDone: "5초 테스트 녹음이 완료되었습니다. 재생을 눌러 확인하세요.",
   testNoRecording: "테스트 녹음을 만들지 못했습니다. 소스를 확인하고 다시 시도하세요.",
-  notifyStopped: "녹음이 중지되었습니다. Innote가 나머지를 저장하고 처리합니다.",
+  notifyStopped: "종료되었습니다. 오디오와 전사가 저장됩니다.",
   notifyKeyCleared: "메모리에서 키를 삭제했습니다. 새 세션에 적용됩니다.",
   notifyKeyKept: "앱을 닫을 때까지 키를 메모리에 유지합니다.",
   notifyModelReady: "모델이 준비되었습니다.",

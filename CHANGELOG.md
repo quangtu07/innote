@@ -1,3 +1,12 @@
+# 0.6.7 — 30/10/2026 — kết thúc là lưu, không hủy bản chép
+
+- Bấm **Kết thúc** mở cảnh báo xác nhận; xác nhận là dừng ghi ngay, lưu bản thu và giữ bản chép lời hiện có.
+- Bỏ nút **Dừng chép, giữ bản thu** sau khi kết thúc.
+- Bỏ nút **Chép tiếp bằng local** và luồng interrupted thủ công.
+- Phần live chưa hiệu chỉnh vẫn nằm trong cùng danh sách bản chép (đoạn “Chờ hiệu chỉnh”) khi đang xử lý hoặc nếu xử lý bị lỗi; không bị mất khỏi màn hình.
+- 44 UI test pass; Svelte 0 lỗi/0 cảnh báo.
+- Installer 78.904.275 byte SHA `e2ad5c...4d527`; exe 13.941.760 byte SHA `a2a8d5...99fca`; phiên interrupted hiển thị đủ 4 nút export và không còn nút dừng/chép tiếp.
+
 # 0.6.6 — 30/10/2026 — một bản chép lời duy nhất
 
 - Bỏ box **Chép trực tiếp** tách riêng khỏi bản chép lời.

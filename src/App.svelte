@@ -105,9 +105,15 @@
   let notesDraft = "";
   let deleteOpen = false;
   let deleteDialog: HTMLDialogElement;
+  let stopOpen = false;
+  let stopDialog: HTMLDialogElement;
   $: if (deleteOpen)
     tick().then(() => {
       if (deleteDialog && !deleteDialog.open) deleteDialog.showModal();
+    });
+  $: if (stopOpen)
+    tick().then(() => {
+      if (stopDialog && !stopDialog.open) stopDialog.showModal();
     });
 
   let lastExport = "";
@@ -184,7 +190,7 @@
   $: liveWords = meeting ? Array.from(new Map([...(meeting.live ?? []), ...(currentLive?.words ?? [])].map(w => [w.id, w])).values()).filter(w => w.end > meeting!.processed + 0.00001).sort((a,b) => a.start - b.start) : [];
   $: liveText = liveWords.map(w => w.text).join(" ");
   $: partialText = meeting && currentLive && currentLive.end > meeting.processed && ["recording", "paused"].includes(meeting.status) ? currentLive.partial.split(/\s+/).slice((currentLive.partialWords ?? []).filter(w => w.end <= meeting!.processed + 0.00001).length).join(" ") : "";
-  $: showLive = !!meeting && ["recording", "paused"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
+  $: showLive = !!meeting && ["recording", "paused", "processing", "interrupted"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
   $: liveSegment = meeting && showLive
     ? {
         id: "live-preview",
@@ -452,6 +458,11 @@
     });
   }
   async function finish() {
+    if (!active) return;
+    stopOpen = true;
+  }
+  async function reallyFinish() {
+    stopOpen = false;
     await action(async () => {
       await invoke("stop");
       notify(tr.notifyStopped);
@@ -1103,16 +1114,8 @@
               ><button class="button stop" disabled={busy} onclick={finish}
                 ><Square size={15} fill="currentColor" /> {tr.stop}</button
               >
-            {:else if active && selected === active.id && active.status === "processing"}<button
-                class="button secondary"
-                disabled={busy}
-                onclick={() =>
-                  action(async () => {
-                    await invoke("cancel_processing");
-                    notify(
-                      tr.notifyCancelProcessing,
-                    );
-                  })}><Square size={15} /> {tr.stopProcessing}</button
+            {:else if active && selected === active.id && active.status === "processing"}<span class="processing-label"
+                ><RefreshCw size={15} /> {tr.stateProcessing}…</span
               >
             {:else if !meeting}<button
                 class="button primary"
@@ -1365,8 +1368,8 @@
               >{/if}
           </div>
           <div class="transcript-tools">
-            {#if meeting && (meeting.segments.length || audioUrl)}<div class="export-controls compact">
-                {#if meeting.segments.length}<button
+            {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
+                {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
                   title={tr.exportMdTitle}
                   disabled={busy}
@@ -1536,14 +1539,6 @@
                     await invoke("open_exports_folder");
                   })}><FolderOpen size={15} /> {tr.openExportFolder}</button
               >{/if}
-            {#if meeting && ["recorded", "interrupted"].includes(meeting.status)}<button
-                class="text-button"
-                disabled={busy || !!data.active_id}
-                onclick={() =>
-                  action(async () => {
-                    await invoke("resume_transcript", { id: selected });
-                  })}><RefreshCw size={15} /> {tr.resume}</button
-              >{/if}
           </div>
         </footer>
       </section>
@@ -1577,6 +1572,32 @@
         }}>{tr.keep}</button
       ><button class="button stop" disabled={busy} onclick={remove}
         >{tr.deleteConfirm}</button
+      >
+    </div>
+  </dialog>
+{/if}
+{#if stopOpen}
+  <dialog
+    class="confirm-dialog"
+    bind:this={stopDialog}
+    aria-labelledby="stop-title"
+    onclose={() => {
+      stopOpen = false;
+    }}
+    oncancel={() => {
+      stopOpen = false;
+    }}
+  >
+    <h2 id="stop-title">{tr.stopConfirmTitle}</h2>
+    <p>{tr.stopConfirmBody}</p>
+    <div>
+      <button
+        class="button secondary"
+        onclick={() => {
+          stopOpen = false;
+        }}>{tr.stopKeep}</button
+      ><button class="button stop" disabled={busy} onclick={reallyFinish}
+        >{tr.stopConfirm}</button
       >
     </div>
   </dialog>

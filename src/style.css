@@ -414,6 +414,14 @@ main {
   padding-top: 5px;
   flex-shrink: 0;
 }
+.processing-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #52705d;
+  font-size: 12px;
+  font-weight: 550;
+}
 .button {
   display: inline-flex;
   align-items: center;

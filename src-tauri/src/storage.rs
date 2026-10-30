@@ -53,6 +53,13 @@ fn drop_stale_discontinuity_warnings(s: &mut Session) {
         });
     }
 }
+fn normalize_legacy_resume_text(s: &mut Session) {
+    if let Some(error) = s.error.as_mut() {
+        if error.to_lowercase().contains("chép tiếp") {
+            *error = "Phiên đã dừng. Bản thu và bản chép hiện có được giữ trên máy.".into();
+        }
+    }
+}
 pub fn load(root: &Path, id: &str) -> Result<Session> {
     ensure_id(id)?;
     let text: String = db(root)?
@@ -60,6 +67,7 @@ pub fn load(root: &Path, id: &str) -> Result<Session> {
         .context("Không tìm thấy cuộc họp")?;
     let mut s: Session = serde_json::from_str(&text)?;
     drop_stale_discontinuity_warnings(&mut s);
+    normalize_legacy_resume_text(&mut s);
     Ok(s)
 }
 pub fn list(root: &Path) -> Result<Vec<Session>> {
@@ -70,6 +78,7 @@ pub fn list(root: &Path) -> Result<Vec<Session>> {
     for row in rows {
         let mut s: Session = serde_json::from_str(&row?)?;
         drop_stale_discontinuity_warnings(&mut s);
+        normalize_legacy_resume_text(&mut s);
         out.push(s);
     }
     out.sort_by(|a, b| b.created.cmp(&a.created));
@@ -102,7 +111,7 @@ pub fn recover(root: &Path) -> Result<()> {
                 }
             }
             s.error =
-                Some("Phiên trước bị gián đoạn. Bản thu đã lưu có thể được chép tiếp.".into());
+                Some("Phiên trước bị gián đoạn. Bản thu và bản chép hiện có vẫn được giữ.".into());
             save(root, &s)?;
         }
     }
