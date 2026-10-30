@@ -30,6 +30,7 @@
     CheckCheck,
     Globe,
     Sparkles,
+    List,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
   import {
@@ -127,6 +128,11 @@
   let notesDraft = "";
   let deleteOpen = false;
   let deleteDialog: HTMLDialogElement;
+  let deleteTarget: Meeting | null = null;
+  let meetingsOpen = false;
+  let meetingsDialog: HTMLDialogElement;
+  let renamingId = "";
+  let renameDraft = "";
   let stopOpen = false;
   let stopDialog: HTMLDialogElement;
   $: if (deleteOpen)
@@ -136,6 +142,10 @@
   $: if (stopOpen)
     tick().then(() => {
       if (stopDialog && !stopDialog.open) stopDialog.showModal();
+    });
+  $: if (meetingsOpen)
+    tick().then(() => {
+      if (meetingsDialog && !meetingsDialog.open) meetingsDialog.showModal();
     });
   $: if (smoothOpen)
     tick().then(() => {
@@ -430,10 +440,12 @@
   async function choose(s: Meeting) {
     if (testing) {
       error = tr.errorChooseTesting;
+      meetingsOpen = false;
       return;
     }
     if (editing) {
       error = tr.errorChooseEditing;
+      meetingsOpen = false;
       return;
     }
     error = "";
@@ -442,6 +454,8 @@
     lastExport = "";
     selected = s.id;
     page = "meeting";
+    meetingsOpen = false;
+    renamingId = "";
     title = s.title;
     notesDraft = s.notes;
     audioUrl = "";
@@ -451,6 +465,8 @@
     smoothOpen = false;
     smoothPrompt = "";
     exportVersion = "original";
+    meetingsOpen = false;
+    renamingId = "";
     autoScroll = true;
     if (!["recording", "paused"].includes(s.status)) {
       try {
@@ -490,6 +506,8 @@
     smoothOpen = false;
     smoothPrompt = "";
     exportVersion = "original";
+    meetingsOpen = false;
+    renamingId = "";
   }
   async function start() {
     await action(async () => {
@@ -701,13 +719,41 @@
     }
   }
   async function remove() {
-    if (!selected) return;
+    const id = deleteTarget?.id ?? selected;
+    if (!id) return;
     await action(async () => {
-      await invoke("delete_session", { id: selected });
+      await invoke("delete_session", { id });
       deleteOpen = false;
+      deleteTarget = null;
       editing = "";
-      newMeeting();
+      if (selected === id) newMeeting();
+      else await refresh();
     });
+  }
+  function startRename(s: Meeting) {
+    renamingId = s.id;
+    renameDraft = s.title;
+    tick().then(() =>
+      document.getElementById(`rename-${s.id}`)?.focus(),
+    );
+  }
+  async function saveRename(s: Meeting) {
+    const next = renameDraft.trim();
+    if (!next) {
+      error = tr.titleRequired;
+      return;
+    }
+    await action(async () => {
+      await invoke("edit_session", { id: s.id, title: next });
+      if (selected === s.id) title = next;
+      renamingId = "";
+      notify(tr.notifyRenamed);
+      await refresh();
+    });
+  }
+  function askDelete(s: Meeting) {
+    deleteTarget = s;
+    deleteOpen = true;
   }
   function clearTest() {
     testAudio?.pause();
@@ -952,37 +998,21 @@
     <button class="new-button" onclick={newMeeting}
       ><Plus size={18} /> {tr.newMeeting}</button
     >
-    <div class="history-heading">
-      {tr.yourMeetings} <span>{data.sessions.length}</span>
-    </div>
-    <label class="sidebar-search"
-      ><Search size={15} /><input
-        aria-label={tr.searchMeetings}
-        placeholder={tr.searchPlaceholder}
-        bind:value={query}
-      /></label
+    <button
+      class="meetings-button"
+      class:chosen={meetingsOpen}
+      aria-label={tr.meetingListButton}
+      onclick={() => {
+        meetingsOpen = true;
+      }}
     >
-    <nav class="history">
-      {#each history as s (s.id)}
-        <button
-          class:chosen={selected === s.id && page === "meeting"}
-          class="history-item"
-          onclick={() => choose(s)}
-          ><FileText size={17} /><span
-            ><strong>{s.title}</strong><small
-              >{day(s.created)} · {time(s.created)}{s.duration
-                ? ` · ${clock(s.duration)}`
-                : ""}</small
-            ></span
-          >{#if s.id === data.active_id}<span
-              class="live-dot"
-              aria-label={tr.activeSession}
-            ></span>{/if}</button
-        >
-      {:else}<p class="history-empty">
-          {query ? tr.noMeetings : tr.savedMeetings}
-        </p>{/each}
-    </nav>
+      <List size={18} />
+      <span
+        ><strong>{tr.meetingListButton}</strong><small
+          >{tr.yourMeetings} · {tr.meetingListHint}</small
+        ></span
+      ><span class="meetings-count">{data.sessions.length}</span>
+    </button>
     <div class="author-card">
       <div class="author-name">
         <span class="author-label">{tr.author}</span><span>Alex Linh</span>
@@ -1399,6 +1429,7 @@
                 aria-label={tr.deleteMeeting}
                 disabled={busy || selected === data.active_id}
                 onclick={() => {
+                  deleteTarget = meeting;
                   deleteOpen = true;
                 }}><Trash2 size={18} /></button
               >{/if}
@@ -1881,6 +1912,118 @@
 {#if toast}<div class="toast" role="status">
     <Check size={17} />{toast}
   </div>{/if}
+{#if meetingsOpen}
+  <dialog
+    class="confirm-dialog meetings-dialog"
+    bind:this={meetingsDialog}
+    aria-labelledby="meetings-title"
+    onclose={() => {
+      meetingsOpen = false;
+    }}
+    oncancel={() => {
+      meetingsOpen = false;
+    }}
+  >
+    <div class="meetings-dialog-head">
+      <h2 id="meetings-title">{tr.yourMeetings}</h2>
+      <button
+        class="icon-button"
+        title={tr.closeMeetings}
+        aria-label={tr.closeMeetings}
+        onclick={() => {
+          meetingsOpen = false;
+        }}><X size={17} /></button
+      >
+    </div>
+    <label class="sidebar-search"
+      ><Search size={15} /><input
+        aria-label={tr.searchMeetings}
+        placeholder={tr.searchPlaceholder}
+        bind:value={query}
+      /></label
+    >
+    <div class="meetings-list">
+      {#each history as s (s.id)}
+        <article class="meeting-card" class:selected={selected === s.id}>
+          <button class="meeting-card-main" onclick={() => choose(s)}>
+            <span class="meeting-card-icon"><FileText size={18} /></span>
+            <span class="meeting-card-text"
+              ><strong>{s.title}</strong><small
+                >{day(s.created)} · {time(s.created)}{s.duration
+                  ? ` · ${clock(s.duration)}`
+                  : ""}</small
+              ></span
+            >
+            {#if s.id === data.active_id}<span
+                class="live-dot"
+                aria-label={tr.activeSession}
+              ></span
+              >{/if}
+          </button>
+          <div class="meeting-card-actions">
+            <button
+              class="icon-button"
+              title={tr.renameMeeting}
+              aria-label={`${tr.renameMeeting}: ${s.title}`}
+              onclick={() => startRename(s)}><Pencil size={15} /></button
+            >
+            <button
+              class="icon-button danger"
+              title={tr.deleteMeeting}
+              aria-label={`${tr.deleteMeeting}: ${s.title}`}
+              onclick={() => askDelete(s)}><Trash2 size={15} /></button
+            >
+          </div>
+          {#if renamingId === s.id}
+            <div class="meeting-rename">
+              <input
+                id={`rename-${s.id}`}
+                bind:value={renameDraft}
+                aria-label={tr.renamePlaceholder}
+                onkeydown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void saveRename(s);
+                  } else if (event.key === "Escape") {
+                    renamingId = "";
+                  }
+                }}
+              />
+              <button
+                class="icon-button"
+                title={tr.renameSave}
+                aria-label={tr.renameSave}
+                disabled={busy}
+                onclick={() => saveRename(s)}><Check size={15} /></button
+              >
+              <button
+                class="icon-button"
+                title={tr.editCancel}
+                aria-label={tr.editCancel}
+                onclick={() => {
+                  renamingId = "";
+                }}><X size={15} /></button
+              >
+            </div>
+          {/if}
+        </article>
+      {:else}
+        <p class="history-empty">
+          {query ? tr.noMeetings : tr.savedMeetings}
+        </p>
+      {/each}
+    </div>
+    <div class="meetings-dialog-footer">
+      <button
+        class="button primary"
+        onclick={() => {
+          meetingsOpen = false;
+          newMeeting();
+        }}><Plus size={16} /> {tr.newMeeting}</button
+      >
+    </div>
+  </dialog>
+{/if}
 {#if smoothOpen}
   <dialog
     class="confirm-dialog smooth-dialog"
@@ -1958,20 +2101,23 @@
     aria-labelledby="delete-title"
     onclose={() => {
       deleteOpen = false;
+      deleteTarget = null;
     }}
     oncancel={() => {
       deleteOpen = false;
+      deleteTarget = null;
     }}
   >
     <h2 id="delete-title">{tr.deleteTitle}</h2>
     <p>
-      {fill(tr.deleteBody, { title: meeting?.title ?? "" })}
+      {fill(tr.deleteBody, { title: deleteTarget?.title ?? meeting?.title ?? "" })}
     </p>
     <div>
       <button
         class="button secondary"
         onclick={() => {
           deleteOpen = false;
+          deleteTarget = null;
         }}>{tr.keep}</button
       ><button class="button stop" disabled={busy} onclick={remove}
         >{tr.deleteConfirm}</button

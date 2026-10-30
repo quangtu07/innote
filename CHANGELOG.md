@@ -1,3 +1,10 @@
+# 0.7.3 — 30/10/2026 — danh sách cuộc họp trong sidebar
+
+- Bỏ danh sách cuộc họp dài khỏi sidebar; thêm nút **Danh sách cuộc họp** kèm số lượng.
+- Bấm nút mở dialog danh sách có tìm kiếm, trạng thái phiên đang chạy, nút **Cuộc họp mới**.
+- Mỗi card có nút **Đổi tên** (sửa tại chỗ, Enter lưu, Esc hủy) và **Xóa** (dùng dialog xác nhận hiện có).
+- UI 47 test pass; Rust 53 pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.2 — 30/10/2026 — cài đặt AI đẹp hơn, test API trước khi lưu, fetch model
 
 - Làm lại khu **Làm mịn bản chép bằng AI** trong Cài đặt thành card có provider/model/base URL, trạng thái API, nút **Kiểm tra API** và **Lấy model**.

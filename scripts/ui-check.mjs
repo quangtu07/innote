@@ -298,8 +298,21 @@ async function setup(options = {}) {
       .waitFor();
     return { page, context };
   }
-  await page.getByRole("button", { name: /Cuộc họp Alpha/ }).waitFor();
+  await page.getByRole("button", { name: "Danh sách cuộc họp", exact: true }).waitFor();
   return { page, context };
+}
+async function openMeeting(p, name) {
+  const list = p.locator("dialog.meetings-dialog");
+  if (!(await list.isVisible().catch(() => false))) {
+    await p
+      .getByRole("button", { name: "Danh sách cuộc họp", exact: true })
+      .click();
+  }
+  await list
+    .locator(".meeting-card")
+    .filter({ hasText: name })
+    .locator(".meeting-card-main")
+    .click();
 }
 async function check(name, options, fn) {
   const { page, context } = await setup(options);
@@ -423,7 +436,7 @@ try {
     const o=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);assert.equal(o.language,'zh');assert.equal(o.model,'nemotron-3.5-q8');
   });
   await check("Streaming events display immediately, survive snapshots, isolate sessions and retire refined words", {active:true, viewport:{width:900,height:640}}, async p => {
-    await p.getByRole("button",{name:/Phiên đang ghi/}).click();
+    await openMeeting(p, "Phiên đang ghi");
     const send = payload => p.evaluate(async payload => {
       const {emit} = await import('/node_modules/@tauri-apps/api/event.js');
       await emit('live-transcript',payload);
@@ -487,7 +500,7 @@ try {
     "Timestamp starts playback at the matching transcript position",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByLabel("Nghe lại cuộc họp").waitFor();
       await p.waitForFunction(
         () =>
@@ -509,7 +522,7 @@ try {
     "User can edit Vietnamese, filter transcript, and export all three formats",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Sửa đoạn 00:01" }).click();
       await p
         .getByRole("textbox", { name: "Sửa đoạn chép lời" })
@@ -553,7 +566,7 @@ try {
     "AI smoothing keeps the original transcript and re-runs with an optional prompt",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
       const dialog = p.getByRole("dialog");
       await dialog.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
@@ -633,7 +646,7 @@ try {
     "Interrupted meeting keeps its saved transcript without a resume action",
     { interrupted: true },
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p
         .getByText("Nội dung thử tiếng Việt.", { exact: true })
         .waitFor();
@@ -653,7 +666,7 @@ try {
     "Finish asks for confirmation and keeps the transcript",
     { active: true },
     async (p) => {
-      await p.getByRole("button", { name: /Phiên đang ghi/ }).click();
+      await openMeeting(p, "Phiên đang ghi");
       await p.getByRole("button", { name: "Kết thúc", exact: true }).click();
       const dialog = p.getByRole("dialog");
       await dialog
@@ -682,10 +695,41 @@ try {
     },
   );
   await check(
+    "Meeting list cards can rename and delete meetings",
+    {},
+    async (p) => {
+      await p
+        .getByRole("button", { name: "Danh sách cuộc họp", exact: true })
+        .click();
+      const list = p.locator("dialog.meetings-dialog");
+      await p.screenshot({ path: join(output, "meeting-list.png") });
+      const alpha = list.locator(".meeting-card").filter({ hasText: "Cuộc họp Alpha" });
+      await alpha.getByRole("button", { name: /Đổi tên cuộc họp/ }).click();
+      await alpha.getByRole("textbox", { name: "Tên cuộc họp" }).fill("Cuộc họp Alpha mới");
+      await alpha.getByRole("button", { name: "Lưu tên", exact: true }).click();
+      await p.waitForFunction(() =>
+        window.qa.snapshot.sessions.some((s) => s.title === "Cuộc họp Alpha mới"),
+      );
+      const beta = list.locator(".meeting-card").filter({ hasText: "Cuộc họp Beta" });
+      await beta.getByRole("button", { name: /Xóa cuộc họp/ }).click();
+      const confirm = p
+        .getByRole("dialog")
+        .filter({ hasText: "Xóa cuộc họp này?" });
+      await confirm.getByRole("button", { name: "Xóa cuộc họp", exact: true }).click();
+      await p.waitForFunction(
+        () => window.qa.snapshot.sessions.length === 1,
+      );
+      assert.equal(
+        (await p.evaluate(() => window.qa.snapshot.sessions[0].title)),
+        "Cuộc họp Alpha mới",
+      );
+    },
+  );
+  await check(
     "Delete confirmation removes only the intended mock meeting",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p
         .getByRole("button", { name: "Xóa cuộc họp", exact: true })
         .click();
@@ -855,7 +899,7 @@ try {
     "Fallback reason is visible with export reachable at 900x640",
     { fallback: true, viewport: { width: 900, height: 640 } },
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       assert(
         await p
           .getByRole("status")
@@ -979,8 +1023,8 @@ try {
     "Delayed audio response cannot attach a previous meeting recording",
     { delayAudio: true },
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
-      await p.getByRole("button", { name: /Cuộc họp Beta/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
+      await openMeeting(p, "Cuộc họp Beta");
       await p.waitForTimeout(700);
       assert(
         (await p.getByLabel("Nghe lại cuộc họp").getAttribute("src")).includes(
@@ -996,7 +1040,7 @@ try {
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
       await p.getByRole("button", { name: "Về phiên đang chạy" }).click();
       await p.getByRole("button", { name: "Kết thúc", exact: true }).waitFor();
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Về phiên đang chạy" }).waitFor();
     },
   );
@@ -1004,7 +1048,7 @@ try {
     "Export waits for an in-flight notes save",
     { slowSave: true },
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Mở ghi chú" }).click();
       await p
         .getByRole("textbox", { name: "Ghi chú của bạn", exact: true })
@@ -1021,12 +1065,12 @@ try {
     "Unsaved transcript edits are protected when changing meetings",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Sửa đoạn 00:01" }).click();
       await p
         .getByRole("textbox", { name: "Sửa đoạn chép lời" })
         .fill("Bản nháp cần giữ");
-      await p.getByRole("button", { name: /Cuộc họp Beta/ }).click();
+      await openMeeting(p, "Cuộc họp Beta");
       assert.equal(
         await p
           .getByRole("textbox", { name: "Sửa đoạn chép lời" })
@@ -1060,7 +1104,9 @@ try {
           .isDisabled(),
       );
       await p.reload();
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).waitFor();
+      await p
+        .getByRole("button", { name: "Danh sách cuộc họp", exact: true })
+        .waitFor();
       assert.equal(
         await p
           .getByRole("checkbox", { name: "Chép lời khi đang họp" })
@@ -1140,7 +1186,7 @@ try {
     },
   );
   await check("Empty title restores the saved title", {}, async (p) => {
-    await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+    await openMeeting(p, "Cuộc họp Alpha");
     await p.getByRole("textbox", { name: "Tên cuộc họp" }).fill("   ");
     await p.getByRole("textbox", { name: "Tên cuộc họp" }).press("Tab");
     assert.equal(
@@ -1152,7 +1198,7 @@ try {
     "Delete confirmation can be cancelled with Escape and retains the session",
     {},
     async (p) => {
-      await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+      await openMeeting(p, "Cuộc họp Alpha");
       await p
         .getByRole("button", { name: "Xóa cuộc họp", exact: true })
         .click();
@@ -1202,7 +1248,7 @@ try {
       `Layout ${viewport.width}x${viewport.height} notes=${notes}`,
       { viewport },
       async (p) => {
-        await p.getByRole("button", { name: /Cuộc họp Alpha/ }).click();
+        await openMeeting(p, "Cuộc họp Alpha");
         if (notes) await p.getByRole("button", { name: "Mở ghi chú" }).click();
         await p.waitForTimeout(50);
         assert(
