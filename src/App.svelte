@@ -190,6 +190,7 @@
   $: liveWords = meeting ? Array.from(new Map([...(meeting.live ?? []), ...(currentLive?.words ?? [])].map(w => [w.id, w])).values()).filter(w => w.end > meeting!.processed + 0.00001).sort((a,b) => a.start - b.start) : [];
   $: liveText = liveWords.map(w => w.text).join(" ");
   $: partialText = meeting && currentLive && currentLive.end > meeting.processed && ["recording", "paused"].includes(meeting.status) ? currentLive.partial.split(/\s+/).slice((currentLive.partialWords ?? []).filter(w => w.end <= meeting!.processed + 0.00001).length).join(" ") : "";
+  $: refinementPending = !!meeting && ["recording", "paused", "processing"].includes(meeting.status);
   $: showLive = !!meeting && ["recording", "paused", "processing", "interrupted"].includes(meeting.status) && !!(liveText || partialText) && (!searchText || `${liveText} ${partialText}`.toLocaleLowerCase("vi").includes(searchText.toLocaleLowerCase("vi")));
   $: liveSegment = meeting && showLive
     ? {
@@ -1371,18 +1372,18 @@
             {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
                 {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
-                  title={tr.exportMdTitle}
-                  disabled={busy}
+                  title={refinementPending ? tr.exportWaitRefinement : tr.exportMdTitle}
+                  disabled={busy || refinementPending}
                   onclick={() => exportText("md")}><Download size={14} /> {tr.exportMd}</button
                 ><button
                   class="button secondary small"
-                  title={tr.exportTxtTitle}
-                  disabled={busy}
+                  title={refinementPending ? tr.exportWaitRefinement : tr.exportTxtTitle}
+                  disabled={busy || refinementPending}
                   onclick={() => exportText("txt")}><Download size={14} /> {tr.exportTxt}</button
                 ><button
                   class="button secondary small"
-                  title={tr.exportSrtTitle}
-                  disabled={busy}
+                  title={refinementPending ? tr.exportWaitRefinement : tr.exportSrtTitle}
+                  disabled={busy || refinementPending}
                   onclick={() => exportText("srt")}><Download size={14} /> {tr.exportSrt}</button
                 >{/if}{#if audioUrl}<button
                   class="button secondary small"
@@ -1484,7 +1485,6 @@
                 >
                 <div class="segment-body">
                   <p data-live-caption>{liveSegment.text}</p>
-                  <small>{meeting?.status === "recording" ? tr.liveRecognizing : tr.liveWaiting}</small>
                 </div>
               </article>
             {/if}

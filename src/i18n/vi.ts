@@ -166,6 +166,8 @@ const part2 = {
   exportSrt: "Tải .srt",
   exportMp3Title: "Tải bản ghi âm MP3",
   exportMp3: "Tải .mp3",
+  exportWaitRefinement:
+    "Whisper đang hiệu chỉnh bản chép, vui lòng đợi xong để tải.",
   searchContent: "Tìm trong nội dung",
   searchTranscript: "Tìm trong bản chép lời",
   notesTitle: "Ghi chú của bạn",

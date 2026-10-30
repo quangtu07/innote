@@ -1,3 +1,10 @@
+# 0.6.9 — 30/10/2026 — ẩn nhãn hiệu chỉnh, chặn tải bản chép chưa xong
+
+- Ẩn dòng **“Đang hiệu chỉnh…”** dưới đoạn live; text vẫn hiển thị bình thường.
+- Khi Whisper còn hiệu chỉnh (`recording/paused/processing`), 3 nút `.md/.txt/.srt` bị khóa; tooltip báo chờ hiệu chỉnh xong. Nút `.mp3` vẫn tải được.
+- Phiên `interrupted` không có worker hiệu chỉnh đang chạy nên vẫn cho tải bản chép đã lưu.
+- UI 44/44 pass, thêm kiểm tra ẩn nhãn + khóa export khi live; Rust 47/47; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.6.8 — 30/10/2026 — làm rõ trạng thái hiệu chỉnh
 
 - Giữ bước Whisper hiệu chỉnh và nhãn trạng thái dưới đoạn live; đổi nhãn từ “Chờ hiệu chỉnh” thành **“Đang hiệu chỉnh…”** cho dễ hiểu.

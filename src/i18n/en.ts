@@ -170,6 +170,8 @@ const part3 = {
   exportSrt: "Download .srt",
   exportMp3Title: "Download audio recording as MP3",
   exportMp3: "Download .mp3",
+  exportWaitRefinement:
+    "Whisper is still refining the transcript. Please wait before downloading.",
   searchContent: "Search content",
   searchTranscript: "Search transcript",
   notesTitle: "Your notes",
