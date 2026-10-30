@@ -977,7 +977,7 @@ async fn refine_transcript(
             if p.exists() {
                 p
             } else {
-                anyhow::bail!("Chưa tải model hiệu chỉnh. Vui lòng vào Cài đặt để tải model PhoWhisper hoặc model độ chính xác cao.");
+                anyhow::bail!("Chưa tải mô hình hiệu chỉnh. Vui lòng vào Cài đặt để tải mô hình.");
             }
         };
 

@@ -266,9 +266,9 @@ const part2 = {
   gateTitle: "인터페이스 언어 선택",
   gateSubtitle: "Chọn ngôn ngữ · 언어 선택 · 选择界面语言",
   gateNote: "설정에서 언제든지 변경할 수 있습니다.",
-  aiTitle: "AI로 전사 다듬기",
+  aiTitle: "AI 연결 (다듬기 및 요약)",
   aiDesc:
-    "외부 API로 맞춤법, 문장부호, 잘못 인식된 단어를 고칠 수 있습니다. 다듬기를 누를 때만 전사를 보내며 원본은 항상 보존됩니다.",
+    "전사 다듬기 및 회의 요약에 사용할 AI 제공자를 연결합니다. 작업을 실행할 때만 데이터가 전송되며 원본은 항상 기기에 안전하게 보관됩니다.",
   aiProvider: "제공자",
   aiProviderOpenai: "OpenAI",
   aiProviderDeepseek: "DeepSeek",
@@ -277,7 +277,7 @@ const part2 = {
   aiModel: "모델",
   aiBaseUrl: "Base URL",
   aiBaseUrlHint: "예: http://127.0.0.1:11434/v1",
-  aiKey: "AI API 키",
+  aiKey: "AI API 키 (다듬기 및 요약)",
   aiKeyPlaceholder: "API 키 필수",
   aiKeyRequired: "테스트하거나 저장하기 전에 API 키를 입력해야 합니다.",
   aiKeyNote:
@@ -352,11 +352,11 @@ const part2 = {
   smoothCopy: "다듬은 전사 복사",
   smoothCopied: "다듬은 전사를 복사했습니다.",
   refineButton: "보정",
-  refineButtonTitle: "PhoWhisper로 전사 보정",
+  refineButtonTitle: "전사 보정",
   refining: "보정 중…",
-  refiningBanner: "AI PhoWhisper 모델로 전사를 보정하는 중입니다. 잠시만 기다려주세요…",
+  refiningBanner: "전사를 보정하는 중입니다. 잠시만 기다려주세요…",
   notifyRefined: "전사 보정을 완료했습니다.",
-  modelLangsPhoWhisper: "베트남어 전용 · VinAI",
+  modelLangsPhoWhisper: "베트남어 전용 · 기기에서 실행",
 };
 
 export const ko: Partial<UiStrings> = { ...part1, ...part2 };

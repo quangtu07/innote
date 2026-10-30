@@ -259,9 +259,9 @@ const part3 = {
   gateTitle: "Choose your interface language",
   gateSubtitle: "Chọn ngôn ngữ · 언어 선택 · 选择界面语言",
   gateNote: "You can change this later in Settings.",
-  aiTitle: "Smooth transcript with AI",
+  aiTitle: "AI Connection (Smoothing & Summary)",
   aiDesc:
-    "Optionally use an external API to fix spelling, punctuation and clearly misheard words. The transcript is sent only when you press Smooth; the original is always kept.",
+    "Connect to an AI provider for transcript smoothing and meeting summaries. Data is only sent when you choose to run an action; originals are always kept locally.",
   aiProvider: "Provider",
   aiProviderOpenai: "OpenAI",
   aiProviderDeepseek: "DeepSeek",
@@ -270,7 +270,7 @@ const part3 = {
   aiModel: "Model",
   aiBaseUrl: "Base URL",
   aiBaseUrlHint: "Example: http://127.0.0.1:11434/v1",
-  aiKey: "AI API key",
+  aiKey: "AI API key (Smoothing & Summary)",
   aiKeyPlaceholder: "API key required",
   aiKeyRequired: "An API key is required before testing or saving.",
   aiKeyNote:
@@ -345,11 +345,11 @@ const part3 = {
   smoothCopy: "Copy smoothed transcript",
   smoothCopied: "Smoothed transcript copied.",
   refineButton: "Refine",
-  refineButtonTitle: "Refine transcript using PhoWhisper",
+  refineButtonTitle: "Refine transcript",
   refining: "Refining…",
-  refiningBanner: "Running AI PhoWhisper model to refine transcript. Please wait a moment…",
+  refiningBanner: "Refining transcript. Please wait a moment…",
   notifyRefined: "Transcript refined successfully.",
-  modelLangsPhoWhisper: "Vietnamese Specialist · VinAI",
+  modelLangsPhoWhisper: "Vietnamese Specialist · runs on this device",
 };
 
 export const en: Partial<UiStrings> = { ...part1, ...part2, ...part3 };

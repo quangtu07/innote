@@ -266,9 +266,9 @@ const part2 = {
   gateTitle: "Chọn ngôn ngữ giao diện",
   gateSubtitle: "Choose your language · 언어 선택 · 选择界面语言",
   gateNote: "Bạn có thể đổi lại trong Cài đặt.",
-  aiTitle: "Làm mịn bản chép bằng AI",
+  aiTitle: "Kết nối AI (Làm mịn & Tóm tắt)",
   aiDesc:
-    "Tùy chọn dùng API bên ngoài để sửa lỗi chính tả, dấu câu và từ bị nhận dạng sai. Chỉ gửi bản chép khi bạn bấm Làm mịn; bản gốc luôn được giữ.",
+    "Dùng API AI để làm mịn câu chữ và tóm tắt cuộc họp. Dữ liệu chỉ gửi khi bạn bấm thực hiện; bản gốc luôn được giữ an toàn trên máy.",
   aiProvider: "Nhà cung cấp",
   aiProviderOpenai: "OpenAI",
   aiProviderDeepseek: "DeepSeek",
@@ -277,7 +277,7 @@ const part2 = {
   aiModel: "Model",
   aiBaseUrl: "Base URL",
   aiBaseUrlHint: "Ví dụ: http://127.0.0.1:11434/v1",
-  aiKey: "API key cho AI",
+  aiKey: "API key cho AI (Làm mịn & Tóm tắt)",
   aiKeyPlaceholder: "Bắt buộc nhập API key",
   aiKeyRequired: "Cần nhập API key trước khi kiểm tra hoặc lưu.",
   aiKeyNote:
@@ -353,11 +353,11 @@ const part2 = {
   smoothCopy: "Sao chép bản làm mịn",
   smoothCopied: "Đã sao chép bản làm mịn.",
   refineButton: "Hiệu chỉnh",
-  refineButtonTitle: "Hiệu chỉnh câu từ bằng PhoWhisper",
+  refineButtonTitle: "Hiệu chỉnh câu từ bản chép",
   refining: "Đang hiệu chỉnh…",
-  refiningBanner: "Đang dùng mô hình AI PhoWhisper hiệu chỉnh lại câu từ. Vui lòng đợi trong giây lát…",
+  refiningBanner: "Đang hiệu chỉnh lại câu từ. Vui lòng đợi trong giây lát…",
   notifyRefined: "Đã hiệu chỉnh bản chép thành công.",
-  modelLangsPhoWhisper: "Chuyên Tiếng Việt · VinAI",
+  modelLangsPhoWhisper: "Chuyên Tiếng Việt · chạy trên máy",
 };
 
 export const vi = { ...part1, ...part2 };

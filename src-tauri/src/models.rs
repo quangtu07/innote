@@ -28,7 +28,7 @@ pub const CATALOG: [(&str, &str, u64, &str); 5] = [
     ),
     (
         PHOWHISPER_ID,
-        "PhoWhisper · Tiếng Việt (VinAI)",
+        "Mô hình hiệu chỉnh tiếng Việt",
         487601984,
         "db8de368e822fce5dcdce7c0c4c80c4b554c27655516dea5ec8c093e22f58785",
     ),

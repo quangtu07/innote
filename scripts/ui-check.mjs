@@ -593,7 +593,7 @@ try {
     async (p) => {
       await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
-      await p.getByLabel("API key cho AI").fill("sk-test");
+      await p.getByLabel(/API key cho AI/).fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await openMeeting(p, "Cuộc họp Alpha");
@@ -663,7 +663,7 @@ try {
     async (p) => {
       await openMeeting(p, "Cuộc họp Alpha");
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
-      await p.getByLabel("API key cho AI").fill("sk-test");
+      await p.getByLabel(/API key cho AI/).fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await openMeeting(p, "Cuộc họp Alpha");
@@ -702,7 +702,7 @@ try {
         await p.getByLabel("Nhà cung cấp", { exact: true }).inputValue(),
         "openai",
       );
-      await p.getByLabel("API key cho AI").fill("sk-test");
+      await p.getByLabel(/API key cho AI/).fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       await p.getByRole("button", { name: "Lấy model", exact: true }).click();
       await p.waitForFunction(() =>

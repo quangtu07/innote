@@ -247,9 +247,9 @@ const part2 = {
   gateTitle: "选择界面语言",
   gateSubtitle: "Chọn ngôn ngữ · 언어 선택 · 选择界面语言",
   gateNote: "你可以随时在设置中更改。",
-  aiTitle: "用 AI 润色转写",
+  aiTitle: "AI 连接（润色与摘要）",
   aiDesc:
-    "可选择使用外部 API 修正拼写、标点和明显听错的词。只有点击“润色”时才会发送转写；原始内容始终保留。",
+    "连接 AI 服务以使用转写润色和会议摘要功能。仅在您主动点击执行时才会发送数据；原始内容始终安全保存在本地。",
   aiProvider: "服务商",
   aiProviderOpenai: "OpenAI",
   aiProviderDeepseek: "DeepSeek",
@@ -258,7 +258,7 @@ const part2 = {
   aiModel: "模型",
   aiBaseUrl: "Base URL",
   aiBaseUrlHint: "例如：http://127.0.0.1:11434/v1",
-  aiKey: "AI API 密钥",
+  aiKey: "AI API 密钥（润色与摘要）",
   aiKeyPlaceholder: "必填 API 密钥",
   aiKeyRequired: "测试或保存前需要输入 API 密钥。",
   aiKeyNote: "Key 只保存在内存中，关闭应用后丢失；不会写入会议或导出文件。",
@@ -330,11 +330,11 @@ const part2 = {
   smoothCopy: "复制润色版本",
   smoothCopied: "已复制润色版本。",
   refineButton: "校正",
-  refineButtonTitle: "使用 PhoWhisper 校正转写",
+  refineButtonTitle: "校正转写",
   refining: "正在校正…",
-  refiningBanner: "正在运行 AI PhoWhisper 模型校正转写，请稍候…",
+  refiningBanner: "正在校正转写，请稍候…",
   notifyRefined: "转写校正已完成。",
-  modelLangsPhoWhisper: "越南语专用 · VinAI",
+  modelLangsPhoWhisper: "越南语专用 · 设备本地运行",
 };
 
 export const zh: Partial<UiStrings> = { ...part1, ...part2 };
