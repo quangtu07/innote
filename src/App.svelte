@@ -33,8 +33,6 @@
     List,
     ClipboardList,
     Copy,
-    Eye,
-    EyeOff,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
   import {
@@ -127,7 +125,6 @@
   let smoothPrefsInitialized = false;
   let exportVersion: "original" | "smoothed" | "summary" = "original";
   let refining = false;
-  let showBaseUrl = false;
   let modelPickerOpen = false;
   let modelPickerDialog: HTMLDialogElement;
   let modelPickerSearch = "";
@@ -1479,33 +1476,17 @@
               </div><span class="ai-hint">{tr.aiModelHint}</span></label
             >
             {#if smoothProvider === "openai-compatible"}<label class="ai-field ai-field-full"
-                >{tr.aiBaseUrl}<div class="ai-password-wrap">
-                  <input
-                    type={showBaseUrl ? "text" : "password"}
-                    bind:value={smoothBaseUrl}
-                    aria-label={tr.aiBaseUrl}
-                    placeholder={tr.aiBaseUrlHint}
-                    autocomplete="off"
-                    spellcheck="false"
-                    oninput={() => {
-                      llmConnectionSignature = "";
-                    }}
-                  /><button
-                    type="button"
-                    class="icon-button ai-eye-button"
-                    title={showBaseUrl ? tr.hideBaseUrl : tr.showBaseUrl}
-                    aria-label={showBaseUrl ? tr.hideBaseUrl : tr.showBaseUrl}
-                    onclick={() => {
-                      showBaseUrl = !showBaseUrl;
-                    }}
-                  >
-                    {#if showBaseUrl}
-                      <EyeOff size={16} />
-                    {:else}
-                      <Eye size={16} />
-                    {/if}
-                  </button>
-                </div></label
+                >{tr.aiBaseUrl}<input
+                  type="text"
+                  bind:value={smoothBaseUrl}
+                  aria-label={tr.aiBaseUrl}
+                  placeholder={tr.aiBaseUrlHint}
+                  autocomplete="off"
+                  spellcheck="false"
+                  oninput={() => {
+                    llmConnectionSignature = "";
+                  }}
+                /></label
               >{/if}
           </div>
           <div class="ai-key-row">
