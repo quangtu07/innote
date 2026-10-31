@@ -53,7 +53,7 @@ const part1 = {
     "키는 디스크에 저장되지 않으며 앱을 닫으면 다시 입력해야 합니다. 키 변경은 새 세션에 적용됩니다.",
   modelTitle: "전사 모델",
   modelDesc:
-    "이 버전은 베트남어/영어에 가장 정확한 모델을, 혼합 회의에는 고정 다국어 모델을 사용합니다. 더 낮은 품질 옵션은 없습니다.",
+    "이 버전은 베트남어 전용 PhoWhisper 모델과 다국어 모델을 사용합니다. 더 낮은 품질 옵션은 없습니다.",
   modelLangsMulti: "베트남어, 영어, 한국어, 중국어",
   modelLangsViEn: "베트남어 및 영어",
   onDevice: "기기에서 실행",
@@ -95,7 +95,7 @@ const part2 = {
     "중국어(표준어)를 전사하며 말한 내용을 유지합니다. 모델은 한 번 다운로드하면 기기에서 무료로 실행됩니다.",
   multiSwitchHint: "여러 언어가 섞인 회의에는 다국어를 선택하세요.",
   turboHint:
-    "베트남어를 더 명확하게 우선합니다. CPU에서는 글이 말보다 늦게 나타날 수 있지만 녹음은 그대로 보존됩니다.",
+    "PhoWhisper(VinAI)로 베트남어에 최적화되었습니다. 녹음과 전사는 항상 기기에 안전하게 보관됩니다.",
   downloadOnce: "기기에서 전사하려면 모델을 한 번 다운로드하세요.",
   downloading: "다운로드 중…",
   downloadSize: "다운로드 · {size} MB",
@@ -153,10 +153,10 @@ const part2 = {
   stateCompleted: "완료",
   stateRecorded: "녹음 저장됨",
   stateInterrupted: "확인 필요",
-  waitingRefinement: "{remaining} 보정 대기",
+  waitingRefinement: "오디오 녹음 중",
   audioBeingSaved: "오디오를 저장 중입니다",
   transcript: "전사",
-  processedCorrected: "보정됨",
+  processedCorrected: "전사됨",
   processedCommitted: "확정됨",
   processedProgress: "{status} {processed} / 녹음 {duration}",
   exportMdTitle: "Markdown 전사를 다운로드 폴더로 내려받기",
@@ -168,7 +168,7 @@ const part2 = {
   exportMp3Title: "녹음 MP3 다운로드",
   exportMp3: ".mp3 다운로드",
   exportWaitRefinement:
-    "전사 보정 중… 완료 후 다운로드할 수 있습니다.",
+    "실시간 전사 중… 세션 종료 후 내보내기 가능합니다.",
   exportVersion: "다운로드할 버전 선택",
   exportOriginal: "원본",
   exportSmoothed: "다듬은 본",
@@ -360,12 +360,15 @@ const part2 = {
   notifySmoothed: "전사를 다듬었습니다. 원본은 그대로 보존됩니다.",
   smoothCopy: "다듬은 전사 복사",
   smoothCopied: "다듬은 전사를 복사했습니다.",
+  copyTranscript: "복사",
+  copyTranscriptTitle: "전사 전체 복사",
+  transcriptCopied: "전사를 복사했습니다.",
   refineButton: "보정",
   refineButtonTitle: "전사 보정",
   refining: "보정 중…",
   refiningBanner: "전사를 보정하는 중입니다. 잠시만 기다려주세요…",
   notifyRefined: "전사 보정을 완료했습니다.",
-  modelLangsPhoWhisper: "베트남어 전용 · 기기에서 실행",
+  modelLangsPhoWhisper: "베트남어 전용 (VinAI)",
 };
 
 export const ko: Partial<UiStrings> = { ...part1, ...part2 };

@@ -1,3 +1,18 @@
+# 0.8.0 — 31/10/2026 — chuyển mặc định sang PhoWhisper, bỏ model turbo cũ, nút sao chép nhanh và dọn dẹp nhãn ghi âm
+
+- **Mặc định dùng mô hình PhoWhisper (VinAI) cho tiếng Việt:** Loại bỏ hoàn toàn mô hình `large-v3-turbo-q5_0` khỏi danh mục và cấu hình ứng dụng; chuyển sang dùng `phowhisper-small` (487 MB) của VinAI Research được huấn luyện chuyên sâu trên giọng nói tiếng Việt 3 miền.
+- **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, cho phép người dùng copy toàn bộ nội dung văn bản cuộc họp vào bộ nhớ tạm chỉ với một cú click chuột.
+- **Dọn dẹp dòng thông báo ghi âm:** Thay thế câu thông báo cũ "Đang hiệu chỉnh… Có thể tải bản chép khi xong" thành "Đang chép trực tiếp… Kết thúc phiên để xuất file." và đổi nhãn "Đã hiệu chỉnh" thành "Đã chép", phù hợp 100% với cơ chế chép trực tiếp tức thì.
+- UI 48/48 test pass; Rust 54/54 test pass; Svelte 0 lỗi/0 cảnh báo.
+
+
+# 0.8.0 — 31/10/2026 — chuyển mặc định sang PhoWhisper, bỏ model turbo cũ, nút sao chép nhanh và dọn dẹp nhãn ghi âm
+
+- **Mặc định dùng mô hình PhoWhisper (VinAI) cho tiếng Việt:** Loại bỏ hoàn toàn mô hình `large-v3-turbo-q5_0` khỏi danh mục và cấu hình ứng dụng; chuyển sang dùng `phowhisper-small` (487 MB) của VinAI Research được huấn luyện chuyên sâu trên giọng nói tiếng Việt 3 miền.
+- **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, cho phép người dùng copy toàn bộ nội dung văn bản cuộc họp vào bộ nhớ tạm chỉ với một cú click chuột.
+- **Dọn dẹp dòng thông báo ghi âm:** Thay thế câu thông báo cũ "Đang hiệu chỉnh… Có thể tải bản chép khi xong" thành "Đang chép trực tiếp… Kết thúc phiên để xuất file." và đổi nhãn "Đã hiệu chỉnh" thành "Đã chép", phù hợp 100% với cơ chế chép trực tiếp tức thì.
+- UI 48/48 test pass; Rust 54/54 test pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.7.9 — 31/10/2026 — che giấu Base URL và hộp thoại tìm kiếm chọn Model AI
 
 - **Bảo mật và che giấu Base URL (`showBaseUrl`):** Mặc định ẩn Base URL dưới dạng mật mã `••••••••••`, bổ sung nút mắt bật/tắt (Show/Hide) giúp người dùng kiểm tra hoặc sửa đổi mà không sợ lộ đường dẫn máy chủ AI riêng tư khi chia sẻ màn hình.

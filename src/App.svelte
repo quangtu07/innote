@@ -93,7 +93,7 @@
   let system = "";
   let microphone = "";
   let language = "vi";
-  const model = "large-v3-turbo-q5_0";
+  const model = "phowhisper-small";
   let sourcesInitialized = false;
   let transcribe = true;
   let provider = "local";
@@ -819,6 +819,20 @@
     try {
       await navigator.clipboard.writeText(meeting?.summary?.text ?? "");
       notify(tr.summaryCopied);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  async function copyTranscript() {
+    if (!meeting) return;
+    const text = meeting.segments
+      .map((s) => s.text.trim())
+      .filter(Boolean)
+      .join("\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      notify(tr.transcriptCopied);
     } catch (e) {
       error = String(e);
     }
@@ -1824,7 +1838,7 @@
             {/if}
             {#if !transcribe}<p class="quality-hint">{tr.transcribeOnly}</p>{/if}
             {#if multilingual}<p class="quality-hint">{language==="multi"?tr.multiHint:language==="ko"?tr.koHint:tr.zhHint} {language==="multi"?"":tr.multiSwitchHint}</p>{/if}
-            {#if !multilingual && model.includes("turbo") && transcribe}<p class="quality-hint">{tr.turboHint}</p>{/if}
+            {#if !multilingual && transcribe}<p class="quality-hint">{tr.turboHint}</p>{/if}
             {#if transcribe && !currentModel?.installed}<div
                 class="model-download"
               >
@@ -1863,12 +1877,7 @@
               <span class="level"
                 ><span style:width={`${micLevel}%`}></span></span
               ></span
-            ><span
-              >{meeting.model !== multilingualModel && Math.max(0, Math.floor(meeting.duration - meeting.processed)) >
-              25
-                ? fill(tr.waitingRefinement, { remaining: clock(meeting.duration - meeting.processed) })
-                : tr.audioBeingSaved}</span
-            >
+            ><span>{tr.audioBeingSaved}</span>
           </div>{/if}
         {#if fallbackNotice}<div class="notice warning" role="status">
             <AlertCircle size={18} /><span>{fallbackNotice}</span>
@@ -1952,6 +1961,12 @@
               }}><ClipboardList size={14} /> {meeting?.summary ? tr.summaryRegenerate : tr.summaryButton}</button
             >{/if}
             {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div class="export-controls compact">
+                {#if meeting?.segments.length > 0}<button
+                  class="button secondary small"
+                  title={tr.copyTranscriptTitle}
+                  disabled={busy}
+                  onclick={() => copyTranscript()}><Copy size={14} /> {tr.copyTranscript}</button
+                >{/if}
                 {#if meeting?.smoothed || meeting?.summary}<div
                   class="export-version"
                   role="group"

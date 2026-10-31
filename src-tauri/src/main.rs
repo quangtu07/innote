@@ -969,17 +969,10 @@ async fn refine_transcript(
             "Hãy đợi phiên ghi âm dừng trước khi hiệu chỉnh"
         );
         let dir = storage::session_dir(&m.root, &id)?;
-        let pho_path = models::path(&m.root, models::PHOWHISPER_ID)?;
-        let model_path = if pho_path.exists() {
-            pho_path
-        } else {
-            let p = models::path(&m.root, &s.model)?;
-            if p.exists() {
-                p
-            } else {
-                anyhow::bail!("Chưa tải mô hình hiệu chỉnh. Vui lòng vào Cài đặt để tải mô hình.");
-            }
-        };
+        let model_path = models::path(&m.root, models::PHOWHISPER_ID)?;
+        if !model_path.exists() {
+            anyhow::bail!("Chưa tải mô hình PhoWhisper. Vui lòng vào Cài đặt để tải mô hình.");
+        }
 
         let _ = m.edit(&id, |s| {
             s.status = "processing".into();

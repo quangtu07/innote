@@ -74,9 +74,9 @@ async function setup(options = {}) {
             installed: !options.missingModels,
           },
           {
-            id: "large-v3-turbo-q5_0",
-            name: "Ưu tiên độ chính xác",
-            bytes: 574041195,
+            id: "phowhisper-small",
+            name: "PhoWhisper · Tiếng Việt (VinAI)",
+            bytes: 487601984,
             installed: !options.missingModels,
           },
         ],
@@ -415,7 +415,7 @@ try {
     assert.equal(await p.getByLabel('Chất lượng',{exact:true}).count(),0);
     assert.equal(await p.getByLabel('Model',{exact:true}).count(),0);
     const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
-    assert.equal(options.model,'large-v3-turbo-q5_0');
+    assert.equal(options.model,'phowhisper-small');
     assert(await p.getByRole('checkbox',{name:/Chép lời khi/}).isDisabled());
     await p.getByRole('button',{name:'Tạm dừng',exact:true}).waitFor();
   });
@@ -452,9 +452,9 @@ try {
     assert(await p.getByLabel('Cách chép lời',{exact:true}).isEnabled());
     await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
     const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
-    assert.equal(options.model,'large-v3-turbo-q5_0');
+    assert.equal(options.model,'phowhisper-small');
   });
-  await check("Korean Chinese and saved mixed preferences select the matching local model", {preferences:{system:'speaker',microphone:'mic',language:'multi',model:'large-v3-turbo-q5_0',transcribe:true}}, async p=>{
+  await check("Korean Chinese and saved mixed preferences select the matching local model", {preferences:{system:'speaker',microphone:'mic',language:'multi',model:'phowhisper-small',transcribe:true}}, async p=>{
     assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),'multi');
     for(const lang of ['ko','zh']) {await p.getByLabel('Ngôn ngữ',{exact:true}).selectOption(lang);assert.equal(await p.getByLabel('Model',{exact:true}).count(),0);assert((await p.locator('main').innerText()).includes(lang==='ko'?'Chép tiếng Hàn':'Chép tiếng Trung'));}
     await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
@@ -471,7 +471,7 @@ try {
     await p.getByRole('article',{name:'Bản chép trực tiếp'}).getByText('Đang nói trực tiếp',{exact:true}).waitFor({timeout:500});
     assert.equal(await p.getByText('Đang nhận dạng',{exact:true}).count(),0);
     assert.equal(await p.getByText('Đang hiệu chỉnh…',{exact:true}).count(),0);
-    await p.getByText('Đang hiệu chỉnh… Có thể tải bản chép khi xong.',{exact:true}).waitFor();
+    await p.getByText('Đang chép trực tiếp… Kết thúc phiên để xuất file.',{exact:true}).waitFor();
     assert(await p.getByRole('button',{name:'Tải .md',exact:true}).isDisabled());
     assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='report_live_paint').length),0);
     await send({id:ids[2],audit_epoch_unix_ms:Date.now()-2000,update:{text:"Đang nói trực tiếp",start:0,end:2,final_text:false,words:[]}});
@@ -562,6 +562,11 @@ try {
           .getByText("Đã chốt ngân sách và thời hạn.", { exact: true })
           .isVisible(),
       );
+      assert(
+        await p.getByRole("button", { name: "Sao chép", exact: true }).isVisible(),
+      );
+      await p.getByRole("button", { name: "Sao chép", exact: true }).click();
+      await p.getByText("Đã sao chép bản chép lời.", { exact: true }).waitFor();
       for (const [format, name] of [["md", "Tải .md"], ["txt", "Tải .txt"], ["srt", "Tải .srt"]]) {
         await p.getByRole("button", { name, exact: true }).click();
         await p.waitForFunction(
@@ -1086,7 +1091,7 @@ try {
       assert.equal(await p.getByText("Cân bằng", { exact: true }).count(), 0);
       await p
         .locator(".model-row")
-        .filter({ hasText: "Ưu tiên độ chính xác" })
+        .filter({ hasText: "PhoWhisper" })
         .getByRole("button", { name: "Tải model" })
         .click();
       await p.waitForFunction(() =>
@@ -1096,7 +1101,7 @@ try {
         await p.evaluate(
           () => window.qa.calls.find((c) => c.cmd === "download_model").args.id,
         ),
-        "large-v3-turbo-q5_0",
+        "phowhisper-small",
       );
     },
   );

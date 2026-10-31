@@ -7,7 +7,7 @@ use std::{
 };
 pub const NEMO_ID: &str = "nemotron-3.5-q8";
 pub const PHOWHISPER_ID: &str = "phowhisper-small";
-pub const CATALOG: [(&str, &str, u64, &str); 5] = [
+pub const CATALOG: [(&str, &str, u64, &str); 4] = [
     (
         "base-q5_1",
         "Tiết kiệm tài nguyên",
@@ -21,14 +21,8 @@ pub const CATALOG: [(&str, &str, u64, &str); 5] = [
         "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
     ),
     (
-        "large-v3-turbo-q5_0",
-        "Ưu tiên độ chính xác",
-        574041195,
-        "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
-    ),
-    (
         PHOWHISPER_ID,
-        "Mô hình hiệu chỉnh tiếng Việt",
+        "PhoWhisper · Tiếng Việt (VinAI)",
         487601984,
         "db8de368e822fce5dcdce7c0c4c80c4b554c27655516dea5ec8c093e22f58785",
     ),
@@ -154,11 +148,12 @@ mod mode_tests {
     fn mode_selects_an_actual_compatible_recognizer() {
         for lang in ["multi", "ko", "zh"] {
             assert!(validate_mode(lang, NEMO_ID, "local").is_ok());
-            assert!(validate_mode(lang, "large-v3-turbo-q5_0", "local").is_err());
+            assert!(validate_mode(lang, PHOWHISPER_ID, "local").is_err());
             assert!(validate_mode(lang, NEMO_ID, "soniox").is_err());
         }
         for lang in ["vi", "en"] {
-            assert!(validate_mode(lang, "large-v3-turbo-q5_0", "soniox").is_ok());
+            assert!(validate_mode(lang, PHOWHISPER_ID, "soniox").is_ok());
+            assert!(validate_mode(lang, PHOWHISPER_ID, "local").is_ok());
             assert!(validate_mode(lang, NEMO_ID, "local").is_err());
         }
         assert!(validate_mode("invalid", "base-q5_1", "local").is_err());

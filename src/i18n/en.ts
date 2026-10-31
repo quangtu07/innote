@@ -53,7 +53,7 @@ const part1 = {
     "The key is not saved to disk; you must re-enter it after closing the app. Key changes apply to new sessions.",
   modelTitle: "Transcription model",
   modelDesc:
-    "This version always uses the most accurate model for Vietnamese/English and a fixed multilingual model for mixed meetings. There is no lower-quality option.",
+    "This version uses the PhoWhisper model for Vietnamese and a multilingual model for mixed meetings. There is no lower-quality option.",
   modelLangsMulti: "Vietnamese, English, Korean and Chinese",
   modelLangsViEn: "Vietnamese and English",
   onDevice: "runs on this device",
@@ -96,7 +96,7 @@ const part2 = {
     "Transcribes Chinese (Mandarin) and keeps the original speech. Download the model once, then it runs free on this device.",
   multiSwitchHint: "Choose Multilingual for meetings that switch languages.",
   turboHint:
-    "Prioritizes clearer Vietnamese. On CPU, text may lag behind speech; the recording is still kept in full.",
+    "Optimized for Vietnamese with PhoWhisper (VinAI). Recordings and transcripts are always kept locally.",
   downloadOnce: "Download the model once to transcribe on this device.",
   downloading: "Downloading…",
   downloadSize: "Download · {size} MB",
@@ -154,12 +154,12 @@ const part2 = {
   stateCompleted: "Completed",
   stateRecorded: "Recording saved",
   stateInterrupted: "Needs review",
-  waitingRefinement: "{remaining} waiting for refinement",
+  waitingRefinement: "Recording audio",
   audioBeingSaved: "Audio is being saved",
 };
 const part3 = {
   transcript: "Transcript",
-  processedCorrected: "Refined",
+  processedCorrected: "Transcribed",
   processedCommitted: "Committed",
   processedProgress: "{status} {processed} / recorded {duration}",
   exportMdTitle: "Download Markdown transcript to Downloads / Innote",
@@ -171,7 +171,7 @@ const part3 = {
   exportMp3Title: "Download audio recording as MP3",
   exportMp3: "Download .mp3",
   exportWaitRefinement:
-    "Refining transcript… You can download once it finishes.",
+    "Transcribing live… Stop session to export files.",
   exportVersion: "Choose version to download",
   exportOriginal: "Original",
   exportSmoothed: "Smoothed",
@@ -353,12 +353,15 @@ const part3 = {
   notifySmoothed: "Transcript smoothed. The original is still kept.",
   smoothCopy: "Copy smoothed transcript",
   smoothCopied: "Smoothed transcript copied.",
+  copyTranscript: "Copy",
+  copyTranscriptTitle: "Copy entire transcript",
+  transcriptCopied: "Transcript copied.",
   refineButton: "Refine",
   refineButtonTitle: "Refine transcript",
   refining: "Refining…",
   refiningBanner: "Refining transcript. Please wait a moment…",
   notifyRefined: "Transcript refined successfully.",
-  modelLangsPhoWhisper: "Vietnamese Specialist · runs on this device",
+  modelLangsPhoWhisper: "Vietnamese Specialist (VinAI)",
 };
 
 export const en: Partial<UiStrings> = { ...part1, ...part2, ...part3 };

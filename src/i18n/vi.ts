@@ -51,7 +51,7 @@ const part1 = {
     "Key không lưu xuống đĩa; đóng app cần nhập lại. Thay đổi key áp dụng cho phiên mới.",
   modelTitle: "Model chép lời",
   modelDesc:
-    "Bản này luôn dùng model chính xác cao nhất cho Việt/Anh và model đa ngôn ngữ cố định cho cuộc họp xen kẽ. Không có lựa chọn chất lượng thấp hơn.",
+    "Bản này dùng model PhoWhisper chuyên tiếng Việt và model đa ngôn ngữ cho cuộc họp xen kẽ. Không có lựa chọn chất lượng thấp hơn.",
   modelLangsMulti: "Việt, Anh, Hàn và Trung",
   modelLangsViEn: "Việt và Anh",
   onDevice: "chạy trên máy",
@@ -65,7 +65,7 @@ const part1 = {
   dataFolderFallback: "Thư mục dữ liệu trong tài khoản Windows",
   openDataFolder: "Mở thư mục dữ liệu",
   finePrint:
-    "Bản {version} · Chưa phân biệt từng người nói · Chưa có tóm tắt AI",
+    "Bản {version} · Chép lời và hiệu chỉnh trên máy",
   transcriptionLanguage: "Ngôn ngữ",
   langVi: "Tiếng Việt",
   langEn: "Tiếng Anh",
@@ -92,7 +92,7 @@ const part1 = {
     "Chép tiếng Trung (Quan thoại), giữ nguyên lời nói. Model tải một lần, chạy miễn phí trên máy.",
   multiSwitchHint: "Chọn Đa ngôn ngữ cho cuộc họp xen kẽ nhiều thứ tiếng.",
   turboHint:
-    "Ưu tiên tiếng Việt rõ hơn. Trên CPU, chữ có thể chậm hơn lời nói; bản thu vẫn được giữ đầy đủ.",
+    "Tối ưu tiếng Việt bằng PhoWhisper (VinAI). Bản thu và bản chép luôn được giữ an toàn trên máy.",
   downloadOnce: "Tải model một lần để chép lời trên máy.",
   downloading: "Đang tải…",
   downloadSize: "Tải · {size} MB",
@@ -150,12 +150,12 @@ const part1 = {
   stateCompleted: "Đã hoàn tất",
   stateRecorded: "Đã lưu bản thu",
   stateInterrupted: "Cần kiểm tra",
-  waitingRefinement: "Còn {remaining} chờ hiệu chỉnh",
+  waitingRefinement: "Đang ghi nhận âm thanh",
   audioBeingSaved: "Âm thanh đang được lưu",
 };
 const part2 = {
   transcript: "Bản chép lời",
-  processedCorrected: "Đã hiệu chỉnh",
+  processedCorrected: "Đã chép",
   processedCommitted: "Đã chốt",
   processedProgress: "{status} {processed} / đã thu {duration}",
   exportMdTitle: "Tải bản chép Markdown vào Tải xuống / Innote",
@@ -167,7 +167,7 @@ const part2 = {
   exportMp3Title: "Tải bản ghi âm MP3",
   exportMp3: "Tải .mp3",
   exportWaitRefinement:
-    "Đang hiệu chỉnh… Có thể tải bản chép khi xong.",
+    "Đang chép trực tiếp… Kết thúc phiên để xuất file.",
   exportVersion: "Chọn bản để tải",
   exportOriginal: "Bản gốc",
   exportSmoothed: "Bản làm mịn",
@@ -201,11 +201,11 @@ const part2 = {
   liveAria: "Bản chép trực tiếp",
   liveHeading: "Chép trực tiếp · Local",
   liveRecognizing: "Đang nhận dạng",
-  liveWaiting: "Đang hiệu chỉnh…",
+  liveWaiting: "Đang chép lời…",
   liveMultiNote:
     "Chữ tạm có thể thay đổi. Lượt đã chốt được lưu trên máy để bạn sửa và xuất.",
   liveWhisperNote:
-    "Chữ tạm có thể thay đổi. Các câu đã nhận được lưu trên máy; Whisper sẽ hiệu chỉnh ở nền.",
+    "Chữ tạm có thể thay đổi. Lượt đã chốt được lưu trên máy để bạn sửa và xuất.",
   savePaused: "Đã tạm dừng ghi âm",
   saveRecording: "Đang lưu âm thanh trên máy",
   saveLocal: "Dữ liệu được giữ trên máy này",
@@ -361,12 +361,15 @@ const part2 = {
   notifySmoothed: "Đã làm mịn bản chép. Bản gốc vẫn được giữ.",
   smoothCopy: "Sao chép bản làm mịn",
   smoothCopied: "Đã sao chép bản làm mịn.",
+  copyTranscript: "Sao chép",
+  copyTranscriptTitle: "Sao chép toàn bộ bản chép lời",
+  transcriptCopied: "Đã sao chép bản chép lời.",
   refineButton: "Hiệu chỉnh",
   refineButtonTitle: "Hiệu chỉnh câu từ bản chép",
   refining: "Đang hiệu chỉnh…",
   refiningBanner: "Đang hiệu chỉnh lại câu từ. Vui lòng đợi trong giây lát…",
   notifyRefined: "Đã hiệu chỉnh bản chép thành công.",
-  modelLangsPhoWhisper: "Chuyên Tiếng Việt · chạy trên máy",
+  modelLangsPhoWhisper: "Chuyên Tiếng Việt (VinAI)",
 };
 
 export const vi = { ...part1, ...part2 };
