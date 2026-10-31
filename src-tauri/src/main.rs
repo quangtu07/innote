@@ -1073,6 +1073,22 @@ fn set_soniox_key(may: State<May>, key: String) -> std::result::Result<(), Strin
     Ok(())
 }
 #[tauri::command]
+async fn test_soniox_connection(
+    may: State<'_, May>,
+    key: Option<String>,
+) -> std::result::Result<String, String> {
+    let m = may.inner().clone();
+    let api_key = key
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| m.soniox_key.lock().unwrap().clone());
+    if api_key.trim().is_empty() {
+        return Err("Cần nhập API key Soniox".into());
+    }
+    soniox::test_connection(&api_key).await.map_err(err)?;
+    Ok("ok".into())
+}
+
+#[tauri::command]
 async fn refresh_devices(may: State<'_, May>) -> std::result::Result<(), String> {
     let m = may.inner().clone();
     let devices = tauri::async_runtime::spawn_blocking(audio::devices)
@@ -1900,6 +1916,7 @@ fn main() {
             snapshot,
             report_live_paint,
             set_soniox_key,
+            test_soniox_connection,
             set_llm_key,
             test_llm_connection,
             fetch_llm_models,

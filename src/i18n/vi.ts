@@ -49,6 +49,14 @@ const part1 = {
   sonioxMissing: "Chưa có key. Innote vẫn dùng local bình thường.",
   sonioxKeyNote:
     "Key không lưu xuống đĩa; đóng app cần nhập lại. Thay đổi key áp dụng cho phiên mới.",
+  sonioxTestButton: "Kiểm tra Soniox",
+  sonioxTestSuccess: "Soniox: API đã kết nối thành công.",
+  sonioxKeyRequired: "Cần nhập API key Soniox trước khi kiểm tra hoặc lưu.",
+  sonioxKeyPlaceholder: "Nhập API key Soniox…",
+  apiStatusActive: "Đang hoạt động · Đã kết nối",
+  apiStatusConfigured: "Đã có API key",
+  apiStatusNotConfigured: "Chưa có API key",
+
   modelTitle: "Model chép lời",
   modelDesc:
     "Bản này dùng model PhoWhisper chuyên tiếng Việt và model đa ngôn ngữ cho cuộc họp xen kẽ. Không có lựa chọn chất lượng thấp hơn.",

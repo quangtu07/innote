@@ -1,17 +1,12 @@
-# 0.8.0 — 31/10/2026 — chuyển mặc định sang PhoWhisper, bỏ model turbo cũ, nút sao chép nhanh và dọn dẹp nhãn ghi âm
+# 0.8.0 — 31/10/2026 — đóng gói PhoWhisper, nút kiểm tra Soniox, badge trạng thái nổi và sao chép nhanh
 
-- **Mặc định dùng mô hình PhoWhisper (VinAI) cho tiếng Việt:** Loại bỏ hoàn toàn mô hình `large-v3-turbo-q5_0` khỏi danh mục và cấu hình ứng dụng; chuyển sang dùng `phowhisper-small` (487 MB) của VinAI Research được huấn luyện chuyên sâu trên giọng nói tiếng Việt 3 miền.
-- **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, cho phép người dùng copy toàn bộ nội dung văn bản cuộc họp vào bộ nhớ tạm chỉ với một cú click chuột.
-- **Dọn dẹp dòng thông báo ghi âm:** Thay thế câu thông báo cũ "Đang hiệu chỉnh… Có thể tải bản chép khi xong" thành "Đang chép trực tiếp… Kết thúc phiên để xuất file." và đổi nhãn "Đã hiệu chỉnh" thành "Đã chép", phù hợp 100% với cơ chế chép trực tiếp tức thì.
-- UI 48/48 test pass; Rust 54/54 test pass; Svelte 0 lỗi/0 cảnh báo.
+- **Đóng gói sẵn mô hình PhoWhisper (VinAI) tiếng Việt vào bộ cài .exe:** Nhúng sẵn mô hình PhoWhisper Small (487 MB) vào bộ cài NSIS; cài đặt xong là sẵn sàng họp ngay, không bắt người dùng tải thêm.
+- **Thêm nút "Kiểm tra Soniox" & Card Soniox:** Thiết kế mục Soniox thành thẻ card chuyên nghiệp đồng bộ với AI, thêm nút "Kiểm tra Soniox" ngay cạnh ô nhập key để test kết nối trực tiếp với máy chủ Soniox WebSocket.
+- **Badge trạng thái nổi cho Soniox và AI:** Bổ sung badge trạng thái nổi bật (`.api-badge`) ở góc trên mỗi card (`● Đang hoạt động · Đã kết nối`, `● Đã có API key`, `Chưa có API key`), giúp người dùng nhận biết ngay lập tức API đã có và đang hoạt động tốt.
+- **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, copy toàn bộ nội dung với 1 cú click chuột.
+- **Ô Base URL:** Sử dụng ô văn bản chuẩn, mặc định để rỗng.
+- UI 49/49 test pass; Rust 55/55 test pass; Svelte 0 lỗi/0 cảnh báo.
 
-
-# 0.8.0 — 31/10/2026 — chuyển mặc định sang PhoWhisper, bỏ model turbo cũ, nút sao chép nhanh và dọn dẹp nhãn ghi âm
-
-- **Mặc định dùng mô hình PhoWhisper (VinAI) cho tiếng Việt:** Loại bỏ hoàn toàn mô hình `large-v3-turbo-q5_0` khỏi danh mục và cấu hình ứng dụng; chuyển sang dùng `phowhisper-small` (487 MB) của VinAI Research được huấn luyện chuyên sâu trên giọng nói tiếng Việt 3 miền.
-- **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, cho phép người dùng copy toàn bộ nội dung văn bản cuộc họp vào bộ nhớ tạm chỉ với một cú click chuột.
-- **Dọn dẹp dòng thông báo ghi âm:** Thay thế câu thông báo cũ "Đang hiệu chỉnh… Có thể tải bản chép khi xong" thành "Đang chép trực tiếp… Kết thúc phiên để xuất file." và đổi nhãn "Đã hiệu chỉnh" thành "Đã chép", phù hợp 100% với cơ chế chép trực tiếp tức thì.
-- UI 48/48 test pass; Rust 54/54 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 # 0.7.9 — 31/10/2026 — che giấu Base URL và hộp thoại tìm kiếm chọn Model AI
 

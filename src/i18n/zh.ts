@@ -49,6 +49,14 @@ const part1 = {
   sonioxMissing: "没有密钥。Innote 仍会正常使用本地模式。",
   sonioxKeyNote:
     "密钥不会保存到磁盘；关闭应用后需要重新输入。密钥更改仅适用于新会话。",
+  sonioxTestButton: "测试 Soniox",
+  sonioxTestSuccess: "Soniox: API 连接成功。",
+  sonioxKeyRequired: "测试前请输入 Soniox API 密钥。",
+  sonioxKeyPlaceholder: "输入 Soniox API 密钥…",
+  apiStatusActive: "运行中 · 已连接",
+  apiStatusConfigured: "已保存 API 密钥",
+  apiStatusNotConfigured: "未配置 API 密钥",
+
   modelTitle: "转写模型",
   modelDesc:
     "此版本使用越南语专用 PhoWhisper 模型和多语言模型。不提供低质量选项。",

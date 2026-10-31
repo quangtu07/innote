@@ -140,6 +140,8 @@ async function setup(options = {}) {
           return;
         }
         if (cmd === "test_llm_connection") return "ok";
+        if (cmd === "test_soniox_connection") return "ok";
+
         if (cmd === "fetch_llm_models") return ["gpt-4o-mini", "gpt-4o"];
         if (cmd === "smooth_transcript") {
           const s = qa.snapshot.sessions.find((s) => s.id === args.id);
@@ -1080,6 +1082,27 @@ try {
       await p
         .getByText(/Chưa có key. Innote vẫn dùng local bình thường/)
         .waitFor();
+    },
+  );
+  await check(
+    "Soniox key can be tested and shows prominent status badges",
+    {},
+    async (p) => {
+      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
+      const sonioxCard = p.locator(".soniox-settings");
+      assert(await sonioxCard.getByText("Chưa có API key").isVisible());
+      await p.getByLabel("API key Soniox").fill("fake-soniox-secret");
+      await p.getByRole("button", { name: "Kiểm tra Soniox", exact: true }).click();
+      await p.waitForFunction(() =>
+        window.qa.calls.some((c) => c.cmd === "test_soniox_connection"),
+      );
+      assert(await sonioxCard.getByText("Đang hoạt động · Đã kết nối").isVisible());
+      await p.getByRole("button", { name: "Giữ key trong bộ nhớ", exact: true }).click();
+      await p.waitForFunction(() => window.qa.snapshot.soniox_configured === true);
+      assert(await sonioxCard.getByText(/Đã có key trong bộ nhớ/).isVisible());
+      await p.getByRole("button", { name: "Xóa key", exact: true }).click();
+      await p.waitForFunction(() => window.qa.snapshot.soniox_configured === false);
+      assert(await sonioxCard.getByText("Chưa có API key").isVisible());
     },
   );
   await check(

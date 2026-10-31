@@ -51,6 +51,14 @@ const part1 = {
   sonioxMissing: "키가 없습니다. Innote는 계속 로컬을 사용합니다.",
   sonioxKeyNote:
     "키는 디스크에 저장되지 않으며 앱을 닫으면 다시 입력해야 합니다. 키 변경은 새 세션에 적용됩니다.",
+  sonioxTestButton: "Soniox 테스트",
+  sonioxTestSuccess: "Soniox: API 연결에 성공했습니다.",
+  sonioxKeyRequired: "테스트 전에 Soniox API 키를 입력하세요.",
+  sonioxKeyPlaceholder: "Soniox API 키 입력…",
+  apiStatusActive: "활성 · 연결됨",
+  apiStatusConfigured: "API 키 저장됨",
+  apiStatusNotConfigured: "API 키 없음",
+
   modelTitle: "전사 모델",
   modelDesc:
     "이 버전은 베트남어 전용 PhoWhisper 모델과 다국어 모델을 사용합니다. 더 낮은 품질 옵션은 없습니다.",

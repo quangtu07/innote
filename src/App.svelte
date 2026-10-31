@@ -96,6 +96,7 @@
   let transcribe = true;
   let provider = "local";
   let sonioxKey = "";
+  let sonioxConnected = false;
   type SmoothProvider = "openai" | "deepseek" | "gemini" | "openai-compatible";
   const smoothDefaults: Record<SmoothProvider, string> = {
     openai: "gpt-4o-mini",
@@ -622,6 +623,19 @@
       notify(tr.notifyStopped);
     });
   }
+  async function testSonioxConnection() {
+    if (!sonioxKey.trim() && !data.soniox_configured) {
+      error = tr.sonioxKeyRequired;
+      return;
+    }
+    await action(async () => {
+      await invoke("test_soniox_connection", {
+        key: sonioxKey.trim() || null,
+      });
+      sonioxConnected = true;
+      notify(tr.sonioxTestSuccess);
+    });
+  }
   async function saveSonioxKey(clear = false) {
     await action(async () => {
       try {
@@ -629,6 +643,8 @@
       } finally {
         sonioxKey = "";
       }
+      data = { ...data, soniox_configured: !clear };
+      if (clear) sonioxConnected = false;
       notify(clear ? tr.notifyKeyCleared : tr.notifyKeyKept);
     });
   }
@@ -1378,22 +1394,50 @@
             {updateChecking ? tr.updateChecking : tr.checkUpdates}
           </button>
         </div>
-        <div class="settings-section">
-          <h2>{tr.sonioxTitle}</h2>
-          <p>{tr.sonioxDesc}</p>
-          <label
-            >{tr.sonioxKey}<input
-              type="password"
-              aria-label={tr.sonioxKey}
-              autocomplete="off"
-              spellcheck="false"
-              bind:value={sonioxKey}
-              placeholder={tr.optional}
-            /></label
+        <div class="settings-section soniox-settings">
+          <div class="soniox-heading">
+            <div>
+              <h2><Globe size={18} /> {tr.sonioxTitle}</h2>
+              <p>{tr.sonioxDesc}</p>
+            </div>
+            <span
+              class="api-badge"
+              class:connected={sonioxConnected}
+              class:configured={data.soniox_configured && !sonioxConnected}
+              class:missing={!data.soniox_configured && !sonioxConnected}
+            >
+              {#if sonioxConnected}
+                {tr.apiStatusActive}
+              {:else if data.soniox_configured}
+                {tr.apiStatusConfigured}
+              {:else}
+                {tr.apiStatusNotConfigured}
+              {/if}
+            </span>
+          </div>
+          <label class="ai-field ai-field-full"
+            >{tr.sonioxKey}<div class="ai-key-input-wrap">
+              <input
+                type="password"
+                aria-label={tr.sonioxKey}
+                autocomplete="off"
+                spellcheck="false"
+                bind:value={sonioxKey}
+                placeholder={tr.sonioxKeyPlaceholder}
+                oninput={() => {
+                  sonioxConnected = false;
+                }}
+              /><button
+                type="button"
+                class="button secondary"
+                disabled={busy || (!sonioxKey.trim() && !data.soniox_configured)}
+                onclick={() => testSonioxConnection()}>{tr.sonioxTestButton}</button
+              >
+            </div></label
           >
-          <div class="soniox-actions">
+          <div class="ai-actions">
             <button
-              class="button secondary"
+              class="button primary"
               disabled={busy || !sonioxKey.trim()}
               onclick={() => saveSonioxKey()}>{tr.keepKey}</button
             >
@@ -1402,12 +1446,13 @@
               disabled={busy || !data.soniox_configured}
               onclick={() => saveSonioxKey(true)}>{tr.removeKey}</button
             >
+            <span class="ai-key-state">
+              {data.soniox_configured
+                ? tr.sonioxConfigured
+                : tr.sonioxMissing}
+            </span>
           </div>
-          <p>
-            {data.soniox_configured
-              ? tr.sonioxConfigured
-              : tr.sonioxMissing} {tr.sonioxKeyNote}
-          </p>
+          <p class="ai-key-note">{tr.sonioxKeyNote}</p>
         </div>
         <div class="settings-section ai-settings">
           <div class="ai-heading">
@@ -1415,9 +1460,20 @@
               <h2><Sparkles size={18} /> {tr.aiTitle}</h2>
               <p>{tr.aiDesc}</p>
             </div>
-            <span class:connected={llmConnected} class="ai-status"
-              >{llmConnected ? tr.aiConnected : tr.aiNotConnected}</span
+            <span
+              class="api-badge"
+              class:connected={llmConnected}
+              class:configured={data.llm_configured && !llmConnected}
+              class:missing={!data.llm_configured && !llmConnected}
             >
+              {#if llmConnected}
+                {tr.apiStatusActive}
+              {:else if data.llm_configured}
+                {tr.apiStatusConfigured}
+              {:else}
+                {tr.apiStatusNotConfigured}
+              {/if}
+            </span>
           </div>
           <div class="ai-grid">
             <label class="ai-field"

@@ -119,6 +119,72 @@ pub async fn transcribe(key: &str, job: &WorkerJob, cancel: &AtomicBool) -> Resu
     transcribe_at(ENDPOINT, key, job, cancel, Duration::from_secs(35)).await
 }
 
+pub async fn test_connection(key: &str) -> Result<()> {
+    test_connection_at(ENDPOINT, key, Duration::from_secs(8)).await
+}
+
+pub async fn test_connection_at(endpoint: &str, key: &str, timeout: Duration) -> Result<()> {
+    let key = validate_key(key)?;
+    ensure!(!key.is_empty(), "Cần nhập API key Soniox");
+    let mut request = endpoint
+        .into_client_request()
+        .map_err(|_| anyhow::anyhow!("Địa chỉ Soniox không hợp lệ"))?;
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {key}"))
+        .map_err(|_| anyhow::anyhow!("Key không hợp lệ"))?;
+    authorization.set_sensitive(true);
+    request.headers_mut().insert("Authorization", authorization);
+    let operation = async {
+        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(6), connect_async(request))
+            .await
+            .map_err(|_| anyhow::anyhow!("Kết nối Soniox quá lâu"))?
+            .map_err(|_| {
+                anyhow::anyhow!("Không kết nối được Soniox; kiểm tra mạng hoặc dịch vụ")
+            })?;
+        socket
+            .send(Message::Text(
+                json!({
+                    "model": "stt-rt-v5",
+                    "audio_format": "s16le",
+                    "sample_rate": 16000,
+                    "num_channels": 1,
+                    "language_hints": ["vi"],
+                    "enable_speaker_diarization": false
+                })
+                .to_string(),
+            ))
+            .await
+            .map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
+        socket
+            .send(Message::Text(String::new()))
+            .await
+            .map_err(|_| anyhow::anyhow!("Không gửi được tín hiệu tới Soniox"))?;
+        while let Some(msg) = socket.next().await {
+            match msg.map_err(|_| anyhow::anyhow!("Kết nối Soniox bị gián đoạn"))? {
+                Message::Text(text) => {
+                    let v: Value = serde_json::from_str(&text)
+                        .map_err(|_| anyhow::anyhow!("Soniox trả JSON không hợp lệ"))?;
+                    if let Some(code) = v.get("error_code").and_then(|c| c.as_u64()) {
+                        bail!(provider_error(code));
+                    }
+                    if let Some(err_type) = v.get("error_type").and_then(|t| t.as_str()) {
+                        if err_type == "unauthenticated" || err_type == "permission_denied" {
+                            bail!("Soniox: key không đúng hoặc đã hết hạn");
+                        }
+                        bail!("Lỗi Soniox: {}", err_type);
+                    }
+                    return Ok(());
+                }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    };
+    tokio::time::timeout(timeout, operation)
+        .await
+        .map_err(|_| anyhow::anyhow!("Soniox phản hồi quá lâu"))?
+}
+
 async fn transcribe_at(
     endpoint: &str,
     key: &str,
@@ -334,6 +400,57 @@ mod tests {
         assert_eq!(t.segments[0].start, 50.5);
         assert_eq!(t.segments[0].end, 51.2);
     }
+    #[tokio::test]
+    async fn test_connection_success_and_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+                    assert_eq!(request.headers()["Authorization"], "Bearer valid-test-key");
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            let _ = socket.next().await;
+            let _ = socket
+                .send(Message::Text(
+                    json!({"tokens":[], "finished": true}).to_string(),
+                ))
+                .await;
+        });
+        assert!(test_connection_at(&endpoint, "valid-test-key", Duration::from_secs(3))
+            .await
+            .is_ok());
+
+        let listener_err = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint_err = format!("ws://{}", listener_err.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener_err.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                |_: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            let _ = socket.next().await;
+            let _ = socket
+                .send(Message::Text(
+                    json!({"error_code": 401, "error_type": "unauthenticated"}).to_string(),
+                ))
+                .await;
+        });
+        let err = test_connection_at(&endpoint_err, "bad-test-key", Duration::from_secs(3))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("key không đúng"));
+    }
+
     #[test]
     fn errors_are_classified_without_echoing_secrets_and_invalid_times_fail_closed() {
         for code in [400, 401, 402, 403, 408, 429, 500, 503] {

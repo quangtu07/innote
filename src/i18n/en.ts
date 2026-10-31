@@ -51,6 +51,14 @@ const part1 = {
   sonioxMissing: "No key. Innote continues to use local.",
   sonioxKeyNote:
     "The key is not saved to disk; you must re-enter it after closing the app. Key changes apply to new sessions.",
+  sonioxTestButton: "Test Soniox",
+  sonioxTestSuccess: "Soniox: API connected successfully.",
+  sonioxKeyRequired: "Please enter Soniox API key before testing.",
+  sonioxKeyPlaceholder: "Enter Soniox API key…",
+  apiStatusActive: "Active · Connected",
+  apiStatusConfigured: "API key stored",
+  apiStatusNotConfigured: "No API key",
+
   modelTitle: "Transcription model",
   modelDesc:
     "This version uses the PhoWhisper model for Vietnamese and a multilingual model for mixed meetings. There is no lower-quality option.",
