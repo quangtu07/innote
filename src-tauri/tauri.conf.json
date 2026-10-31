@@ -59,7 +59,8 @@
                                      "resources/runtime/vccorlib140.dll":  "vccorlib140.dll",
                                      "resources/runtime/vcruntime140_1.dll":  "vcruntime140_1.dll",
                                      "resources/runtime/vcruntime140.dll":  "vcruntime140.dll",
-                                     "resources/nemo-runtime/":  "nemo-runtime/"
+                                     "resources/nemo-runtime/":  "nemo-runtime/",
+                                     "resources/models/":  "models/"
                                  },
                    "icon":  [
                                 "icons/icon.ico"

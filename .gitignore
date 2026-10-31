@@ -21,6 +21,7 @@ release/
 *.pfx
 
 src-tauri/resources/nemo-runtime/
+src-tauri/resources/models/
 
 # Internal engineering notes (not part of the public repository)
 /AUDIT.md

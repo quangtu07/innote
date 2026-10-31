@@ -48,13 +48,26 @@ pub fn prepare_vad(directory: &Path) -> Result<PathBuf> {
 }
 pub fn path(root: &Path, id: &str) -> Result<PathBuf> {
     anyhow::ensure!(CATALOG.iter().any(|x| x.0 == id), "Model không hợp lệ");
-    Ok(root.join("models").join(if id == NEMO_ID {
-        "nemotron-3.5-q8.gguf".into()
+    let name = if id == NEMO_ID {
+        "nemotron-3.5-q8.gguf".to_string()
     } else if id == PHOWHISPER_ID {
-        "ggml-PhoWhisper-small.bin".into()
+        "ggml-PhoWhisper-small.bin".to_string()
     } else {
         format!("ggml-{id}.bin")
-    }))
+    };
+    let local = root.join("models").join(&name);
+    if local.exists() {
+        return Ok(local);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let bundled = parent.join("models").join(&name);
+            if bundled.exists() {
+                return Ok(bundled);
+            }
+        }
+    }
+    Ok(local)
 }
 pub fn list(root: &Path) -> Vec<ModelInfo> {
     CATALOG
