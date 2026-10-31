@@ -602,7 +602,7 @@ try {
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
       await p.getByLabel(/API key cho AI/).fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
-      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
+      await p.locator(".ai-settings").getByRole("button", { name: "Lưu API key", exact: true }).click();
       await openMeeting(p, "Cuộc họp Alpha");
 
       await p.getByRole("button", { name: "Làm mịn", exact: true }).click();
@@ -672,7 +672,7 @@ try {
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
       await p.getByLabel(/API key cho AI/).fill("sk-test");
       await p.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
-      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
+      await p.locator(".ai-settings").getByRole("button", { name: "Lưu API key", exact: true }).click();
       await openMeeting(p, "Cuộc họp Alpha");
 
       await p.getByRole("button", { name: "Tóm tắt", exact: true }).click();
@@ -722,7 +722,7 @@ try {
       await modelDialog.locator(".model-picker-item").filter({ hasText: "gpt-4o-mini" }).first().click();
       await modelDialog.waitFor({ state: "hidden" });
       assert.equal(await p.getByLabel("Model", { exact: true }).inputValue(), "gpt-4o-mini");
-      await p.getByRole("button", { name: "Lưu API key", exact: true }).click();
+      await p.locator(".ai-settings").getByRole("button", { name: "Lưu API key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
       await p.screenshot({ path: join(output, "ai-settings.png") });
       assert(
@@ -1028,7 +1028,8 @@ try {
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
       await p.getByLabel("API key Soniox").fill("fake-ui-secret");
       await p
-        .getByRole("button", { name: "Giữ key trong bộ nhớ", exact: true })
+        .locator(".soniox-settings")
+        .getByRole("button", { name: "Lưu API key", exact: true })
         .click();
       await p.getByText(/Đã có key trong bộ nhớ/).waitFor();
       assert.equal(await p.getByLabel("API key Soniox").inputValue(), "");
@@ -1075,7 +1076,8 @@ try {
       await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
       await p.getByLabel("API key Soniox").fill("fake-ui-secret");
       await p
-        .getByRole("button", { name: "Giữ key trong bộ nhớ", exact: true })
+        .locator(".soniox-settings")
+        .getByRole("button", { name: "Lưu API key", exact: true })
         .click();
       await p.getByText(/Đã có key trong bộ nhớ/).waitFor();
       await p.getByRole("button", { name: "Xóa key", exact: true }).click();
@@ -1097,7 +1099,7 @@ try {
         window.qa.calls.some((c) => c.cmd === "test_soniox_connection"),
       );
       assert(await sonioxCard.getByText("Đang hoạt động · Đã kết nối").isVisible());
-      await p.getByRole("button", { name: "Giữ key trong bộ nhớ", exact: true }).click();
+      await sonioxCard.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.soniox_configured === true);
       assert(await sonioxCard.getByText(/Đã có key trong bộ nhớ/).isVisible());
       await p.getByRole("button", { name: "Xóa key", exact: true }).click();

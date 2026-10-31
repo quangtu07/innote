@@ -45,7 +45,7 @@ const part1 = {
     "Innote uses free local transcription by default and needs no key. Audio is sent to Soniox only when you select Soniox for a session, and your account may be charged. If it fails or runs out of quota, Innote falls back to the downloaded local model.",
   sonioxKey: "Soniox API key",
   optional: "Optional",
-  keepKey: "Keep key in memory",
+  keepKey: "Save API key",
   removeKey: "Remove key",
   sonioxConfigured: "A key is in memory (not verified with Soniox).",
   sonioxMissing: "No key. Innote continues to use local.",

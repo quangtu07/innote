@@ -43,7 +43,7 @@ const part1 = {
     "Innote 默认使用免费本地转写，无需密钥。只有为会话选择 Soniox 时，音频才会发送到 Soniox，账户可能产生费用。出现错误或额度用尽时，Innote 会切换到已下载的本地模型。",
   sonioxKey: "Soniox API 密钥",
   optional: "可选",
-  keepKey: "将密钥保留在内存中",
+  keepKey: "保存 API 密钥",
   removeKey: "删除密钥",
   sonioxConfigured: "内存中已有密钥（尚未向 Soniox 验证）。",
   sonioxMissing: "没有密钥。Innote 仍会正常使用本地模式。",

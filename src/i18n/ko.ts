@@ -45,7 +45,7 @@ const part1 = {
     "Innote는 기본적으로 무료 로컬 전사를 사용하며 키가 필요하지 않습니다. 세션에서 Soniox를 선택한 경우에만 오디오가 Soniox로 전송되며 계정에 요금이 부과될 수 있습니다. 오류나 할당량 초과 시 다운로드한 로컬 모델로 전환합니다.",
   sonioxKey: "Soniox API 키",
   optional: "선택 사항",
-  keepKey: "메모리에 키 유지",
+  keepKey: "API 키 저장",
   removeKey: "키 삭제",
   sonioxConfigured: "메모리에 키가 있습니다(Soniox에서 확인하지 않음).",
   sonioxMissing: "키가 없습니다. Innote는 계속 로컬을 사용합니다.",

@@ -43,7 +43,7 @@ const part1 = {
     "Mặc định Innote dùng local miễn phí, không cần key. Chỉ khi chọn Soniox cho từng phiên, audio mới được gửi tới Soniox và có thể tính phí theo tài khoản của bạn. Khi lỗi hoặc hết hạn mức, Innote chuyển về model local đã tải.",
   sonioxKey: "API key Soniox",
   optional: "Không bắt buộc",
-  keepKey: "Giữ key trong bộ nhớ",
+  keepKey: "Lưu API key",
   removeKey: "Xóa key",
   sonioxConfigured: "Đã có key trong bộ nhớ (chưa xác thực với Soniox).",
   sonioxMissing: "Chưa có key. Innote vẫn dùng local bình thường.",
