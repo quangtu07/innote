@@ -111,9 +111,9 @@
   let smoothBaseUrl = "";
   let smoothKey = "";
   let smoothPrompt = "";
-  let smoothPanelOpen = false;
   let smoothOpen = false;
   let smoothDialog: HTMLDialogElement;
+  let transcriptView: "original" | "smoothed" = "original";
   let smoothModels: string[] = [];
   let llmConnectionSignature = "";
   type SummaryStyle = "overview" | "decisions" | "full";
@@ -539,7 +539,6 @@
     audioUrl = "";
     editing = "";
     searchText = "";
-    smoothPanelOpen = false;
     smoothOpen = false;
     smoothPrompt = "";
     exportVersion = "original";
@@ -582,9 +581,9 @@
     testQuiet = false;
     error = "";
     provider = "local";
-    smoothPanelOpen = false;
     smoothOpen = false;
     smoothPrompt = "";
+    transcriptView = "original";
     exportVersion = "original";
     meetingsOpen = false;
     renamingId = "";
@@ -740,9 +739,9 @@
           ...data,
           sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
         };
-        smoothPanelOpen = true;
         smoothOpen = false;
         smoothPrompt = "";
+        transcriptView = "smoothed";
         notify(tr.notifySmoothed);
       }
     });
@@ -1929,33 +1928,61 @@
 
         <div class="transcript-heading">
           <div>
-            {#if meeting?.summary}
-              <div class="transcript-tabs" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  class="transcript-tab"
-                  class:active={transcriptTab === "transcript"}
-                  aria-selected={transcriptTab === "transcript"}
-                  onclick={() => {
-                    transcriptTab = "transcript";
-                  }}>{tr.summaryTabTranscript}</button
-                >
-                <button
-                  type="button"
-                  role="tab"
-                  class="transcript-tab"
-                  class:active={transcriptTab === "summary"}
-                  aria-selected={transcriptTab === "summary"}
-                  onclick={() => {
-                    transcriptTab = "summary";
-                  }}
-                  ><ClipboardList size={14} /> {tr.summaryTabSummary}{#if summaryStale}<span
-                      class="tab-dot"
-                      title={tr.summaryStale}
-                    ></span>{/if}</button
-                >
-              </div>
+            {#if meeting?.smoothed || meeting?.summary}
+              {#if meeting?.smoothed}
+                <div class="transcript-tabs smooth-tabs" role="tablist" aria-label={tr.smoothHeading}>
+                  <button
+                    type="button"
+                    role="tab"
+                    class="transcript-tab"
+                    class:active={transcriptView === "original"}
+                    aria-selected={transcriptView === "original"}
+                    onclick={() => {
+                      transcriptView = "original";
+                    }}
+                    ><FileText size={13} /> {tr.exportOriginal}</button
+                  >
+                  <button
+                    type="button"
+                    role="tab"
+                    class="transcript-tab"
+                    class:active={transcriptView === "smoothed"}
+                    aria-selected={transcriptView === "smoothed"}
+                    onclick={() => {
+                      transcriptView = "smoothed";
+                    }}
+                    ><Sparkles size={13} /> {tr.smoothViewTab}</button
+                  >
+                </div>
+              {/if}
+              {#if meeting?.summary}
+                <div class="transcript-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    class="transcript-tab"
+                    class:active={transcriptTab === "transcript"}
+                    aria-selected={transcriptTab === "transcript"}
+                    onclick={() => {
+                      transcriptTab = "transcript";
+                    }}>{tr.summaryTabTranscript}</button
+                  >
+                  <button
+                    type="button"
+                    role="tab"
+                    class="transcript-tab"
+                    class:active={transcriptTab === "summary"}
+                    aria-selected={transcriptTab === "summary"}
+                    onclick={() => {
+                      transcriptTab = "summary";
+                    }}
+                    ><ClipboardList size={14} /> {tr.summaryTabSummary}{#if summaryStale}<span
+                        class="tab-dot"
+                        title={tr.summaryStale}
+                      ></span>{/if}</button
+                  >
+                </div>
+              {/if}
             {:else}
               <h2>{tr.transcript}</h2>
             {/if}
@@ -2067,33 +2094,38 @@
               >{/if}
           </div>
         </div>
-        {#if smoothPanelOpen && meeting && canSmooth}
-          <section class="smooth-panel" aria-label={tr.smoothHeading}>
-            <div class="smooth-panel-head">
-              <h3><Sparkles size={16} /> {tr.smoothHeading}</h3>
-              <button
-                class="icon-button"
-                aria-label={tr.closeNotice}
-                title={tr.closeNotice}
-                onclick={() => {
-                  smoothPanelOpen = false;
-                }}><X size={15} /></button
-              >
+        <div class="workspace" class:workspace-with-banner={refining}>
+          {#if refining}
+            <div class="refine-progress-banner" role="status">
+              <RefreshCw size={15} class="spin" />
+              <span>{tr.refiningBanner}</span>
             </div>
-            {#if meeting.smoothed}
-              <p class="smooth-meta">
-                {fill(tr.smoothResultBy, {
-                  provider: meeting.smoothed.provider,
-                  model: meeting.smoothed.model,
-                })}
-              </p>
+          {/if}
+          {#if transcriptView === "smoothed" && meeting?.smoothed}
+          <div class="smooth-view" role="tabpanel" aria-label={tr.smoothHeading}>
+              <div class="smooth-view-bar">
+                <span class="smooth-meta">
+                  <Sparkles size={14} />
+                  {fill(tr.smoothResultBy, {
+                    provider: meeting.smoothed.provider,
+                    model: meeting.smoothed.model,
+                  })}
+                </span>
+                <button
+                  class="text-button"
+                  title={tr.smoothCopy}
+                  onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
+                >
+              </div>
               <div class="smooth-result">
                 <p>{meeting.smoothed.text}</p>
               </div>
               <div class="smooth-actions">
                 <button
                   class="text-button"
-                  onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
+                  onclick={() => {
+                    transcriptView = "original";
+                  }}><FileText size={14} /> {tr.smoothBackOriginal}</button
                 >
                 <button
                   class="button secondary small"
@@ -2103,23 +2135,8 @@
                   }}><Sparkles size={14} /> {tr.smoothAgain}</button
                 >
               </div>
-            {:else}
-              <p class="smooth-intro">{tr.smoothIntro}</p>
-            {/if}
-            <p class="smooth-note">
-              {tr.smoothOriginalKept}
-              {data.llm_configured ? "" : ` ${tr.aiMissing}`}
-            </p>
-          </section>
-        {/if}
-        <div class="workspace" class:workspace-with-banner={refining}>
-          {#if refining}
-            <div class="refine-progress-banner" role="status">
-              <RefreshCw size={15} class="spin" />
-              <span>{tr.refiningBanner}</span>
             </div>
-          {/if}
-          {#if transcriptTab === "summary" && meeting?.summary}
+          {:else if transcriptTab === "summary" && meeting?.summary}
             <div class="summary-view" role="tabpanel" aria-label={tr.summaryTitle}>
               {#if summaryStale}
                 <div class="summary-stale-banner" role="status">

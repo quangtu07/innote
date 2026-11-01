@@ -364,6 +364,8 @@ const part2 = {
   smoothPromptPlaceholder:
     "Ví dụ: sửa tên riêng, thêm dấu câu… Để trống để làm mịn bình thường.",
   smoothOriginalKept: "Bản gốc vẫn được giữ nguyên bên trên.",
+  smoothViewTab: "Bản làm mịn",
+  smoothBackOriginal: "Về Bản gốc",
   smoothResultBy: "Bản làm mịn · {provider} · {model}",
   smoothRunning: "Đang làm mịn…",
   notifySmoothed: "Đã làm mịn bản chép. Bản gốc vẫn được giữ.",

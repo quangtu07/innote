@@ -616,14 +616,25 @@ try {
         await dialog.getByRole("button", { name: "Kiểm tra API", exact: true }).click();
       }
       await dialog.getByRole("button", { name: "Làm mịn", exact: true }).click();
+      const smoothTabs = p.locator(".smooth-tabs");
       await p
-        .getByRole("region", { name: "Bản làm mịn bằng AI" })
         .getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true })
         .waitFor();
       await p.screenshot({ path: join(output, "ai-smoothing.png") });
       assert(
+        await smoothTabs.getByRole("tab", { name: "Bản làm mịn", exact: true }).getAttribute("aria-selected") === "true",
+      );
+      await p.getByRole("tabpanel", { name: "Bản làm mịn bằng AI" })
+        .getByRole("button", { name: "Về Bản gốc", exact: true })
+        .click();
+      assert(
         await p.getByText("Nội dung thử tiếng Việt.", { exact: true }).isVisible(),
       );
+      assert.equal(await p.getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true }).count(), 0);
+      await smoothTabs.getByRole("tab", { name: "Bản làm mịn", exact: true }).click();
+      await p
+        .getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true })
+        .waitFor();
       await p
         .getByRole("group", { name: "Chọn bản để tải" })
         .getByRole("button", { name: "Bản làm mịn", exact: true })
@@ -641,7 +652,7 @@ try {
         "smoothed",
       );
       await p
-        .getByRole("region", { name: "Bản làm mịn bằng AI" })
+        .getByRole("tabpanel", { name: "Bản làm mịn bằng AI" })
         .getByRole("button", { name: "Làm mịn lại", exact: true })
         .click();
       const rerunDialog = p.getByRole("dialog");

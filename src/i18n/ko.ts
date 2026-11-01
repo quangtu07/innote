@@ -363,6 +363,8 @@ const part2 = {
   smoothPromptPlaceholder:
     "예: 고유명사 수정, 문장부호 추가… 비워 두면 일반 다듬기를 합니다.",
   smoothOriginalKept: "원본 전사는 위에 그대로 남아 있습니다.",
+  smoothViewTab: "다듬은 본",
+  smoothBackOriginal: "원본으로",
   smoothResultBy: "다듬은 본 · {provider} · {model}",
   smoothRunning: "다듬는 중…",
   notifySmoothed: "전사를 다듬었습니다. 원본은 그대로 보존됩니다.",

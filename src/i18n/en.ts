@@ -356,6 +356,8 @@ const part3 = {
   smoothPromptPlaceholder:
     "For example: fix proper names, add punctuation… Leave empty for normal smoothing.",
   smoothOriginalKept: "The original transcript remains above.",
+  smoothViewTab: "Smoothed",
+  smoothBackOriginal: "Back to Original",
   smoothResultBy: "Smoothed · {provider} · {model}",
   smoothRunning: "Smoothing…",
   notifySmoothed: "Transcript smoothed. The original is still kept.",

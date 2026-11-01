@@ -5,6 +5,8 @@
 - **Badge trạng thái nổi cho Soniox và AI:** Bổ sung badge trạng thái nổi bật (`.api-badge`) ở góc trên mỗi card (`● Đang hoạt động · Đã kết nối`, `● Đã có API key`, `Chưa có API key`), giúp người dùng nhận biết ngay lập tức API đã có và đang hoạt động tốt.
 - **Nút "Sao chép" bản chép lời (1-Click Copy):** Bổ sung nút "Sao chép" cạnh các nút tải file trên thanh công cụ bản chép, copy toàn bộ nội dung với 1 cú click chuột.
 - **Ô Base URL:** Sử dụng ô văn bản chuẩn, mặc định để rỗng.
+- **Cải thiện tính năng Làm mịn AI (chuyển đổi 2 chế độ "Bản gốc / Bản làm mịn"):** Bỏ panel chồng phía trên, dựng giao diện tab chuyển đổi trực quan giống tab Tóm tắt: tab **Bản gốc** hiển thị bản chép lời gốc (cuộn mượt như cũ), tab **Bản làm mịn** hiển thị kết quả AI (kèm nút **Về Bản gốc** và **Làm mịn lại**). Sau khi bấm Làm mịn, tự chuyển sang tab Bản làm mịn để xem ngay kết quả.
+- **Sửa lỗi hiển thị chép lời trực tiếp khi đang ghi:** Bản chép trực tiếp (live) luôn hiện trong khung bản chép, không bị vùng "Bản làm mịn" che mất khi cuộc họp chưa có đoạn chốt.
 - UI 49/49 test pass; Rust 55/55 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 

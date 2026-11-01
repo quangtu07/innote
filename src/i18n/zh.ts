@@ -341,6 +341,8 @@ const part2 = {
   smoothPromptLabel: "额外要求（可选）",
   smoothPromptPlaceholder: "例如：修正人名、补充标点……留空则进行普通润色。",
   smoothOriginalKept: "原始转写仍保留在上方。",
+  smoothViewTab: "润色版本",
+  smoothBackOriginal: "返回原始版本",
   smoothResultBy: "润色版本 · {provider} · {model}",
   smoothRunning: "正在润色…",
   notifySmoothed: "转写已润色，原始内容仍然保留。",
