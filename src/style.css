@@ -420,13 +420,17 @@ button:active:not(:disabled) {
   font-size: 11px;
   padding: 15px 12px 2px;
 }
+.sidebar-author-group {
+  margin-top: auto;
+  margin-bottom: 10px;
+}
 .feedback-link {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   padding: 10px 12px;
   border: 1px solid #cfe0d4;
   border-radius: 10px;
@@ -443,7 +447,7 @@ button:active:not(:disabled) {
   transform: translateY(1px);
 }
 .author-card {
-  margin: auto 1px 10px;
+  margin: 0 1px;
   padding: 13px 12px 12px;
   border: 1px solid #dbe7de;
   border-radius: 12px;

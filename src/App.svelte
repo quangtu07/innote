@@ -1263,6 +1263,7 @@
         ></span
       ><span class="meetings-count">{data.sessions.length}</span>
     </button>
+    <div class="sidebar-author-group">
     <button class="feedback-link" onclick={() => openAuthor("feedback")}>
         <AlertCircle size={15} />
         <span>{tr.feedbackButton}</span>
@@ -1305,6 +1306,7 @@
           onclick={() => openAuthor("website")}><Globe size={16} /></button
         >
       </div>
+    </div>
     </div>
     <div class="sidebar-bottom">
       <button

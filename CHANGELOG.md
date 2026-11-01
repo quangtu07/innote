@@ -1,3 +1,9 @@
+# 0.8.3 — 1/11/2026 — nút phản hồi sát card tác giả
+
+- **Nút "Báo lỗi & Yêu cầu tính năng" đặt sát ngay phía trên card tác giả** trong sidebar (gap 6px), gọn gàng không rời rạc.
+- Mở form Google phản hồi trên trình duyệt khi bấm.
+- UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.8.2 — 1/11/2026 — nút Báo lỗi & Yêu cầu tính năng
 
 - **Nút "Báo lỗi & Yêu cầu tính năng" bên cạnh thông tin tác giả:** Người dùng bấm là mở form Google phản hồi trên trình duyệt (tiếng Việt/Anh/Hàn/Trung), góp ý lỗi hoặc yêu cầu tính năng trực tiếp cho Innote.
