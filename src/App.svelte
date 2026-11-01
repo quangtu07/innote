@@ -1955,20 +1955,20 @@
         <div class="transcript-heading">
           <div>
             {#if meeting?.smoothed || meeting?.summary}
-              {#if meeting?.smoothed}
-                <div class="transcript-tabs smooth-tabs" role="tablist" aria-label={tr.smoothHeading}>
+                <div class="transcript-tabs" role="tablist" aria-label={tr.transcript}>
                   <button
                     type="button"
                     role="tab"
                     class="transcript-tab"
-                    class:active={transcriptView === "original"}
-                    aria-selected={transcriptView === "original"}
+                    class:active={transcriptView === "original" && transcriptTab === "transcript"}
+                    aria-selected={transcriptView === "original" && transcriptTab === "transcript"}
                     onclick={() => {
                       transcriptView = "original";
+                      transcriptTab = "transcript";
                     }}
-                    ><FileText size={13} /> {tr.exportOriginal}</button
+                    ><FileText size={13} /> {tr.summaryTabTranscript}</button
                   >
-                  <button
+                  {#if meeting?.smoothed}<button
                     type="button"
                     role="tab"
                     class="transcript-tab"
@@ -1976,24 +1976,11 @@
                     aria-selected={transcriptView === "smoothed"}
                     onclick={() => {
                       transcriptView = "smoothed";
+                      transcriptTab = "transcript";
                     }}
                     ><Sparkles size={13} /> {tr.smoothViewTab}</button
-                  >
-                </div>
-              {/if}
-              {#if meeting?.summary}
-                <div class="transcript-tabs" role="tablist">
-                  <button
-                    type="button"
-                    role="tab"
-                    class="transcript-tab"
-                    class:active={transcriptTab === "transcript"}
-                    aria-selected={transcriptTab === "transcript"}
-                    onclick={() => {
-                      transcriptTab = "transcript";
-                    }}>{tr.summaryTabTranscript}</button
-                  >
-                  <button
+                  >{/if}
+                  {#if meeting?.summary}<button
                     type="button"
                     role="tab"
                     class="transcript-tab"
@@ -2006,9 +1993,8 @@
                         class="tab-dot"
                         title={tr.summaryStale}
                       ></span>{/if}</button
-                  >
+                  >{/if}
                 </div>
-              {/if}
             {:else}
               <h2>{tr.transcript}</h2>
             {/if}
@@ -2088,7 +2074,7 @@
               <span>{tr.refiningBanner}</span>
             </div>
           {/if}
-          {#if transcriptView === "smoothed" && meeting?.smoothed}
+          {#if transcriptTab !== "summary" && transcriptView === "smoothed" && meeting?.smoothed}
           <div class="smooth-view" role="tabpanel" aria-label={tr.smoothHeading}>
               <div class="smooth-view-bar">
                 <span class="smooth-meta">

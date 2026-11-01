@@ -10,6 +10,7 @@
 - **Bản làm mịn chia theo phân đoạn:** Hiển thị kết quả làm mịn theo từng phân đoạn có timestamp (bấm phát đúng mốc), căn theo bản gốc, cuộn mượt; cho phép xem cả bản gốc và bản làm mịn.
 - **Lưu API key an toàn, không mất khi cập nhật:** API key (AI và Soniox) được mã hóa nhẹ (XOR + nonce) lưu trong thư mục dữ liệu Innote, tự khôi phục khi mở lại app hoặc cập nhật phiên bản; nút Xóa key xóa hoàn toàn khỏi máy.
 - **Căn thẳng thanh công cụ bản chép:** Các nút Hiệu chỉnh/Làm mịn/Tóm tắt/Tải file giờ nằm gọn trong 1 hàng thẳng hàng; ô tìm kiếm và nút Ghi chú chuyển xuống hàng riêng dưới bản chép, hết cảm giác bị lệch.
+- **Gộp tab thành 1 dãy duy nhất:** Bỏ 2 dãy tab rời (Bản gốc | Bản làm mịn + Bản chép lời | Tóm tắt), thay bằng một dãy gọn: **[Bản chép lời] [Bản làm mịn] [Tóm tắt]** — "Bản chép lời" chính là bản gốc, không còn trùng lặp gây xao nhãng.
 - UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 
