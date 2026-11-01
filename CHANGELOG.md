@@ -1,3 +1,9 @@
+# 0.8.2 — 1/11/2026 — nút Báo lỗi & Yêu cầu tính năng
+
+- **Nút "Báo lỗi & Yêu cầu tính năng" bên cạnh thông tin tác giả:** Người dùng bấm là mở form Google phản hồi trên trình duyệt (tiếng Việt/Anh/Hàn/Trung), góp ý lỗi hoặc yêu cầu tính năng trực tiếp cho Innote.
+- **Nhúng form phản hồi:** Điền nhanh — chọn loại (Báo lỗi / Yêu cầu tính năng / Góp ý), nội dung ngắn, ảnh và liên hệ tùy chọn.
+- UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.8.1 — 1/11/2026 — gộp tab 1 dãy, lưu API key an toàn, làm mịn phân đoạn
 
 - **Gộp tab thành 1 dãy duy nhất:** Bỏ 2 dãy tab rời (Bản gốc | Bản làm mịn + Bản chép lời | Tóm tắt), thay bằng một dãy gọn: **[Bản chép lời] [Bản làm mịn] [Tóm tắt]** — "Bản chép lời" chính là bản gốc, không còn trùng lặp gây xao nhãng.

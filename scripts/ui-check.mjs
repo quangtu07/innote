@@ -408,6 +408,13 @@ try {
         kind,
       );
     }
+    await p
+      .getByRole("button", { name: "Báo lỗi & Yêu cầu tính năng", exact: true })
+      .click();
+    await p.waitForFunction(
+      (k) => window.qa.calls.some((c) => c.cmd === "open_author_link" && c.args.kind === k),
+      "feedback",
+    );
     await p.screenshot({ path: join(output, "author-900x640.png") });
   });
   await check("Starting capture locks language provider and transcription choices", {slowStart:true}, async p=>{

@@ -9,6 +9,7 @@ const part1 = {
   savedMeetings: "Những cuộc họp đã lưu sẽ nằm ở đây.",
   author: "Tác giả",
   authorRole: "Tư vấn, hỗ trợ & lập trình",
+  feedbackButton: "Báo lỗi & Yêu cầu tính năng",
   settings: "Cài đặt",
   dataOnDevice: "Dữ liệu lưu trên máy",
   activeSession: "Phiên đang chạy",

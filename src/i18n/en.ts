@@ -11,6 +11,7 @@ const part1 = {
   savedMeetings: "Saved meetings will appear here.",
   author: "Author",
   authorRole: "Consulting, support & development",
+  feedbackButton: "Report a bug & request a feature",
   settings: "Settings",
   dataOnDevice: "Data stays on this device",
   activeSession: "Active session",

@@ -11,6 +11,7 @@ const part1 = {
   savedMeetings: "저장된 회의가 여기에 표시됩니다.",
   author: "작성자",
   authorRole: "상담, 지원 및 개발",
+  feedbackButton: "버그 신고 및 기능 요청",
   settings: "설정",
   dataOnDevice: "데이터가 이 기기에 저장됩니다",
   activeSession: "진행 중인 세션",

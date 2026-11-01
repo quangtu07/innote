@@ -311,6 +311,8 @@
     zalo: "https://zalo.me/0962239818",
     linkedin: "https://www.linkedin.com/in/alex-linh-790794237/",
     website: "https://alexlinh.io.vn/",
+    feedback:
+      "https://docs.google.com/forms/d/e/1FAIpQLSc2fN_f_08uD1X9eLWuT6Zhm8NxyRnqWDux9Tb9DabkY51-KA/viewform?usp=publish-editor",
   } as const;
   function openAuthor(kind: keyof typeof authorUrls) {
     if (desktop) {
@@ -1261,6 +1263,10 @@
         ></span
       ><span class="meetings-count">{data.sessions.length}</span>
     </button>
+    <button class="feedback-link" onclick={() => openAuthor("feedback")}>
+        <AlertCircle size={15} />
+        <span>{tr.feedbackButton}</span>
+      </button>
     <div class="author-card">
       <div class="author-name">
         <span class="author-label">{tr.author}</span><span>Alex Linh</span>

@@ -11,6 +11,7 @@ const part1 = {
   savedMeetings: "已保存的会议会显示在这里。",
   author: "作者",
   authorRole: "咨询、支持与开发",
+  feedbackButton: "反馈问题 & 提议功能",
   settings: "设置",
   dataOnDevice: "数据保存在本机",
   activeSession: "进行中的会话",
