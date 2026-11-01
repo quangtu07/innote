@@ -1,4 +1,11 @@
-# 0.8.0 — 31/10/2026 — đóng gói PhoWhisper, nút kiểm tra Soniox, badge trạng thái nổi và sao chép nhanh
+# 0.8.1 — 1/11/2026 — gộp tab 1 dãy, lưu API key an toàn, làm mịn phân đoạn
+
+- **Gộp tab thành 1 dãy duy nhất:** Bỏ 2 dãy tab rời (Bản gốc | Bản làm mịn + Bản chép lời | Tóm tắt), thay bằng một dãy gọn: **[Bản chép lời] [Bản làm mịn] [Tóm tắt]** — "Bản chép lời" chính là bản gốc, không còn trùng lặp gây xao nhãng.
+- **Lưu API key an toàn, không mất khi cập nhật:** API key (AI và Soniox) được mã hóa nhẹ (XOR + nonce) lưu trong thư mục dữ liệu Innote, tự khôi phục khi mở lại app hoặc cập nhật phiên bản; nút Xóa key xóa hoàn toàn khỏi máy.
+- **Bản làm mịn chia theo phân đoạn:** Hiển thị kết quả làm mịn theo từng phân đoạn có timestamp, căn theo bản gốc, tự cuộn mượt; xem được cả bản gốc lẫn bản làm mịn.
+- **Căn thẳng thanh công cụ bản chép:** Các nút Hiệu chỉnh/Làm mịn/Tóm tắt/Tải file nằm gọn 1 hàng thẳng hàng; ô tìm kiếm và nút Ghi chú chuyển xuống hàng riêng dưới bản chép.
+- **Đóng gói sẵn PhoWhisper (VinAI)** và nhiều cải tiến làm mịn/tóm tắt AI.
+- UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 - **Đóng gói sẵn mô hình PhoWhisper (VinAI) tiếng Việt vào bộ cài .exe:** Nhúng sẵn mô hình PhoWhisper Small (487 MB) vào bộ cài NSIS; cài đặt xong là sẵn sàng họp ngay, không bắt người dùng tải thêm.
 - **Thêm nút "Kiểm tra Soniox" & Card Soniox:** Thiết kế mục Soniox thành thẻ card chuyên nghiệp đồng bộ với AI, thêm nút "Kiểm tra Soniox" ngay cạnh ô nhập key để test kết nối trực tiếp với máy chủ Soniox WebSocket.
