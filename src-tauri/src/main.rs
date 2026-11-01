@@ -9,6 +9,7 @@ mod moonshine;
 mod mp3;
 mod nemo;
 mod session_logic;
+mod secure;
 mod soniox;
 mod storage;
 mod types;
@@ -851,7 +852,22 @@ fn set_llm_key(may: State<May>, key: String) -> std::result::Result<(), String> 
         return Err("API key quá dài".into());
     }
     *may.llm_key.lock().unwrap() = key;
+    persist_keys(&may);
     Ok(())
+}
+#[tauri::command]
+fn set_soniox_key(may: State<May>, key: String) -> std::result::Result<(), String> {
+    let key = soniox::validate_key(&key).map_err(err)?;
+    *may.soniox_key.lock().unwrap() = key;
+    persist_keys(&may);
+    Ok(())
+}
+fn persist_keys(may: &May) {
+    let soniox = may.soniox_key.lock().unwrap().clone();
+    let llm = may.llm_key.lock().unwrap().clone();
+    if let Err(e) = secure::save(&may.root, &soniox, &llm) {
+        eprintln!("Không lưu được API key: {e:#}");
+    }
 }
 #[tauri::command]
 async fn test_llm_connection(
@@ -1065,12 +1081,6 @@ async fn smooth_transcript(
     .await
     .map_err(err)?
     .map_err(err)
-}
-#[tauri::command]
-fn set_soniox_key(may: State<May>, key: String) -> std::result::Result<(), String> {
-    let key = soniox::validate_key(&key).map_err(err)?;
-    *may.soniox_key.lock().unwrap() = key;
-    Ok(())
 }
 #[tauri::command]
 async fn test_soniox_connection(
@@ -1909,6 +1919,13 @@ fn main() {
         soniox_key: Arc::new(Mutex::new(String::new())),
         llm_key: Arc::new(Mutex::new(String::new())),
     };
+    // Restore previously saved API keys so in-app updates / restarts do not
+    // require the user to re-enter or reconnect them.
+    {
+        let (soniox, llm) = secure::load(&may.root);
+        *may.soniox_key.lock().unwrap() = soniox;
+        *may.llm_key.lock().unwrap() = llm;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(may)

@@ -732,7 +732,7 @@ try {
       await p.waitForFunction(() => window.qa.snapshot.llm_configured === true);
       await p.screenshot({ path: join(output, "ai-settings.png") });
       assert(
-        await p.getByText("Đã có API key trong bộ nhớ.", { exact: false }).isVisible(),
+        await p.getByText("Đã lưu API key an toàn trong app.", { exact: false }).isVisible(),
       );
     },
   );
@@ -1037,7 +1037,7 @@ try {
         .locator(".soniox-settings")
         .getByRole("button", { name: "Lưu API key", exact: true })
         .click();
-      await p.getByText(/Đã có key trong bộ nhớ/).waitFor();
+      await p.getByText(/Đã lưu API key Soniox/).waitFor();
       assert.equal(await p.getByLabel("API key Soniox").inputValue(), "");
       assert(
         !(await p.evaluate(() => JSON.stringify(localStorage))).includes(
@@ -1085,7 +1085,7 @@ try {
         .locator(".soniox-settings")
         .getByRole("button", { name: "Lưu API key", exact: true })
         .click();
-      await p.getByText(/Đã có key trong bộ nhớ/).waitFor();
+      await p.getByText(/Đã lưu API key Soniox/).waitFor();
       await p.getByRole("button", { name: "Xóa key", exact: true }).click();
       await p
         .getByText(/Chưa có key. Innote vẫn dùng local bình thường/)
@@ -1107,7 +1107,7 @@ try {
       assert(await sonioxCard.getByText("Đang hoạt động · Đã kết nối").isVisible());
       await sonioxCard.getByRole("button", { name: "Lưu API key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.soniox_configured === true);
-      assert(await sonioxCard.getByText(/Đã có key trong bộ nhớ/).isVisible());
+      assert(await sonioxCard.getByText(/Đã lưu API key Soniox/).isVisible());
       await p.getByRole("button", { name: "Xóa key", exact: true }).click();
       await p.waitForFunction(() => window.qa.snapshot.soniox_configured === false);
       assert(await sonioxCard.getByText("Chưa có API key").isVisible());
