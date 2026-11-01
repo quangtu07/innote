@@ -1289,7 +1289,7 @@ fn open_author_link(kind: String) -> std::result::Result<(), String> {
         "zalo" => "https://zalo.me/0962239818",
         "linkedin" => "https://www.linkedin.com/in/alex-linh-790794237/",
         "website" => "https://alexlinh.io.vn/",
-        "feedback" => "https://docs.google.com/forms/d/e/1FAIpQLSc2fN_f_08uD1X9eLWuT6Zhm8NxyRnqWDux9Tb9DabkY51-KA/viewform?usp=publish-editor",
+        "feedback" => "https://forms.gle/hkeSofwG1YNGtwMM9",
         _ => return Err("Liên kết tác giả không hợp lệ".into()),
     };
     Command::new("explorer.exe")

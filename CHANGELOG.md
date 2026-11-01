@@ -1,3 +1,8 @@
+# 0.8.4 — 1/11/2026 — sửa đúng link form phản hồi
+
+- **Nhúng đúng form phản hồi:** Nút "Báo lỗi & Yêu cầu tính năng" giờ mở thẳng **https://forms.gle/hkeSofwG1YNGtwMM9** trên trình duyệt của người dùng.
+- UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
+
 # 0.8.3 — 1/11/2026 — nút phản hồi sát card tác giả
 
 - **Nút "Báo lỗi & Yêu cầu tính năng" đặt sát ngay phía trên card tác giả** trong sidebar (gap 6px), gọn gàng không rời rạc.
