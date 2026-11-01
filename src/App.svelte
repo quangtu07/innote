@@ -124,7 +124,6 @@
   let summaryDialog: HTMLDialogElement;
   let transcriptTab: "transcript" | "summary" = "transcript";
   let smoothPrefsInitialized = false;
-  let exportVersion: "original" | "smoothed" | "summary" = "original";
   let refining = false;
   let modelPickerOpen = false;
   let modelPickerDialog: HTMLDialogElement;
@@ -225,6 +224,35 @@
     return summaryHash(source);
   })();
   $: summaryStale = !!meeting?.summary?.source_hash && summaryCurrentHash !== meeting.summary.source_hash;
+  $: smoothSegments = (() => {
+    if (!meeting?.smoothed?.text || meeting.segments.length === 0) return [];
+    const source = meeting.segments;
+    const smoothed = meeting.smoothed.text.trim();
+    if (!smoothed) return [];
+    const totalWords = Math.max(
+      1,
+      source.reduce((sum, s) => sum + (s.text.trim().split(/\s+/).filter(Boolean).length || 1), 0),
+    );
+    const smoothWords = smoothed.split(/\s+/).filter(Boolean);
+    const totalSmoothWords = Math.max(1, smoothWords.length);
+    const result: { id: string; start: number; end: number; text: string }[] = [];
+    let cursor = 0;
+    let smoothStart = 0;
+    source.forEach((s, index) => {
+      const words = Math.max(1, Math.round((s.text.trim().split(/\s+/).filter(Boolean).length || 1) / totalWords * totalSmoothWords));
+      const part = smoothWords.slice(smoothStart, smoothStart + words).join(" ");
+      smoothStart += words;
+      const nextStart = cursor + Math.max(0, s.end - s.start);
+      if (part.trim()) result.push({ id: `smooth-${index}`, start: s.start, end: Math.max(s.start, nextStart), text: part.trim() });
+      cursor = nextStart;
+    });
+    const remaining = smoothWords.slice(smoothStart).join(" ");
+    if (remaining.trim() && result.length && result[result.length - 1]) {
+      result[result.length - 1].text = `${result[result.length - 1].text} ${remaining.trim()}`.trim();
+    }
+    return result;
+  })();
+  $: exportingVersion = transcriptView === "smoothed" && meeting?.smoothed ? "smoothed" : "original";
   function parseSummarySections(text: string) {
     const lines = text.split("\n");
     const sections: { title?: string; items: string[]; text?: string }[] = [];
@@ -541,7 +569,6 @@
     searchText = "";
     smoothOpen = false;
     smoothPrompt = "";
-    exportVersion = "original";
     meetingsOpen = false;
     renamingId = "";
     summaryOpen = false;
@@ -584,7 +611,6 @@
     smoothOpen = false;
     smoothPrompt = "";
     transcriptView = "original";
-    exportVersion = "original";
     meetingsOpen = false;
     renamingId = "";
     summaryOpen = false;
@@ -902,7 +928,7 @@
         id,
         format,
         path: destination,
-        version: exportVersion,
+        version: exportingVersion,
       });
       if (selected === id) {
         lastExport = path;
@@ -2031,30 +2057,6 @@
                   disabled={busy}
                   onclick={() => copyTranscript()}><Copy size={14} /> {tr.copyTranscript}</button
                 >{/if}
-                {#if meeting?.smoothed || meeting?.summary}<div
-                  class="export-version"
-                  role="group"
-                  aria-label={tr.exportVersion}
-                >
-                  <button
-                    class:active={exportVersion === "original"}
-                    onclick={() => {
-                      exportVersion = "original";
-                    }}>{tr.exportOriginal}</button
-                  >
-                  {#if meeting?.smoothed}<button
-                    class:active={exportVersion === "smoothed"}
-                    onclick={() => {
-                      exportVersion = "smoothed";
-                    }}>{tr.exportSmoothed}</button
-                  >{/if}
-                  {#if meeting?.summary}<button
-                    class:active={exportVersion === "summary"}
-                    onclick={() => {
-                      exportVersion = "summary";
-                    }}>{tr.exportSummary}</button
-                  >{/if}
-                </div>{/if}
                 {#if meeting.segments.length || showLive}<button
                   class="button secondary small"
                   title={refinementPending ? tr.exportWaitRefinement : tr.exportMdTitle}
@@ -2111,29 +2113,39 @@
                     model: meeting.smoothed.model,
                   })}
                 </span>
-                <button
-                  class="text-button"
-                  title={tr.smoothCopy}
-                  onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
-                >
+                <div class="smooth-bar-actions">
+                  <button
+                    class="text-button"
+                    title={tr.smoothCopy}
+                    onclick={() => copySmoothed()}><Check size={14} /> {tr.smoothCopy}</button
+                  >
+                  <button
+                    class="text-button"
+                    onclick={() => {
+                      transcriptView = "original";
+                    }}><FileText size={14} /> {tr.smoothBackOriginal}</button
+                  >
+                </div>
               </div>
               <div class="smooth-result">
-                <p>{meeting.smoothed.text}</p>
-              </div>
-              <div class="smooth-actions">
-                <button
-                  class="text-button"
-                  onclick={() => {
-                    transcriptView = "original";
-                  }}><FileText size={14} /> {tr.smoothBackOriginal}</button
-                >
-                <button
-                  class="button secondary small"
-                  disabled={busy}
-                  onclick={() => {
-                    smoothOpen = true;
-                  }}><Sparkles size={14} /> {tr.smoothAgain}</button
-                >
+                {#if smoothSegments.length}
+                  {#each smoothSegments as seg (seg.id)}
+                    <article class="segment smooth-segment">
+                      <button
+                        type="button"
+                        class="timestamp"
+                        title={tr.playFromHere}
+                        disabled={!audioUrl}
+                        onclick={() => seek(seg.start)}>{clock(seg.start)}</button
+                      >
+                      <div class="segment-body">
+                        <p>{seg.text}</p>
+                      </div>
+                    </article>
+                  {/each}
+                {:else}
+                  <p>{meeting.smoothed.text}</p>
+                {/if}
               </div>
             </div>
           {:else if transcriptTab === "summary" && meeting?.summary}

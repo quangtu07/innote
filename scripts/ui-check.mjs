@@ -635,10 +635,6 @@ try {
       await p
         .getByText("Nội dung thử tiếng Việt. (đã làm mịn)", { exact: true })
         .waitFor();
-      await p
-        .getByRole("group", { name: "Chọn bản để tải" })
-        .getByRole("button", { name: "Bản làm mịn", exact: true })
-        .click();
       await p.getByRole("button", { name: "Tải .txt", exact: true }).click();
       await p.waitForFunction(() =>
         window.qa.calls.some((c) => c.cmd === "export_session"),
@@ -652,7 +648,6 @@ try {
         "smoothed",
       );
       await p
-        .getByRole("tabpanel", { name: "Bản làm mịn bằng AI" })
         .getByRole("button", { name: "Làm mịn lại", exact: true })
         .click();
       const rerunDialog = p.getByRole("dialog");
