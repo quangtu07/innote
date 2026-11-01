@@ -7,7 +7,9 @@
 - **Ô Base URL:** Sử dụng ô văn bản chuẩn, mặc định để rỗng.
 - **Cải thiện tính năng Làm mịn AI (chuyển đổi 2 chế độ "Bản gốc / Bản làm mịn"):** Bỏ panel chồng phía trên, dựng giao diện tab chuyển đổi trực quan giống tab Tóm tắt: tab **Bản gốc** hiển thị bản chép lời gốc (cuộn mượt như cũ), tab **Bản làm mịn** hiển thị kết quả AI (kèm nút **Về Bản gốc** và **Làm mịn lại**). Sau khi bấm Làm mịn, tự chuyển sang tab Bản làm mịn để xem ngay kết quả.
 - **Sửa lỗi hiển thị chép lời trực tiếp khi đang ghi:** Bản chép trực tiếp (live) luôn hiện trong khung bản chép, không bị vùng "Bản làm mịn" che mất khi cuộc họp chưa có đoạn chốt.
-- UI 49/49 test pass; Rust 55/55 test pass; Svelte 0 lỗi/0 cảnh báo.
+- **Bản làm mịn chia theo phân đoạn:** Hiển thị kết quả làm mịn theo từng phân đoạn có timestamp (bấm phát đúng mốc), căn theo bản gốc, cuộn mượt; cho phép xem cả bản gốc và bản làm mịn.
+- **Lưu API key an toàn, không mất khi cập nhật:** API key (AI và Soniox) được mã hóa nhẹ (XOR + nonce) lưu trong thư mục dữ liệu Innote, tự khôi phục khi mở lại app hoặc cập nhật phiên bản; nút Xóa key xóa hoàn toàn khỏi máy.
+- UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 
 # 0.7.9 — 31/10/2026 — che giấu Base URL và hộp thoại tìm kiếm chọn Model AI
