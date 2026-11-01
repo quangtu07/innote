@@ -9,6 +9,7 @@
 - **Sửa lỗi hiển thị chép lời trực tiếp khi đang ghi:** Bản chép trực tiếp (live) luôn hiện trong khung bản chép, không bị vùng "Bản làm mịn" che mất khi cuộc họp chưa có đoạn chốt.
 - **Bản làm mịn chia theo phân đoạn:** Hiển thị kết quả làm mịn theo từng phân đoạn có timestamp (bấm phát đúng mốc), căn theo bản gốc, cuộn mượt; cho phép xem cả bản gốc và bản làm mịn.
 - **Lưu API key an toàn, không mất khi cập nhật:** API key (AI và Soniox) được mã hóa nhẹ (XOR + nonce) lưu trong thư mục dữ liệu Innote, tự khôi phục khi mở lại app hoặc cập nhật phiên bản; nút Xóa key xóa hoàn toàn khỏi máy.
+- **Căn thẳng thanh công cụ bản chép:** Các nút Hiệu chỉnh/Làm mịn/Tóm tắt/Tải file giờ nằm gọn trong 1 hàng thẳng hàng; ô tìm kiếm và nút Ghi chú chuyển xuống hàng riêng dưới bản chép, hết cảm giác bị lệch.
 - UI 49/49 test pass; Rust 57/57 test pass; Svelte 0 lỗi/0 cảnh báo.
 
 

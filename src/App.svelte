@@ -2079,21 +2079,6 @@
                   onclick={() => exportAudio()}><Download size={14} /> {tr.exportMp3}</button
                 >{/if}
               </div>{/if}
-            {#if meeting}<label class="inline-search"
-                ><Search size={15} /><input
-                  placeholder={tr.searchContent}
-                  aria-label={tr.searchTranscript}
-                  bind:value={searchText}
-                /></label
-              ><button
-                class:active={showNotes}
-                class="icon-button"
-                title={tr.notesTitle}
-                aria-label={tr.openNotes}
-                onclick={() => {
-                  showNotes = !showNotes;
-                }}><NotebookPen size={18} /></button
-              >{/if}
           </div>
         </div>
         <div class="workspace" class:workspace-with-banner={refining}>
@@ -2319,6 +2304,24 @@
                 }}></textarea><small>{tr.notesAutosave}</small>
             </aside>{/if}
         </div>
+        {#if meeting}<div class="transcript-footer-tools">
+            <label class="inline-search"
+              ><Search size={15} /><input
+                placeholder={tr.searchContent}
+                aria-label={tr.searchTranscript}
+                bind:value={searchText}
+              /></label
+            >
+            <button
+              class:active={showNotes}
+              class="icon-button"
+              title={tr.notesTitle}
+              aria-label={tr.openNotes}
+              onclick={() => {
+                showNotes = !showNotes;
+              }}><NotebookPen size={18} /></button
+            >
+          </div>{/if}
         {#if !autoScroll && recording}<button
             class="jump-button"
             onclick={() => {
