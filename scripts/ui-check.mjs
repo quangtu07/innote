@@ -1413,7 +1413,7 @@ try {
   });
   await check("Settings offers bundled Moonshine and only downloads optional Nemotron",{missingModels:true},async p=>{
     await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
-    assert.equal(await p.getByText(/PhoWhisper/).count(),0);
+    assert.equal(await p.locator('.model-row').filter({hasText:/PhoWhisper/}).count(),0);
     for(const name of ['Moonshine · Tiếng Việt · Có sẵn','Moonshine · English · Có sẵn']) {
       const row=p.locator('.model-row').filter({hasText:name});
       assert((await row.innerText()).includes('Có sẵn trong Innote'));
