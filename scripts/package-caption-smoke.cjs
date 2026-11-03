@@ -10,6 +10,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
  const before=await api('snapshot');assert(!before.active_id&&!await api('caption_running'));
  const profiles=await api('list_ai_profiles');let ownsCaption=false;
  try{
+  if(process.env.PACKAGE_UPGRADE_FROM){
+    await page.evaluate(version=>localStorage.setItem('innote.release-notice.v1',JSON.stringify({version,pending:null})),process.env.PACKAGE_UPGRADE_FROM);
+    await page.reload();
+  }
   assert(before.models.some(m=>m.id==='moonshine-en'&&m.installed));
   assert(!before.models.some(m=>m.id==='phowhisper-small'));
   const releaseNotice=page.getByRole('dialog',{name:'Có gì mới trong Innote?',exact:true});
@@ -24,6 +28,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.screenshot({path:'test-results/final-review-packaged-dialog.png'});
   await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
   await api('open_caption_window');
+  await wait(async()=>pages().some(p=>p.url().includes('caption.html')));
   const overlay=pages().find(p=>p.url().includes('caption.html'));assert(overlay);
   await api('start_caption',{options:{provider:'',apiKey:'',baseUrl:'',profileId:'__local__',model:'moonshine-en',sourceLanguage:'en',targetLanguage:'vi',translate:false,speechQuality:'balanced',mode:'standalone',device:null,sessionDir:null}});ownsCaption=true;
   await wait(async()=>{const s=(await api('caption_snapshot')).status;assert.notEqual(s.state,'error',s.message);return s.state==='active';});
