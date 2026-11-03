@@ -1,0 +1,77 @@
+// Opt-in actual Windows + Soniox test. Uses only a known speaker fixture, never microphone audio.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+(async()=>{
+  const b=await chromium.connectOverCDP('http://127.0.0.1:9223');
+  const main=b.contexts().flatMap(c=>c.pages()).find(p=>p.url().endsWith(':1420/'));
+  assert(main);
+  const api=(cmd,args)=>main.evaluate(({cmd,args})=>window.__TAURI_INTERNALS__.invoke(cmd,args),{cmd,args});
+  const state=await api('snapshot');
+  assert(!state.active_id && !await api('caption_running'),'Never interrupt a user session');
+  const saved=await main.evaluate(()=>localStorage.getItem('may.caption.standalone'));
+  const out=path.resolve('test-results/caption-visibility'); fs.mkdirSync(out,{recursive:true});
+  const results=[];
+  try {
+    assert.equal(await api('caption_window_visible'),false,'Fresh application defaults to no overlay');
+    await main.getByRole('button',{name:'Dịch phụ đề',exact:true}).click();
+    const show=()=>main.getByRole('button',{name:'Hiện hộp phụ đề',exact:true});
+    const hide=()=>main.getByRole('button',{name:'Ẩn hộp phụ đề',exact:true});
+    await show().click(); await hide().waitFor();
+    assert.equal(await api('caption_window_visible'),true);
+    assert.equal(await api('caption_running'),false,'Preview must not upload audio');
+    await main.reload(); await main.getByRole('button',{name:'Cài đặt',exact:true}).click();
+    await hide().waitFor(); await hide().click(); await show().waitFor();
+    assert.equal(await api('caption_window_visible'),false);
+    assert.equal(await api('caption_running'),false);
+    results.push({name:'Default hidden; manual preview without STT; reload and Settings reflect real visibility',passed:true});
+    const profile=(await api('list_ai_profiles')).find(p=>p.provider==='soniox');
+    assert(profile,'The user-authorized saved Soniox profile is required');
+    await main.getByRole('button',{name:'Dịch phụ đề',exact:true}).click();
+    await main.getByLabel('Cấu hình AI dịch').selectOption(profile.id);
+    await main.getByLabel('Model phụ đề').selectOption('stt-rt-v5');
+    await main.getByLabel('Thiết bị loa/tai nghe').selectOption(state.devices.find(d=>d.kind==='system'&&d.default).id);
+    await main.getByRole('button',{name:'Bắt đầu dịch',exact:true}).click();
+    await hide().waitFor();
+    assert.equal(await api('caption_window_visible'),true);
+    await main.waitForFunction(async()=>(await window.__TAURI_INTERNALS__.invoke('caption_snapshot')).status.sending,null,{timeout:20000});
+    await main.evaluate(async file=>{
+      const {convertFileSrc}=await import('/node_modules/@tauri-apps/api/core.js');
+      const audio=new Audio(convertFileSrc(file));window.visibilityAudio=audio;
+      window.visibilityAudioEnded=new Promise((resolve,reject)=>{audio.onended=()=>resolve();audio.onerror=()=>reject(Error('Speaker fixture failed'));});
+      await audio.play();
+    },path.resolve('test-results/fixtures/english.wav'));
+    await main.waitForTimeout(2000);
+    await hide().click(); await show().waitFor();
+    assert.equal(await api('caption_window_visible'),false);
+    assert.equal(await api('caption_running'),true,'Hiding must not stop translation');
+    await main.waitForTimeout(2000);
+    await show().click(); await hide().waitFor();
+    assert.equal(await api('caption_window_visible'),true);
+    assert.equal(await api('caption_running'),true);
+    await main.evaluate(()=>window.visibilityAudioEnded);
+    await main.waitForFunction(async()=>(await window.__TAURI_INTERNALS__.invoke('caption_snapshot')).caption.text.trim().length>0,null,{timeout:10000});
+    const cap=b.contexts().flatMap(c=>c.pages()).find(p=>p.url().includes('caption.html'));
+    await cap.locator('.caption-text').waitFor();
+    assert((await cap.locator('.caption-text').innerText()).trim());
+    await main.screenshot({path:path.join(out,'running-visible.png')});
+    results.push({name:'Start auto-shows; hiding preserves live Soniox; showing again displays translation',passed:true});
+    await main.getByRole('button',{name:'Dừng dịch',exact:true}).click();
+    await show().waitFor();
+    assert.equal(await api('caption_running'),false);
+    assert.equal(await api('caption_window_visible'),false);
+    await show().click(); await hide().waitFor();
+    assert.equal(await api('caption_running'),false);
+    await hide().click(); await show().waitFor();
+    results.push({name:'Stop closes overlay; preview remains available after stop without restarting STT',passed:true});
+    fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(results,null,2));
+    console.log(JSON.stringify(results,null,2));
+  } finally {
+    await main.evaluate(()=>window.visibilityAudio?.pause()).catch(()=>{});
+    if(await api('caption_running'))await api('stop_caption');
+    await api('close_caption_window');
+    await main.evaluate(saved=>{if(saved===null)localStorage.removeItem('may.caption.standalone');else localStorage.setItem('may.caption.standalone',saved);},saved);
+    await main.reload(); await b.close();
+  }
+})().catch(e=>{console.error(e);process.exitCode=1});

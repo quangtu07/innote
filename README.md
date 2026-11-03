@@ -7,7 +7,9 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 ## Tính năng
 
 - Ghi đồng thời **âm thanh cuộc họp** (WASAPI loopback) và **micro**.
-- Chép lời local bằng Whisper large-v3-turbo cho Việt/Anh; Nemotron cho Việt/Anh/Hàn/Trung xen kẽ.
+- Moonshine có sẵn để chép lời local Việt/Anh; Nemotron là model tùy chọn cho Việt/Anh/Hàn/Trung xen kẽ.
+- Phụ đề lời gốc hoặc bản dịch từ âm thanh loa/tai nghe, với hộp nổi kéo/đổi kích thước và tùy chỉnh trong Cài đặt.
+- Lưu nhiều cấu hình API, chọn model riêng theo tác vụ và cấu hình dự phòng. Soniox hỗ trợ dùng chung chép lời/phụ đề trong cuộc họp; Groq Whisper hỗ trợ phụ đề lời gốc dùng riêng theo đoạn.
 - Chọn ngôn ngữ giao diện: Tiếng Việt, English, 한국어, 中文（简体）.
 - Nghe lại, sửa từng đoạn, ghi chú, tìm kiếm và xuất `.md`, `.txt`, `.srt`; tải thêm bản ghi âm `.mp3`.
 - Tự thông báo và cập nhật khi có bản mới qua GitHub Releases.
@@ -50,8 +52,8 @@ Bộ cài hiện cài cho người dùng Windows hiện tại, thường không 
 
 1. Chọn **Âm thanh cuộc họp** và/hoặc **Micro của bạn**. Nên dùng tai nghe để giảm vọng.
 2. Chọn ngôn ngữ nhận dạng.
-3. Tải model khi app hỏi. Model **không nằm trong bộ cài**; app tải một lần qua Internet rồi lưu trên máy.
-4. Sau khi model đã có, bấm **Bắt đầu ghi**.
+3. Moonshine Việt/Anh đã nằm trong bộ cài. Chỉ tải Nemotron nếu cần dùng model đa ngôn ngữ tùy chọn.
+4. Chọn model phù hợp rồi bấm **Bắt đầu ghi**.
 
 ## Windows SmartScreen
 
@@ -141,19 +143,17 @@ Nếu bộ cài không cài được WebView2 do mạng hoặc chính sách côn
 
 ### Dung lượng cần chuẩn bị
 
-Bộ cài và app chiếm khoảng **140 MB** sau khi cài. Model được tải riêng:
+Bộ cài đã bao gồm Moonshine Việt/Anh; Nemotron là model tùy chọn được tải riêng:
 
 | Model | Dung lượng |
 |---|---:|
-| Whisper large-v3-turbo | khoảng **574 MB** |
+| Moonshine Việt/Anh | có sẵn trong bộ cài |
 | Nemotron đa ngôn ngữ | khoảng **742 MB** |
-| Cả hai model | khoảng **1,3 GB** |
 
 Nên để trống:
 
-- Khoảng **1 GB** nếu chỉ dùng Whisper.
+- Dung lượng cho bộ cài/app và audio nếu chỉ dùng Moonshine có sẵn.
 - Khoảng **1,2 GB** nếu chỉ dùng Nemotron.
-- Khoảng **2 GB** nếu muốn dùng cả hai, cộng thêm dung lượng cho audio các phiên họp.
 
 Model lưu tại:
 
@@ -164,9 +164,9 @@ Model lưu tại:
 ### Internet
 
 - Cần Internet khi cài nếu máy chưa có WebView2.
-- Cần Internet khi tải model lần đầu.
+- Cần Internet khi tải model tùy chọn lần đầu.
 - Sau khi WebView2 và model đã có, app có thể ghi âm/chép lời local mà không cần Internet.
-- Kiểm tra cập nhật và Soniox opt-in cần Internet.
+- Kiểm tra cập nhật và các tính năng API cloud cần Internet.
 
 ### Không cần cài thêm
 
@@ -197,7 +197,7 @@ Thường không. Bộ cài sẽ tự xử lý nếu máy thiếu WebView2 và c
 
 ### Model có nằm trong bộ cài không?
 
-Không. App tải model khi bạn chọn model lần đầu. Model không tự tải nếu bạn chưa xác nhận trong app.
+Không. Moonshine Việt/Anh có sẵn. Nemotron chỉ tải khi bạn chủ động chọn tải trong app.
 
 ### Có dùng offline được không?
 
@@ -220,7 +220,7 @@ Hai file đó không phải bộ cài. `.sig` dùng cho updater, `latest.json` l
 - Phiên ghi, PCM/WAV, SQLite, model nằm trong `%LOCALAPPDATA%\Innote`.
 - Không có telemetry, không tự upload audio.
 - Xóa app không tự xóa dữ liệu người dùng; muốn xóa hoàn toàn phải xóa thư mục dữ liệu.
-- Soniox chỉ dùng khi người dùng chủ động chọn và nhập key; key không lưu xuống đĩa.
+- API cloud chỉ dùng khi người dùng chủ động chọn cấu hình. Key được làm rối và lưu trong dữ liệu app trên máy để dùng lại sau khi khởi động; không đưa key vào log. Cách lưu này không thay thế kho bí mật được bảo vệ bởi hệ điều hành.
 
 ## Build từ source
 
@@ -265,8 +265,8 @@ Public key đã có trong `src-tauri/tauri.conf.json`. Sao lưu private key + m�
 ```powershell
 .\scripts\release.ps1 `
   -Repo USERNAME/innote `
-  -Version 0.6.3 `
-  -Notes "Innote 0.6.3: mô tả ngắn thay đổi."
+  -Version 0.8.5 `
+  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.5.md"))
 ```
 
 Script tự:

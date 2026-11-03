@@ -141,7 +141,77 @@ pub fn export(s: &Session, format: &str) -> String {
     // Existing exports always use the original transcript.
     export_version(s, format, "original")
 }
+fn validate_translation_export(s: &Session, format: &str, version: &str) -> Result<()> {
+    if let Some((mode, language)) = version
+        .split_once(':')
+        .filter(|(m, _)| ["translation", "bilingual"].contains(m))
+    {
+        let entries: Vec<_> = s
+            .translations
+            .iter()
+            .filter(|t| t.language == language)
+            .collect();
+        anyhow::ensure!(!entries.is_empty(), "Chưa có bản dịch cho ngôn ngữ đã chọn");
+        if format == "srt" {
+            anyhow::bail!("Bản dịch không có timestamp riêng; hãy xuất bản dịch TXT/Markdown hoặc SRT bản gốc");
+        }
+        let _ = mode;
+    }
+    Ok(())
+}
 pub fn export_version(s: &Session, format: &str, version: &str) -> String {
+    if let Some((mode, language)) = version
+        .split_once(':')
+        .filter(|(m, _)| ["translation", "bilingual"].contains(m))
+    {
+        let mut copy = s.clone();
+        copy.segments = s
+            .translations
+            .iter()
+            .filter(|t| t.language == language)
+            .map(|t| crate::types::Segment {
+                id: t.id.clone(),
+                start: t.start,
+                end: t.end,
+                text: t.text.clone(),
+                edited: false,
+            })
+            .collect();
+        if mode == "bilingual" {
+            let original = s
+                .segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let translated = copy
+                .segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            return format!(
+                "{}\n\nBẢN GỐC\n{}\n\nBẢN DỊCH ({language})\n{}\n\nGhi chú\n{}\n",
+                s.title,
+                original,
+                translated,
+                format!(
+                    "{}\n\nAlex Linh · Zalo: 0962 239 818 · https://alexlinh.io.vn/",
+                    s.notes
+                )
+            );
+        }
+        copy.title = format!(
+            "{} — {} ({language})",
+            s.title,
+            if mode == "translation" {
+                "Bản dịch"
+            } else {
+                "Song ngữ"
+            }
+        );
+        return export_version(&copy, format, "original");
+    }
     if version == "summary" {
         if let Some(summary) = s.summary.as_ref() {
             if format == "srt" {
@@ -302,6 +372,7 @@ pub fn export_file_version(
     format: &str,
     version: &str,
 ) -> Result<PathBuf> {
+    validate_translation_export(s, format, version)?;
     anyhow::ensure!(
         ["md", "txt", "srt"].contains(&format),
         "Định dạng xuất không hợp lệ"
@@ -330,6 +401,7 @@ pub fn export_to_version(
     format: &str,
     version: &str,
 ) -> Result<PathBuf> {
+    validate_translation_export(s, format, version)?;
     anyhow::ensure!(
         ["md", "txt", "srt"].contains(&format),
         "Định dạng xuất không hợp lệ"
@@ -376,6 +448,39 @@ pub fn export_to_version(
 mod tests {
     use super::*;
     #[test]
+    fn bilingual_roundtrip_keeps_original_translation_and_rejects_invented_translation_srt() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let mut s:Session=serde_json::from_value(serde_json::json!({"id":uuid::Uuid::new_v4(),"title":"QA","created":"now","duration":10.,"status":"completed","language":"en","model":"phowhisper-small","processed":10.,"segments":[{"id":"original","start":1.,"end":4.,"text":"not fifty","edited":true}],"notes":"keep notes","error":null})).unwrap();
+        assert!(s.translations.is_empty());
+        assert!(s.speech.is_none());
+        s.translations.push(crate::types::TranslationSegment {
+            id: "translated".into(),
+            source_id: "original".into(),
+            source_ids: vec!["original".into()],
+            start: 1.,
+            end: 4.,
+            original: "not fifty".into(),
+            text: "không phải năm mươi".into(),
+            language: "vi".into(),
+            provider: "soniox".into(),
+        });
+        save(&root, &s).unwrap();
+        let saved = load(&root, &s.id).unwrap();
+        assert!(saved.segments[0].edited);
+        assert_eq!(saved.notes, "keep notes");
+        assert_eq!(saved.translations[0].text, "không phải năm mươi");
+        let translation = export_version(&saved, "txt", "translation:vi");
+        assert!(translation.contains("không phải năm mươi"));
+        assert!(!translation.contains("not fifty"));
+        let bilingual = export_version(&saved, "md", "bilingual:vi");
+        assert!(bilingual.contains("not fifty") && bilingual.contains("không phải năm mươi"));
+        assert!(
+            export_file_version(&root.join("bad.srt"), &saved, "srt", "translation:vi").is_err()
+        );
+        assert!(!root.join("bad.srt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn migrates_legacy_data_directory_into_innote() {
         let base = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let legacy = base.join(LEGACY_DATA_DIR_NAME);
@@ -418,7 +523,9 @@ mod tests {
         assert!(md.contains("Alex Linh"));
         assert!(md.contains("Zalo: **0962 239 818**"));
         assert!(md.contains("[alexlinh.io.vn](https://alexlinh.io.vn/)"));
-        assert!(md.trim_end().ends_with("[alexlinh.io.vn](https://alexlinh.io.vn/)"));
+        assert!(md
+            .trim_end()
+            .ends_with("[alexlinh.io.vn](https://alexlinh.io.vn/)"));
         assert!(md.find("Ghi chú cuối.").unwrap() < md.find("## Liên hệ").unwrap());
         let txt = export(&s, "txt");
         assert!(txt.contains("LIÊN HỆ TƯ VẤN, HỖ TRỢ & LẬP TRÌNH"));
@@ -429,7 +536,9 @@ mod tests {
         let path = dir.join("lien-he.md");
         export_file(&path, &s, "md").unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
-        assert!(written.trim_end().ends_with("[alexlinh.io.vn](https://alexlinh.io.vn/)"));
+        assert!(written
+            .trim_end()
+            .ends_with("[alexlinh.io.vn](https://alexlinh.io.vn/)"));
         std::fs::remove_dir_all(dir).unwrap();
         assert!(!export(&s, "srt").contains("0962 239 818"));
     }
@@ -460,6 +569,7 @@ mod tests {
     fn unicode_roundtrip() {
         let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let s = Session {
+            speech_quality: Default::default(),
             id: uuid::Uuid::new_v4().to_string(),
             title: "Họp với Mây".into(),
             created: "now".into(),
@@ -476,6 +586,8 @@ mod tests {
             warnings: vec![],
             smoothed: None,
             summary: None,
+            translations: vec![],
+            speech: None,
         };
         save(&dir, &s).unwrap();
         let mut loaded = load(&dir, &s.id).unwrap();
@@ -508,6 +620,7 @@ mod tests {
             .set_len(96000)
             .unwrap();
         let s = Session {
+            speech_quality: Default::default(),
             id: id.clone(),
             title: "Phiên gián đoạn".into(),
             created: "2026-10-24".into(),
@@ -530,6 +643,8 @@ mod tests {
             warnings: vec![],
             smoothed: None,
             summary: None,
+            translations: vec![],
+            speech: None,
         };
         save(&dir, &s).unwrap();
         recover(&dir).unwrap();
@@ -547,7 +662,7 @@ mod tests {
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
-#[test]
+    #[test]
     fn smoothed_export_uses_copy_without_touching_original() {
         let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let mut s: Session = serde_json::from_value(serde_json::json!({
@@ -606,7 +721,8 @@ mod tests {
         assert_eq!(s.warnings, vec!["Thiết bị âm thanh tạm ngắt; đã mở lại."]);
         s.status = "interrupted".into();
         s.processed = 5.;
-        s.warnings.push("Nguồn system báo gián đoạn dữ liệu âm thanh.".into());
+        s.warnings
+            .push("Nguồn system báo gián đoạn dữ liệu âm thanh.".into());
         drop_stale_discontinuity_warnings(&mut s);
         assert_eq!(s.warnings.len(), 2);
     }

@@ -28,6 +28,7 @@ export interface Summary {
   source_hash?: string;
 }
 export interface Meeting {
+  speech_quality?: "fast" | "balanced" | "accurate";
   id: string;
   title: string;
   created: string;
@@ -44,6 +45,8 @@ export interface Meeting {
   warnings: string[];
   smoothed?: SmoothedTranscript | null;
   summary?: Summary | null;
+  translations?: { id: string; source_id: string; source_ids?: string[]; start: number; end: number; original: string; text: string; language: string; provider: string }[];
+  speech?: { model: string; profile_id: string | null; translation_language: string | null; connections: number; uploaded_samples: number; local_fallback: boolean } | null;
 }
 export interface Model {
   id: string;

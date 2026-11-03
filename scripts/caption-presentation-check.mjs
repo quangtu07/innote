@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const js=ts.transpileModule(readFileSync('src/lib/caption-presentation.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {CaptionPresentation}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const p=new CaptionPresentation();
+const cue=(text,original,final_=false)=>({text,original,final_,translating:true});
+p.push(cue('','A'));assert.equal(p.view(true).text,'');assert.equal(p.view(true).original,'');
+p.push(cue('partial A','A'));assert.equal(p.view(true).text,'');assert.equal(p.view(false).text,'partial A');
+p.push(cue('translation A','source A',true));assert.equal(p.view(true).text,'translation A');assert.equal(p.view(true).original,'source A');
+p.push(cue('','source B'));assert.equal(p.view(true).original,'source A');assert.equal(p.view(false).text,'translation A');
+p.push(cue('partial B','source B'));assert.equal(p.view(true).text,'translation A');assert.equal(p.view(false).text,'partial B');
+p.push(cue('translation B','source B',true));assert.equal(p.view(true).text,'translation B');assert.equal(p.view(true).original,'source B');
+p.push(cue('orphan translation','',true));assert.equal(p.view(true).text,'translation B');
+p.restore({translating:true,paired:cue('translation B','source B',true),caption:cue('partial C','source C')});assert.equal(p.view(true).original,'source B');assert.equal(p.view(false).text,'partial C');
+p.push({text:'source only live',original:'',final_:false,translating:false});assert.equal(p.view(true).text,'source only live');assert.equal(p.view(true).original,'');
+p.clear();assert.equal(p.view(true).text,'');assert.equal(p.view(true).original,'');
+console.log('PASS bilingual presentation: delayed source/target, final pair, next source, partial target, orphan, toggle, snapshot, source-only, reset');

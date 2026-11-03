@@ -11,18 +11,18 @@ use std::{
 
 /// Keep archive handles open while capture extends them. Avoid reopening both
 /// endpoints fifty times a second and query live size through the open handle.
-struct PcmTail {
+pub(crate) struct PcmTail {
     sources: [(std::path::PathBuf, Option<File>); 2],
     bytes: Vec<u8>,
 }
 impl PcmTail {
-    fn new(dir: &Path) -> Self {
+    pub(crate) fn new(dir: &Path) -> Self {
         Self {
             sources: ["system.pcm", "microphone.pcm"].map(|name| (dir.join(name), None)),
             bytes: vec![],
         }
     }
-    fn available(&mut self) -> Result<usize> {
+    pub(crate) fn available(&mut self) -> Result<usize> {
         let mut available = 0;
         for (path, file) in &mut self.sources {
             if file.is_none() {
@@ -36,7 +36,7 @@ impl PcmTail {
         }
         Ok(available)
     }
-    fn read(&mut self, start: usize, end: usize) -> Result<Vec<f32>> {
+    pub(crate) fn read(&mut self, start: usize, end: usize) -> Result<Vec<f32>> {
         let len = end - start;
         self.bytes.resize(len * 2, 0);
         let mut output = vec![0_f32; len];
@@ -266,15 +266,35 @@ enum Decoder {
     Multilingual(crate::nemo::Decoder),
     Legacy(VoskDecoder),
 }
+pub(crate) struct CaptionDecoder(Decoder);
+impl CaptionDecoder {
+    pub(crate) fn captions_with_quality(model: &Path, language: &str, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
+        if model.extension().is_some_and(|s| s == "gguf") {
+            return Ok(Self(Decoder::Multilingual(crate::nemo::Decoder::captions_with_quality(model, language, quality)?)));
+        }
+        Ok(Self(Decoder::with_quality(model, language, quality)?))
+    }
+    pub(crate) fn decode(&mut self, samples: &[f32], finish: bool) -> Result<Vec<Update>> {
+        self.0.decode(samples, finish)
+    }
+}
 impl Decoder {
     fn new(model: &Path, language: &str) -> Result<Self> {
+        Self::with_quality(model, language, crate::speech_quality::SpeechQuality::Balanced)
+    }
+    fn with_quality(model: &Path, language: &str, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
         if model.extension().is_some_and(|s| s == "gguf") {
-            return Ok(Self::Multilingual(crate::nemo::Decoder::new(
-                model, language,
+            // Explicit VI/EN selection uses the CPU-efficient streaming profile.
+            // Mixed-language meetings retain their existing prompt/endpoint path.
+            if ["vi", "en"].contains(&language) {
+                return Ok(Self::Multilingual(crate::nemo::Decoder::captions_with_quality(model, language, quality)?));
+            }
+            return Ok(Self::Multilingual(crate::nemo::Decoder::with_quality(
+                model, language, quality,
             )?));
         }
         if model.join("streaming_config.json").exists() {
-            Ok(Self::Moonshine(crate::moonshine::Decoder::new(model)?))
+            Ok(Self::Moonshine(crate::moonshine::Decoder::with_quality(model, quality)?))
         } else {
             Ok(Self::Legacy(VoskDecoder::new(model)?))
         }
@@ -347,9 +367,10 @@ pub fn model_path(language: &str) -> Result<std::path::PathBuf> {
 }
 /// Child tails the durable PCM, so no unbounded queue and no waiting for Whisper.
 /// EOF on stdin means capture has joined; drain the remaining samples, then flush.
-pub fn worker(language: &str, dir: &Path) -> Result<()> {
+pub fn worker_with_model(language: &str, dir: &Path, start: usize, selected: Option<&Path>, quality: crate::speech_quality::SpeechQuality) -> Result<()> {
     let dir = std::fs::canonicalize(dir)?;
-    let mut decoder = Decoder::new(&model_path(language)?, language)?;
+    let model = match selected { Some(path) => path.to_path_buf(), None => model_path(language)? };
+    let mut decoder = Decoder::with_quality(&model, language, quality)?;
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal = done.clone();
     std::thread::spawn(move || {
@@ -357,12 +378,14 @@ pub fn worker(language: &str, dir: &Path) -> Result<()> {
         let _ = std::io::stdin().read_line(&mut line);
         signal.store(true, std::sync::atomic::Ordering::Release);
     });
-    let mut cursor = 0usize;
+    let mut cursor = start;
+    decoder.reset_at(start as f64 / 16000.)?;
     let mut previous = String::new();
     let mut zeros = 0usize;
     let mut skipped_silence = false;
     let multilingual = ["multi", "ko", "zh"].contains(&language);
-    let boundary_samples = 16000 * if multilingual { 30 } else { 20 };
+    let native_phrase_bounds = model.extension().is_some_and(|s|s=="gguf");
+    let boundary_samples = 16000 * quality.boundary_seconds(multilingual);
     let mut next_boundary = boundary_samples;
     let mut pcm = PcmTail::new(&dir);
     println!("{}", serde_json::json!({"ready":true}));
@@ -399,7 +422,7 @@ pub fn worker(language: &str, dir: &Path) -> Result<()> {
             }
             let updates = decoder.decode(&samples, false)?;
             cursor = end;
-            if multilingual && updates.iter().any(|u| u.final_text) {
+            if native_phrase_bounds && updates.iter().any(|u| u.final_text) {
                 next_boundary = cursor + boundary_samples;
             }
             emit_updates(updates, &mut previous)?;

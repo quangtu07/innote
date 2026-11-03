@@ -38,7 +38,31 @@ pub struct SummarizedTranscript {
     pub source_hash: String,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TranslationSegment {
+    pub id: String,
+    pub source_id: String,
+    #[serde(default)]
+    pub source_ids: Vec<String>,
+    pub start: f64,
+    pub end: f64,
+    pub original: String,
+    pub text: String,
+    pub language: String,
+    pub provider: String,
+}
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct SpeechInfo {
+    pub model: String,
+    pub profile_id: Option<String>,
+    pub translation_language: Option<String>,
+    pub connections: u64,
+    pub uploaded_samples: u64,
+    pub local_fallback: bool,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Session {
+    #[serde(default)]
+    pub speech_quality: crate::speech_quality::SpeechQuality,
     pub id: String,
     pub title: String,
     pub created: String,
@@ -63,6 +87,10 @@ pub struct Session {
     /// AI summary, stored separately from the transcript.
     #[serde(default)]
     pub summary: Option<SummarizedTranscript>,
+    #[serde(default)]
+    pub translations: Vec<TranslationSegment>,
+    #[serde(default)]
+    pub speech: Option<SpeechInfo>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -90,6 +118,8 @@ pub struct AudioTestResult {
 }
 #[derive(Deserialize, Clone)]
 pub struct StartOptions {
+    #[serde(default, alias = "speechQuality")]
+    pub speech_quality: crate::speech_quality::SpeechQuality,
     pub title: String,
     pub system: Option<String>,
     pub microphone: Option<String>,
@@ -98,6 +128,18 @@ pub struct StartOptions {
     pub transcribe: bool,
     #[serde(default = "local_provider")]
     pub provider: String,
+    /// Named AI profile used for the transcription provider (key stays local).
+    #[serde(default)]
+    #[serde(alias = "profileId")]
+    pub profile_id: Option<String>,
+    #[serde(default, alias = "translationLanguage")]
+    pub translation_language: Option<String>,
+    #[serde(default, alias = "captionsEnabled")]
+    pub captions_enabled: bool,
+    #[serde(default, alias = "transcriptionFallback")]
+    pub transcription_fallback: Option<crate::config::ModelChoice>,
+    #[serde(default, alias = "localFallback")]
+    pub local_fallback: bool,
 }
 fn local_provider() -> String {
     "local".into()

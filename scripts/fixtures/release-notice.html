@@ -1,0 +1,10 @@
+<!doctype html><html lang="vi"><head><meta charset="UTF-8"><title>Release notice QA</title></head>
+<body><main style="padding:32px"><button class="button secondary" id="background-action">Innote</button><div id="fixture"></div></main>
+<script type="module">
+import {mount} from 'svelte';
+import WhatsNewDialog from '../../src/WhatsNewDialog.svelte';
+import '../../src/style.css';
+const query=new URLSearchParams(location.search);
+const locale=['vi','en','ko','zh'].includes(query.get('locale'))?query.get('locale'):'vi';
+mount(WhatsNewDialog,{target:document.querySelector('#fixture'),props:{version:query.get('version')||'0.8.5',locale,existingInstall:query.get('existing')==='1',ready:query.get('ready')!=='0'}});
+</script></body></html>

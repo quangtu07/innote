@@ -119,6 +119,17 @@ pub struct Decoder {
 }
 impl Decoder {
     pub fn new(model: &Path, code: &str) -> Result<Self> {
+        Self::with_quality(model, code, crate::speech_quality::SpeechQuality::Balanced)
+    }
+    pub fn with_quality(model: &Path, code: &str, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
+        Self::with_right_context(model, code, 1, quality)
+    }
+    /// Caption-only CPU profile: cache-aware 1120 ms chunks amortize encoder
+    /// dispatch. Existing meeting/offline callers keep their 160 ms profile.
+    pub fn captions_with_quality(model: &Path, code: &str, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
+        Self::with_right_context(model, code, 13, quality)
+    }
+    fn with_right_context(model: &Path, code: &str, right_context: i32, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
         anyhow::ensure!(
             std::is_x86_feature_detected!("avx2"),
             "Model đa ngôn ngữ này cần CPU AVX2"
@@ -201,7 +212,7 @@ impl Decoder {
                 chunk: 0.16,
                 left: 1.92,
                 right: 1.92,
-                context: 1,
+                context: right_context,
             };
             // GGUF's narrow file open cannot resolve a Unicode Windows path.
             // Rust reads the bundled sidecar and publishes it in the writable
@@ -232,7 +243,7 @@ impl Decoder {
                 size: std::mem::size_of::<Endpoint>(),
                 enable: true,
                 vad_based: true,
-                silence_ms: 400,
+                silence_ms: quality.nemo_endpoint_ms(),
             };
             let cfg = Config {
                 size: std::mem::size_of::<Config>(),

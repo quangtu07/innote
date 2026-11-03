@@ -1,15 +1,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod audio;
+mod caption;
+mod caption_window;
+mod config;
 mod engine;
+mod fallback;
+mod groq;
 mod instance;
 mod live;
 mod llm;
+mod local_caption;
+mod local_stream_caption;
+mod meeting_soniox;
 mod models;
 mod moonshine;
+mod speech_quality;
 mod mp3;
 mod nemo;
-mod session_logic;
 mod secure;
+mod session_logic;
 mod soniox;
 mod storage;
 mod types;
@@ -36,6 +45,10 @@ struct May {
     devices: Arc<Mutex<Vec<Device>>>,
     soniox_key: Arc<Mutex<String>>,
     llm_key: Arc<Mutex<String>>,
+    profiles: Arc<Mutex<Vec<config::AiProfile>>>,
+    caption_stop: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    caption_done: Arc<AtomicBool>,
+    verified_ai: Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>,
 }
 struct Run {
     id: String,
@@ -46,6 +59,7 @@ struct Run {
     cancel: AtomicBool,
     duration: Mutex<f64>,
     failure: Mutex<Option<String>>,
+    speech: meeting_soniox::Control,
 }
 impl Run {
     fn stop_now(&self) {
@@ -71,6 +85,61 @@ impl May {
     }
     fn current(&self) -> Option<Arc<Run>> {
         self.active.lock().unwrap().clone()
+    }
+    /// Register the caption session's stop flag; returns Err if one is running.
+    fn caption_begin(&self, stop: Arc<AtomicBool>) -> Result<()> {
+        let mut guard = self.caption_stop.lock().unwrap();
+        anyhow::ensure!(
+            self.caption_done.load(Ordering::Acquire),
+            "Phiên phụ đề trước đang dừng; hãy chờ vài giây"
+        );
+        self.caption_done.store(false, Ordering::Release);
+        *guard = Some(stop);
+        Ok(())
+    }
+    fn caption_running(&self) -> bool {
+        self.current()
+            .is_some_and(|r| r.speech.enabled.load(Ordering::Acquire))
+            || !self.caption_done.load(Ordering::Acquire)
+    }
+    /// Gracefully stop the caption session (idempotent).
+    fn caption_stop_now(&self) {
+        if let Some(run) = self.current() {
+            run.speech.enabled.store(false, Ordering::Release);
+            run.speech.set_target(None);
+        }
+        if let Some(stop) = self.caption_stop.lock().unwrap().as_ref() {
+            stop.store(true, Ordering::Release);
+        }
+    }
+    /// Resolve a profile by id; the key stays in the backend.
+    fn profile(&self, id: &str) -> Result<config::AiProfile> {
+        self.profiles
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
+            .context("Không tìm thấy cấu hình AI đã chọn")
+    }
+    /// A selected task profile owns provider, endpoint and credential together.
+    fn task_config(
+        &self,
+        provider: &str,
+        base: &str,
+        key: Option<String>,
+        profile_id: Option<&str>,
+    ) -> Result<(String, String, String)> {
+        if let Some(id) = profile_id {
+            let profile = self.profile(id)?;
+            return Ok((profile.provider, profile.base_url, profile.key));
+        }
+        Ok((
+            provider.into(),
+            base.into(),
+            key.filter(|k| !k.trim().is_empty())
+                .unwrap_or_else(|| self.llm_key.lock().unwrap().clone()),
+        ))
     }
     fn reserve_resume(&self, run: Arc<Run>) -> Result<()> {
         let mut active = self.active.lock().unwrap();
@@ -206,50 +275,81 @@ fn remote_then_local<T>(
     local()
 }
 
-fn process_job(
-    worker: &mut Option<Worker>,
-    model: &std::path::Path,
-    key: &Option<String>,
-    remote: &mut bool,
-    job: &WorkerJob,
-    cancel: &AtomicBool,
-    fallback: impl FnOnce(&str) -> Result<()>,
-) -> Result<WorkerResult> {
-    remote_then_local(
-        remote,
-        cancel,
-        || {
-            tauri::async_runtime::block_on(soniox::transcribe(
-                key.as_deref().unwrap_or(""),
-                job,
-                cancel,
-            ))
-        },
-        || {
-            if worker.is_none() {
-                *worker = Some(Worker::new(model)?);
-            }
-            worker.as_mut().unwrap().process(job, cancel)
-        },
-        fallback,
-    )
-}
-
 fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Result<Session> {
     anyhow::ensure!(
         ["local", "soniox"].contains(&options.provider.as_str()),
         "Cách chép lời không hợp lệ"
     );
     let key = if options.transcribe && options.provider == "soniox" {
-        let key = may.soniox_key.lock().unwrap().clone();
+        let key = if let Some(id) = options.profile_id.as_deref() {
+            let p = may.profile(id)?;
+            anyhow::ensure!(
+                p.provider == "soniox",
+                "Cấu hình chép lời phải thuộc Soniox"
+            );
+            p.key
+        } else {
+            may.soniox_key.lock().unwrap().clone()
+        };
         (!key.is_empty()).then_some(key)
     } else {
         None
     };
-    let mut remote = key.is_some();
+    anyhow::ensure!(
+        !options.captions_enabled || options.transcribe,
+        "Hãy bật chép lời trước khi bật phụ đề cuộc họp"
+    );
+    let remote = key.is_some();
+    let transcription_backup = if let Some(choice) = options.transcription_fallback.as_ref() {
+        anyhow::ensure!(
+            remote && options.transcribe,
+            "Dự phòng cấu hình chép lời hiện cần Soniox làm engine chính"
+        );
+        let profile = may.profile(&choice.profile_id)?;
+        anyhow::ensure!(
+            profile.provider == "soniox" && choice.model == "stt-rt-v5",
+            "Dự phòng chép lời phải dùng cấu hình Soniox và stt-rt-v5"
+        );
+        anyhow::ensure!(
+            options.profile_id.as_deref() != Some(profile.id.as_str()),
+            "Cấu hình Soniox dự phòng phải khác cấu hình chính"
+        );
+        Some(profile)
+    } else {
+        None
+    };
+    let resolved_profile = options.profile_id.clone().or_else(|| {
+        key.as_ref().and_then(|key| {
+            may.profiles
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.provider == "soniox" && &p.key == key)
+                .map(|p| p.id.clone())
+        })
+    });
+    if options.transcribe && options.provider == "soniox" {
+        anyhow::ensure!(
+            remote,
+            "Chưa chọn cấu hình Soniox hợp lệ; hãy thêm/kiểm tra key trong Cài đặt"
+        );
+    }
+    if let Some(target) = options.translation_language.as_deref() {
+        anyhow::ensure!(
+            options.transcribe && remote,
+            "Dịch dùng chung cần chọn Soniox để chép lời"
+        );
+        anyhow::ensure!(
+            ["vi", "en", "ko", "zh", "ja"].contains(&target),
+            "Ngôn ngữ dịch không hợp lệ"
+        );
+        anyhow::ensure!(
+            !may.caption_running(),
+            "Hãy dừng phiên phụ đề độc lập trước khi bật dịch trong cuộc họp"
+        );
+    }
     models::validate_mode(&options.language, &options.model, &options.provider)?;
-    let model = models::path(&may.root, &options.model)?;
-    if options.transcribe {
+    if options.transcribe && (!remote || options.local_fallback) {
         anyhow::ensure!(
             models::list(&may.root)
                 .iter()
@@ -275,6 +375,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         options.title.trim().to_string()
     };
     let s = Session {
+        speech_quality: options.speech_quality,
         id: id.clone(),
         title,
         created: chrono::Local::now().to_rfc3339(),
@@ -295,6 +396,13 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         },
         smoothed: None,
         summary: None,
+        translations: vec![],
+        speech: remote.then(|| SpeechInfo {
+            model: "stt-rt-v5".into(),
+            profile_id: resolved_profile,
+            translation_language: options.translation_language.clone(),
+            ..SpeechInfo::default()
+        }),
     };
     storage::save(&may.root, &s)?;
     let run = Arc::new(Run {
@@ -306,7 +414,17 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
         failure: Mutex::new(None),
+        speech: meeting_soniox::Control::default(),
     });
+    run.speech.active.store(remote, Ordering::Release);
+    run.speech
+        .transcribing
+        .store(options.transcribe, Ordering::Release);
+    run.speech.set_target(options.translation_language.clone());
+    run.speech.enabled.store(
+        options.captions_enabled || options.translation_language.is_some(),
+        Ordering::Release,
+    );
     let (tx, rx) = std::sync::mpsc::channel();
     let mut handles = vec![];
     for (kind, device) in [
@@ -367,6 +485,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
     }
     *active = Some(run.clone());
     drop(active);
+    let fallback_enabled = options.local_fallback;
     let live_handle = if options.transcribe {
         let live_may = may.clone();
         let live_run = run.clone();
@@ -374,16 +493,102 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         let live_dir = dir.clone();
         let language = options.language.clone();
         Some(std::thread::spawn(move || {
-            if let Err(e) = stream_preview(&live_may, &live_run, &live_app, &live_dir, &language) {
-                let _ = live_may.edit(&live_run.id, |s| {
-                    s.warnings.push(format!(
-                        "Chép trực tiếp local đã ngắt: {e}. Bản thu vẫn được giữ."
-                    ));
-                    if s.model == models::NEMO_ID {
-                        s.error = Some(
-                            "Nhận dạng đa ngôn ngữ đã ngắt; bản thu và bản chép hiện có vẫn được giữ.".into(),
-                        );
+            let outcome = if remote {
+                let mut result = meeting_soniox::run(
+                    &live_may,
+                    &live_run,
+                    &live_app,
+                    &live_dir,
+                    key.as_deref().unwrap_or(""),
+                    &language,
+                );
+                if result.as_ref().is_err_and(fallback::eligible)
+                    && !live_run.stop.load(Ordering::Acquire)
+                    && !live_run.cancel.load(Ordering::Acquire)
+                {
+                    if let Some(backup) = transcription_backup {
+                        let saved=live_may.edit(&live_run.id,|s|{
+                            if let Some(info)=s.speech.as_mut(){info.profile_id=Some(backup.id.clone());}
+                            s.warnings.push(format!("Chép lời đã chuyển sang {}/stt-rt-v5 theo cấu hình dự phòng. Âm thanh tiếp tục được thu; phần chưa chốt có thể được gửi lại để phục hồi.",backup.name));
+                        });
+                        result = match saved {
+                            Ok(session) => {
+                                if live_run.speech.enabled.load(Ordering::Acquire) {
+                                    caption::emit_status(&live_app,"soniox","fallback",false,&format!("Đang chuyển chép lời/phụ đề sang {}/stt-rt-v5; nguồn thu vẫn chạy.",backup.name));
+                                }
+                                let _ = live_app.emit("session-changed", live_run.id.clone());
+                                let _=live_app.emit("ai-fallback",serde_json::json!({"task":"caption","from":"Soniox chính/stt-rt-v5","to":format!("{}/stt-rt-v5",backup.name)}));
+                                meeting_soniox::run_from(
+                                    &live_may,
+                                    &live_run,
+                                    &live_app,
+                                    &live_dir,
+                                    &backup.key,
+                                    &language,
+                                    (session.processed * 16000.) as usize,
+                                )
+                            }
+                            Err(error) => Err(error),
+                        };
                     }
+                }
+                let had_translation = live_run.speech.enabled.swap(false, Ordering::AcqRel);
+                live_run.speech.active.store(false, Ordering::Release);
+                live_run.speech.set_target(None);
+                if had_translation {
+                    caption::emit_status(
+                        &live_app,
+                        "soniox",
+                        if result.is_err() { "error" } else { "idle" },
+                        false,
+                        if result.is_err() {
+                            "Dịch đã ngắt; xem lỗi trong cuộc họp. Bản thu và chữ đã có được giữ."
+                        } else {
+                            "Đã dừng dịch; bản gốc và bản dịch được giữ trong cuộc họp."
+                        },
+                    );
+                    if live_run.capture_done.load(Ordering::Acquire) {
+                        caption_window::hide_later(&live_app);
+                    }
+                }
+                match result {
+                    Err(error) if fallback_enabled && !live_run.cancel.load(Ordering::Acquire) => {
+                        let saved = live_may.edit(&live_run.id, |s| {
+                            s.provider = if s.segments.is_empty() { "local" } else { "mixed" }.into();
+                            if let Some(info)=s.speech.as_mut(){ info.local_fallback=true; }
+                            s.warnings.push(format!("Soniox đã ngắt: {error}. Dùng local theo tùy chọn dự phòng đã bật; dịch tạm dừng, bản thu và hai bản chữ đã có vẫn được giữ."));
+                        });
+                        match saved {
+                            Ok(session) => stream_preview_from(
+                                &live_may,
+                                &live_run,
+                                &live_app,
+                                &live_dir,
+                                &language,
+                                (session.processed * 16000.) as usize,
+                            ),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    other => other,
+                }
+            } else {
+                stream_preview(&live_may, &live_run, &live_app, &live_dir, &language)
+            };
+            live_run.speech.transcribing.store(false, Ordering::Release);
+            if !remote && live_run.speech.enabled.swap(false, Ordering::AcqRel) {
+                caption::emit_status(
+                    &live_app,
+                    "local",
+                    "idle",
+                    false,
+                    "Đã dừng phụ đề; bản chép đã có vẫn được giữ.",
+                );
+                caption_window::hide_later(&live_app);
+            }
+            if let Err(e) = outcome {
+                let _ = live_may.edit(&live_run.id, |s| {
+                    s.error = Some(format!("Chép lời đã ngắt: {e}. Bản thu và chữ đã có vẫn được giữ; không tự đổi engine khi chưa bật dự phòng."));
                 });
                 let _ = live_app.emit(
                     "live-transcript",
@@ -461,8 +666,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         }
     });
     std::thread::spawn(move || {
-        let mut worker = None;
-        let mut failed = false;
+        let failed = false;
         let mut captures_joined = false;
         let mut threads = Some(handles);
         let mut last_save = std::time::Instant::now();
@@ -503,78 +707,10 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                 });
                 last_save = std::time::Instant::now();
             }
-            if !options.transcribe || failed || true {
-                if stopped {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                continue;
-            }
-            let s = match storage::load(&may.root, &id) {
-                Ok(s) => s,
-                Err(_) => break,
-            };
-            if let Some((start, end)) = session_logic::next_job(
-                s.processed,
-                duration,
-                stopped,
-                run.paused.load(Ordering::Acquire),
-            ) {
-                let result = (|| -> Result<WorkerResult> {
-                    let path = engine::write_job(&dir, start, end)?;
-                    process_job(
-                        &mut worker,
-                        &model,
-                        &key,
-                        &mut remote,
-                        &WorkerJob {
-                            path: path.to_string_lossy().into(),
-                            offset: start,
-                            language: s.language.clone(),
-                        },
-                        &run.cancel,
-                        |message| {
-                            may.edit(&id, |s| {
-                                s.provider =
-                                    if s.processed > 0. { "mixed" } else { "local" }.into();
-                                s.warnings.push(message.into());
-                            })?;
-                            Ok(())
-                        },
-                    )
-                })();
-                match result {
-                    Ok(result) if result.error.is_none() => {
-                        let saved = may.edit(&id, |s| {
-                            session_logic::commit(s, result.segments, end);
-                        });
-                        if let Err(e) = saved {
-                            failed = true;
-                            worker = None;
-                            run.fail_storage(format!(
-                                "Không lưu được bản chép: {e}. Kiểm tra thư mục dữ liệu."
-                            ));
-                            let _ = app.emit("storage-error", format!("Không lưu được bản chép: {e}. Innote đã dừng ghi để giữ dữ liệu hiện có."));
-                        }
-                    }
-                    other => {
-                        let error = match other {
-                            Ok(r) => r.error.unwrap_or_default(),
-                            Err(e) => e.to_string(),
-                        };
-                        failed = true;
-                        worker = None;
-                        let _ = may.edit(&id, |s| {
-                            s.error =
-                                Some(format!("Chép lời tạm dừng: {error}. Bản thu vẫn được lưu."))
-                        });
-                    }
-                }
-            } else if stopped {
+            if stopped {
                 break;
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(100));
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         if let Some(threads) = threads.take() {
             for h in threads {
@@ -594,7 +730,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
             }
             s.duration = duration;
             if options.transcribe && s.error.is_none() && !failed {
-                if s.segments.is_empty() && !s.live.is_empty() {
+                if !s.live.is_empty() {
                     let words = s.live.clone();
                     let mut current_words = Vec::new();
                     let mut seg_start = 0.0;
@@ -649,8 +785,27 @@ fn stream_preview(
     dir: &std::path::Path,
     language: &str,
 ) -> Result<()> {
+    stream_preview_from(may, run, app, dir, language, 0)
+}
+fn stream_preview_from(
+    may: &May,
+    run: &Run,
+    app: &tauri::AppHandle,
+    dir: &std::path::Path,
+    language: &str,
+    start: usize,
+) -> Result<()> {
+    let session = storage::load(&may.root, &run.id)?;
+    models::validate_mode(language, &session.model, "local")?;
+    let selected_model = models::path(&may.root, &session.model)?;
     let mut command = Command::new(std::env::current_exe()?);
-    command.arg("--live-worker").arg(language).arg(dir);
+    command
+        .arg("--live-worker")
+        .arg(language)
+        .arg(dir)
+        .arg(start.to_string())
+        .arg(selected_model)
+        .arg(session.speech_quality.as_str());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -701,7 +856,7 @@ fn stream_preview(
                     }
                     let worker_unix_ms = value["worker_unix_ms"].as_f64();
                     let update: live::Update = serde_json::from_value(value)?;
-                    if update.final_text && ["multi", "ko", "zh"].contains(&language) {
+                    if update.final_text && session.model == models::NEMO_ID {
                         may.edit(&run.id, |s| {
                             s.segments.extend(update.words.iter().cloned());
                             s.processed = s.processed.max(update.end);
@@ -717,6 +872,24 @@ fn stream_preview(
                                     .cloned(),
                             );
                         })?;
+                    }
+                    if run.speech.enabled.load(Ordering::Acquire) && !update.text.trim().is_empty()
+                    {
+                        caption::emit_status(
+                            app,
+                            "local",
+                            "active",
+                            false,
+                            "Phụ đề lời gốc đang chạy trên máy; không gửi âm thanh lên cloud.",
+                        );
+                        caption::emit_text(
+                            app,
+                            caption::CaptionText {
+                                text: update.text.clone(),
+                                original: String::new(),
+                                final_: update.final_text,
+                            },
+                        );
                     }
                     let mut event = serde_json::json!({"id":run.id,"update":update});
                     if std::env::var("MAY_LATENCY_AUDIT").as_deref() == Ok("1") {
@@ -794,7 +967,9 @@ fn report_live_paint(
         anyhow::ensure!(
             run.id == id
                 && text.len() <= 8192
-                && [elapsed_ms, received_ms, emitted_ms, audio_ms].iter().all(|x| x.is_finite() && (0. ..=86_400_000.).contains(x))
+                && [elapsed_ms, received_ms, emitted_ms, audio_ms]
+                    .iter()
+                    .all(|x| x.is_finite() && (0. ..=86_400_000.).contains(x))
                 && speech_end_ms.is_none_or(|x| x.is_finite() && (0. ..=86_400_000.).contains(&x)),
             "Dữ liệu audit không hợp lệ"
         );
@@ -896,12 +1071,22 @@ async fn fetch_llm_models(
     provider: String,
     base_url: String,
     key: Option<String>,
+    profile_id: Option<String>,
 ) -> std::result::Result<Vec<String>, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<String>> {
-        let api_key = key
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        let api_key = if let Some(key) = key.filter(|k| !k.trim().is_empty()) {
+            key.trim().to_string()
+        } else if let Some(id) = profile_id.as_deref() {
+            let p = m.profile(id)?;
+            anyhow::ensure!(
+                p.provider == provider,
+                "Thay nhà cung cấp cần nhập API key mới"
+            );
+            p.key
+        } else {
+            m.llm_key.lock().unwrap().clone()
+        };
         anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
         llm::fetch_models(&provider, &base_url, &api_key)
     })
@@ -920,6 +1105,8 @@ async fn summarize_transcript(
     style: String,
     source: String,
     key: Option<String>,
+    profile_id: Option<String>,
+    fallback: Option<config::ModelChoice>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
@@ -949,13 +1136,71 @@ async fn summarize_transcript(
             hasher = hasher.wrapping_mul(31).wrapping_add(byte as u64);
         }
         let source_hash = format!("{}", hasher & 0xffffffff);
-        let api_key = key
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        let (provider, base_url, api_key) =
+            m.task_config(&provider, &base_url, key, profile_id.as_deref())?;
         anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
-        let summary_text =
-            llm::summarize(&provider, &model, &base_url, &api_key, &transcript, &style, &prompt)?;
+        let alternative = if let Some(choice) = fallback {
+            anyhow::ensure!(
+                profile_id.as_deref() != Some(choice.profile_id.as_str()) || model != choice.model,
+                "Model dự phòng phải khác model chính"
+            );
+            let profile = m.profile(&choice.profile_id)?;
+            anyhow::ensure!(
+                ["groq", "openai", "gemini", "deepseek", "openai-compatible"]
+                    .contains(&profile.provider.as_str())
+                    && !groq::is_speech_model(&choice.model),
+                "Model dự phòng không phù hợp tác vụ văn bản"
+            );
+            Some((profile, choice.model))
+        } else {
+            None
+        };
+
+        let (source_text, task_style, task_prompt) = (&transcript, &style, &prompt);
+        let (summary_text, switched) = fallback::once(
+            || {
+                llm::summarize(
+                    &provider,
+                    &model,
+                    &base_url,
+                    &api_key,
+                    &transcript,
+                    &style,
+                    &prompt,
+                )
+            },
+            alternative.as_ref().map(|(p, m)| {
+                move || {
+                    llm::summarize(
+                        &p.provider,
+                        m,
+                        &p.base_url,
+                        &p.key,
+                        source_text,
+                        task_style,
+                        task_prompt,
+                    )
+                }
+            }),
+        )?;
+        let (provider, model, notice) = if switched {
+            let (p, m) = alternative.unwrap();
+            (
+                p.provider,
+                m.clone(),
+                Some(format!(
+                    "Tóm tắt đã chuyển sang {}/{m} theo cấu hình dự phòng.",
+                    p.name
+                )),
+            )
+        } else {
+            (provider, model, None)
+        };
         m.edit(&id, |s| {
+            if let Some(notice) = notice {
+                s.warnings.push(notice);
+            }
+
             s.summary = Some(SummarizedTranscript {
                 text: summary_text,
                 provider,
@@ -966,69 +1211,6 @@ async fn summarize_transcript(
                 source_hash,
             });
         })
-    })
-    .await
-    .map_err(err)?
-    .map_err(err)
-}
-#[tauri::command]
-async fn refine_transcript(
-    app: tauri::AppHandle,
-    may: State<'_, May>,
-    id: String,
-) -> std::result::Result<Session, String> {
-    let m = may.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
-        let s = storage::load(&m.root, &id)?;
-        anyhow::ensure!(
-            !["recording", "paused"].contains(&s.status.as_str()),
-            "Hãy đợi phiên ghi âm dừng trước khi hiệu chỉnh"
-        );
-        let dir = storage::session_dir(&m.root, &id)?;
-        let model_path = models::path(&m.root, models::PHOWHISPER_ID)?;
-        if !model_path.exists() {
-            anyhow::bail!("Chưa tải mô hình PhoWhisper. Vui lòng vào Cài đặt để tải mô hình.");
-        }
-
-        let _ = m.edit(&id, |s| {
-            s.status = "processing".into();
-        });
-        let _ = app.emit("session-changed", id.clone());
-
-        let mut worker = Worker::new(&model_path)?;
-        let cancel = AtomicBool::new(false);
-        let mut processed = 0.0;
-        let duration = s.duration;
-        let mut refined_segments = Vec::new();
-
-        while processed < duration - 0.00001 {
-            let start = (processed - 1.5).max(0.);
-            let end = (processed + 20.).min(duration);
-            let path = engine::write_job(&dir, start, end)?;
-            let r = worker.process(
-                &WorkerJob {
-                    path: path.to_string_lossy().into(),
-                    offset: start,
-                    language: s.language.clone(),
-                },
-                &cancel,
-            )?;
-            if let Some(e) = r.error {
-                anyhow::bail!(e);
-            }
-            refined_segments.extend(r.segments);
-            processed = end;
-        }
-
-        let updated = m.edit(&id, |s| {
-            if !refined_segments.is_empty() {
-                s.segments = refined_segments;
-            }
-            s.processed = s.duration;
-            s.status = "completed".into();
-        })?;
-        let _ = app.emit("session-changed", id.clone());
-        Ok(updated)
     })
     .await
     .map_err(err)?
@@ -1047,6 +1229,8 @@ async fn smooth_transcript(
     base_url: String,
     prompt: String,
     key: Option<String>,
+    profile_id: Option<String>,
+    fallback: Option<config::ModelChoice>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
@@ -1063,12 +1247,60 @@ async fn smooth_transcript(
             .collect::<Vec<_>>()
             .join("\n");
         anyhow::ensure!(!original.is_empty(), "Chưa có bản chép lời để làm mịn");
-        let api_key = key
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| m.llm_key.lock().unwrap().clone());
+        let (provider, base_url, api_key) =
+            m.task_config(&provider, &base_url, key, profile_id.as_deref())?;
         anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
-        let smoothed = llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt)?;
+        let alternative = if let Some(choice) = fallback {
+            anyhow::ensure!(
+                profile_id.as_deref() != Some(choice.profile_id.as_str()) || model != choice.model,
+                "Model dự phòng phải khác model chính"
+            );
+            let profile = m.profile(&choice.profile_id)?;
+            anyhow::ensure!(
+                ["groq", "openai", "gemini", "deepseek", "openai-compatible"]
+                    .contains(&profile.provider.as_str())
+                    && !groq::is_speech_model(&choice.model),
+                "Model dự phòng không phù hợp tác vụ văn bản"
+            );
+            Some((profile, choice.model))
+        } else {
+            None
+        };
+
+        let (source_text, task_prompt) = (&original, &prompt);
+        let (smoothed, switched) = fallback::once(
+            || llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt),
+            alternative.as_ref().map(|(p, m)| {
+                move || {
+                    llm::smooth(
+                        &p.provider,
+                        m,
+                        &p.base_url,
+                        &p.key,
+                        source_text,
+                        task_prompt,
+                    )
+                }
+            }),
+        )?;
+        let (provider, model, notice) = if switched {
+            let (p, m) = alternative.unwrap();
+            (
+                p.provider,
+                m.clone(),
+                Some(format!(
+                    "Biên tập đã chuyển sang {}/{m} theo cấu hình dự phòng.",
+                    p.name
+                )),
+            )
+        } else {
+            (provider, model, None)
+        };
         m.edit(&id, |s| {
+            if let Some(notice) = notice {
+                s.warnings.push(notice);
+            }
+
             s.smoothed = Some(SmoothedTranscript {
                 text: smoothed,
                 provider,
@@ -1094,7 +1326,11 @@ async fn test_soniox_connection(
     if api_key.trim().is_empty() {
         return Err("Cần nhập API key Soniox".into());
     }
-    soniox::test_connection(&api_key).await.map_err(err)?;
+    if let Err(e) = soniox::test_connection(&api_key).await {
+        let safe = classify_ai_error(&e, "soniox").replace(&api_key, "[redacted]");
+        log_ai_test_failure(&m.root, "soniox", &safe);
+        return Err(safe);
+    }
     Ok("ok".into())
 }
 
@@ -1107,6 +1343,462 @@ async fn refresh_devices(may: State<'_, May>) -> std::result::Result<(), String>
         .map_err(err)?;
     *m.devices.lock().unwrap() = devices;
     Ok(())
+}
+#[tauri::command]
+fn list_ai_profiles(may: State<May>) -> std::result::Result<Vec<config::AiProfileSummary>, String> {
+    config::load_checked(&may.root).map_err(err)?;
+    Ok(may
+        .profiles
+        .lock()
+        .unwrap()
+        .iter()
+        .map(config::to_summary)
+        .collect())
+}
+#[tauri::command]
+fn save_ai_profile(
+    may: State<May>,
+    input: config::AiProfileInput,
+) -> std::result::Result<config::AiProfileSummary, String> {
+    save_profile_inner(&may, input)
+}
+fn save_profile_inner(
+    may: &May,
+    input: config::AiProfileInput,
+) -> std::result::Result<config::AiProfileSummary, String> {
+    let (name, provider, base_url, key) = config::validate_input(&input).map_err(err)?;
+    let mut stored = may.profiles.lock().unwrap();
+    let mut profiles = stored.clone();
+    let key = if key.is_empty() {
+        let old = profiles
+            .iter()
+            .find(|p| Some(&p.id) == input.id.as_ref())
+            .ok_or("Cần nhập API key trước khi lưu cấu hình mới")?;
+        if old.provider != provider {
+            return Err("Thay nhà cung cấp cần nhập key mới".into());
+        }
+        old.key.clone()
+    } else {
+        key
+    };
+    let fingerprint = config::verification_id(&provider, &base_url, &key);
+    if !may
+        .verified_ai
+        .lock()
+        .unwrap()
+        .get(&fingerprint)
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(600))
+    {
+        return Err("Hãy kiểm tra kết nối thành công với cấu hình hiện tại trước khi lưu".into());
+    }
+    let profile = if let Some(id) = input.id {
+        let p = profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("Không tìm thấy cấu hình AI")?;
+        p.name = name;
+        p.provider = provider;
+        p.base_url = base_url;
+        p.key = key;
+        p.clone()
+    } else {
+        let p = config::AiProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            provider,
+            base_url,
+            key,
+            created: chrono::Utc::now().to_rfc3339(),
+            import_tag: String::new(),
+        };
+        profiles.push(p.clone());
+        p
+    };
+    config::save(&may.root, &profiles).map_err(err)?;
+    *stored = profiles;
+    Ok(config::to_summary(&profile))
+}
+
+#[tauri::command]
+fn delete_ai_profile(may: State<May>, id: String) -> std::result::Result<(), String> {
+    let mut profiles = may.profiles.lock().unwrap();
+    let mut next = profiles.clone();
+    next.retain(|p| p.id != id);
+    config::save(&may.root, &next).map_err(err)?;
+    *profiles = next;
+    Ok(())
+}
+/// Classify a provider HTTP error without ever echoing the API key.
+fn classify_ai_error(e: &anyhow::Error, provider: &str) -> String {
+    let msg = format!("{e:#}");
+    let low = msg.to_lowercase();
+    if low.contains("401")
+        || low.contains("invalid_api_key")
+        || low.contains("unauthorized")
+        || low.contains("key không đúng")
+    {
+        return format!(
+            "{provider}: API key không đúng hoặc đã hết hạn{}",
+            if low.contains("401") { " (401)" } else { "" }
+        );
+    }
+    if low.contains("403") || low.contains("permission") {
+        return format!(
+            "{provider}: key không có quyền dùng tài nguyên này{}",
+            if low.contains("403") { " (403)" } else { "" }
+        );
+    }
+    if low.contains("402") {
+        return format!("{provider}: đã hết số dư hoặc chạm hạn mức chi tiêu (402)");
+    }
+    if low.contains("429")
+        || low.contains("quota")
+        || low.contains("rate limit")
+        || low.contains("insufficient_quota")
+    {
+        return format!("{provider}: đã hết hạn mức hoặc vượt giới hạn yêu cầu");
+    }
+    if low.contains("404") || low.contains("model not found") || low.contains("model không") {
+        return format!(
+            "{provider}: model không đúng hoặc tài khoản không có quyền dùng model này"
+        );
+    }
+    if low.contains("quá lâu") || low.contains("timed out") {
+        return format!("{provider}: kiểm tra quá lâu; thử lại hoặc kiểm tra mạng/proxy");
+    }
+    if low.contains("kết nối")
+        || low.contains("tcp")
+        || low.contains("dns")
+        || low.contains("connection")
+        || low.contains("timeout")
+    {
+        return format!("{provider}: không kết nối được; kiểm tra mạng hoặc Base URL");
+    }
+    msg
+}
+
+/// Append the raw (key-free) failure detail to the data directory so QA can
+/// diagnose provider-specific test failures without exposing the key.
+fn log_ai_test_failure(root: &std::path::Path, provider: &str, detail: &str) {
+    use std::io::Write;
+    let _ = std::fs::create_dir_all(root);
+    let path = root.join("ai-test-errors.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let line = format!(
+            "[{}] provider={provider} detail={:?}\n",
+            chrono::Local::now().to_rfc3339(),
+            detail
+        );
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+#[tauri::command]
+async fn test_ai_connection(
+    may: State<'_, May>,
+    input: config::AiTestInput,
+) -> std::result::Result<String, String> {
+    let m = may.inner().clone();
+    let provider = config::normalize(&input.provider).map_err(err)?;
+    let api_key = if input.api_key.trim().is_empty() {
+        input
+            .profile_id
+            .as_deref()
+            .and_then(|id| m.profile(id).ok())
+            .filter(|p| p.provider == provider)
+            .map(|p| p.key)
+            .unwrap_or_default()
+    } else {
+        input.api_key.trim().to_string()
+    };
+    let base_url = if provider == "groq" {
+        String::new()
+    } else {
+        input.base_url.trim().trim_end_matches('/').to_string()
+    };
+    let model = input.model.trim().to_string();
+    m.verified_ai
+        .lock()
+        .unwrap()
+        .remove(&config::verification_id(&provider, &base_url, &api_key));
+    let provider_check = provider.clone();
+    // Hard overall deadline so the connection test can never hang the UI.
+    let outcome = async {
+        if provider_check == "soniox" {
+            // Soniox is a WebSocket API: run it directly on the async runtime,
+            // exactly like the legacy "Kiểm tra Soniox" button that works.
+            tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                soniox::test_connection(&api_key),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("Soniox phản hồi quá lâu; kiểm tra mạng hoặc key"))??;
+            return Ok::<String, anyhow::Error>("ok".to_string());
+        }
+        if model == "gpt-realtime-translate" || model == "gemini-3.5-live-translate-preview" {
+            caption::test_connection(&provider, &api_key, &base_url, &model).await?;
+            return Ok("ok".into());
+        }
+        // The LLM family is blocking HTTP: run it on the blocking pool without
+        // nesting an async block_on inside it (that can stall the runtime).
+        let provider_llm = provider_check.clone();
+        let base_url_llm = base_url.clone();
+        let api_key_llm = api_key.clone();
+        let model_llm = model.clone();
+        let job = tauri::async_runtime::spawn_blocking(move || -> Result<String> {
+            // Step 1: validate the key against the provider (list models).
+            llm::fetch_models(&provider_llm, &base_url_llm, &api_key_llm)
+                .context("Kiểm tra key không thành công")?;
+            // Step 2 (optional): verify this key may use the chosen model.
+            if !model_llm.is_empty() {
+                if provider_llm == "groq" && groq::is_speech_model(&model_llm) {
+                    groq::test_speech(&api_key_llm, &base_url_llm, &model_llm)?;
+                } else {
+                    llm::test_connection(&provider_llm, &model_llm, &base_url_llm, &api_key_llm)
+                        .context("Key hợp lệ nhưng chưa dùng được model này")?;
+                }
+            }
+            Ok("ok".into())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Kiểm tra kết nối bị gián đoạn: {e}"))??;
+        Ok::<String, anyhow::Error>(job)
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(35), outcome).await {
+        Ok(Ok(_)) => {
+            m.verified_ai.lock().unwrap().insert(
+                config::verification_id(&provider, &base_url, &api_key),
+                std::time::Instant::now(),
+            );
+            Ok(if provider == "soniox" { "Đã xác thực Soniox và xử lý luồng PCM kiểm tra; chưa đánh giá độ chính xác bản dịch." }
+               else if model.is_empty() { "Key hợp lệ qua danh sách model; chưa kiểm tra quyền sử dụng một model cụ thể." }
+               else if provider == "groq" && groq::is_speech_model(&model) { "Key hợp lệ; Whisper đã xử lý audio tổng hợp kiểm tra. Chưa đánh giá độ chính xác với giọng nói thật." }
+               else if model == "gpt-realtime-translate" || model == "gemini-3.5-live-translate-preview" { "Đã mở phiên model realtime thành công; chưa đánh giá bản dịch bằng giọng nói." }
+               else { "Key hợp lệ và model đã trả lời yêu cầu kiểm tra." }.into())
+        }
+        Ok(Err(e)) => {
+            let safe = classify_ai_error(&e, &provider);
+            let safe = if api_key.is_empty() {
+                safe
+            } else {
+                safe.replace(&api_key, "[redacted]")
+            };
+            log_ai_test_failure(&m.root, &provider, &safe);
+            Err(safe)
+        }
+        Err(_) => {
+            let message = format!(
+                "{provider}: kiểm tra kết nối quá lâu. Kiểm tra mạng, proxy hoặc Base URL."
+            );
+            log_ai_test_failure(&m.root, &provider, &message);
+            Err(message)
+        }
+    }
+}
+#[tauri::command]
+async fn start_caption(
+    app: tauri::AppHandle,
+    may: State<'_, May>,
+    options: caption::CaptionOptions,
+) -> std::result::Result<(), String> {
+    let m = may.inner().clone();
+    if m.caption_running() {
+        return Err("Đang có một phiên phụ đề chạy. Hãy dừng trước.".into());
+    }
+    if options.mode == "meeting" && !options.translate {
+        let active = m.current().ok_or("Không có cuộc họp đang chạy")?;
+        if !active.speech.active.load(Ordering::Acquire) {
+            if !active.speech.transcribing.load(Ordering::Acquire) {
+                return Err("Cuộc họp không có engine chép lời đang chạy; hãy bật chép lời khi tạo cuộc họp".into());
+            }
+            let session = storage::load(&m.root, &active.id).map_err(err)?;
+            if !matches!(session.provider.as_str(), "local" | "mixed") {
+                return Err("Chép lời đã ngắt; hãy kiểm tra lỗi cuộc họp".into());
+            }
+            if active.capture_done.load(Ordering::Acquire) {
+                return Err("Cuộc họp đã dừng thu âm".into());
+            }
+            active.speech.enabled.store(true, Ordering::Release);
+            caption::emit_status(
+                &app,
+                "local",
+                "active",
+                false,
+                "Phụ đề lời gốc dùng bản chép local hiện có; không gửi thêm audio.",
+            );
+            return Ok(());
+        }
+    }
+    if options.mode == "standalone" && options.profile_id.as_deref() == Some("__local__") {
+        let mut opts = options.clone();
+        opts.provider = "local".into();
+        opts.api_key.clear();
+        opts.base_url.clear();
+        opts.fallback = None;
+        opts.alternative = None;
+        caption::validate_options(&opts).map_err(err)?;
+        let info = models::list(&m.root)
+            .into_iter()
+            .find(|model| model.id == opts.model && model.installed)
+            .ok_or(if opts.model.starts_with("moonshine-") { "Thiếu model Moonshine đi kèm; hãy cài lại Innote" } else { "Model local chưa được tải đầy đủ; mở Cài đặt để tải model trước" })?;
+        opts.local_model = Some(models::path(&m.root, &info.id).map_err(err)?);
+        let devices = m.devices.lock().unwrap();
+        let device = devices
+            .iter()
+            .find(|d| {
+                d.kind == "system"
+                    && opts
+                        .device
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map_or(d.default, |id| d.id == id)
+            })
+            .ok_or("Không tìm thấy loa/tai nghe đã chọn")?;
+        opts.device = Some(device.id.clone());
+        drop(devices);
+        let stop = Arc::new(AtomicBool::new(false));
+        m.caption_begin(stop.clone()).map_err(err)?;
+        caption::run(app, opts, stop, m.caption_done.clone());
+        return Ok(());
+    }
+    let profile_id = options
+        .profile_id
+        .clone()
+        .ok_or("Chưa chọn cấu hình AI cho phụ đề")?;
+    let profile = m.profile(&profile_id).map_err(err)?;
+    let mut opts = options.clone();
+    opts.provider = profile.provider.clone();
+    opts.api_key = profile.key.clone();
+    opts.base_url = profile.base_url.clone();
+    if opts.mode == "meeting" {
+        let active = m
+            .current()
+            .ok_or("Không có phiên cuộc họp đang chạy để phụ đề")?;
+        if active.speech.active.load(Ordering::Acquire) && profile.provider == "soniox" {
+            let session = storage::load(&m.root, &active.id).map_err(err)?;
+            let chosen = session
+                .speech
+                .as_ref()
+                .and_then(|s| s.profile_id.as_deref());
+            if chosen != Some(profile_id.as_str()) {
+                return Err(
+                    "Hãy dùng cùng cấu hình Soniox đang chép lời để tránh gửi audio hai lần".into(),
+                );
+            }
+            caption::validate_options(&caption::CaptionOptions {
+                session_dir: Some(storage::session_dir(&m.root, &active.id).map_err(err)?),
+                ..opts.clone()
+            })
+            .map_err(err)?;
+            active
+                .speech
+                .set_target(opts.translate.then(|| opts.target_language.clone()));
+            active.speech.enabled.store(true, Ordering::Release);
+            caption::emit_status(
+                &app,
+                "soniox",
+                "connecting",
+                true,
+                if opts.translate {
+                    "Đang bật dịch trên cùng luồng Soniox; bản chép gốc vẫn được giữ."
+                } else {
+                    "Đang bật phụ đề lời gốc trên luồng Soniox có sẵn, không yêu cầu dịch."
+                },
+            );
+            return Ok(());
+        }
+        let dir = storage::session_dir(&m.root, &active.id).map_err(err)?;
+        if !dir.join("system.pcm").exists() {
+            return Err(
+                "Cuộc họp chưa thu âm thanh hệ thống; hãy bật nguồn loa/tai nghe khi tạo cuộc họp"
+                    .into(),
+            );
+        }
+        opts.session_dir = Some(dir);
+        opts.meeting_stop = Some(active.stop.clone());
+    }
+    if opts.mode == "standalone" {
+        let devices = m.devices.lock().unwrap();
+        let selected = opts.device.as_deref().filter(|d| !d.is_empty());
+        let device = devices
+            .iter()
+            .find(|d| d.kind == "system" && selected.map_or(d.default, |id| d.id == id))
+            .ok_or("Không tìm thấy loa/tai nghe đã chọn; hãy làm mới thiết bị trong Cài đặt")?;
+        opts.device = Some(device.id.clone());
+    }
+    opts.display_model = format!("{}/{}", profile.name, opts.model);
+    if let Some(choice) = opts.fallback.clone() {
+        if choice.profile_id == profile.id && choice.model == opts.model {
+            return Err("Model dự phòng phải khác model chính hoặc cấu hình chính".into());
+        }
+        let backup = m.profile(&choice.profile_id).map_err(err)?;
+        let mut next = opts.clone();
+        next.provider = backup.provider;
+        next.api_key = backup.key;
+        next.base_url = backup.base_url;
+        next.model = choice.model;
+        next.display_model = format!("{}/{}", backup.name, next.model);
+        next.fallback = None;
+        next.alternative = None;
+        if !speech_quality::SpeechQuality::supported(&next.provider) { next.speech_quality = Default::default(); }
+        caption::validate_options(&next).map_err(err)?;
+        opts.alternative = Some(Box::new(next));
+    }
+    caption::validate_options(&opts).map_err(err)?;
+    if matches!(opts.provider.as_str(), "openai" | "gemini") && opts.model.trim().is_empty() {
+        return Err("Hãy chọn model cho phụ đề".into());
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    m.caption_begin(stop.clone()).map_err(err)?;
+    caption::run(app, opts, stop, m.caption_done.clone());
+    Ok(())
+}
+#[tauri::command]
+fn stop_caption(app: tauri::AppHandle, may: State<May>) -> std::result::Result<(), String> {
+    let shared = may
+        .current()
+        .is_some_and(|r| r.speech.enabled.load(Ordering::Acquire));
+    may.caption_stop_now();
+    if shared {
+        caption::emit_status(
+            &app,
+            "soniox",
+            "idle",
+            false,
+            "Đã tắt dịch; Soniox vẫn tiếp tục chép lời cuộc họp.",
+        );
+    }
+    Ok(())
+}
+#[tauri::command]
+fn caption_snapshot() -> caption::CaptionSnapshot {
+    caption::snapshot()
+}
+#[tauri::command]
+fn caption_running(may: State<May>) -> std::result::Result<bool, String> {
+    Ok(may.caption_running())
+}
+#[tauri::command]
+async fn open_caption_window(app: tauri::AppHandle) -> std::result::Result<(), String> {
+    caption_window::show(app).await.map_err(err)
+}
+#[tauri::command]
+fn caption_window_visible(app: tauri::AppHandle) -> bool {
+    app.get_webview_window("caption")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+#[tauri::command]
+async fn hide_caption_window(app: tauri::AppHandle) -> std::result::Result<(), String> {
+    caption_window::hide(app).await.map_err(err)
+}
+#[tauri::command]
+async fn close_caption_window(app: tauri::AppHandle) -> std::result::Result<(), String> {
+    // Stop/close means hide this reusable native window; ASR stop is separate.
+    caption_window::hide(app).await.map_err(err)
 }
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -1292,10 +1984,7 @@ fn open_author_link(kind: String) -> std::result::Result<(), String> {
         "feedback" => "https://forms.gle/hkeSofwG1YNGtwMM9",
         _ => return Err("Liên kết tác giả không hợp lệ".into()),
     };
-    Command::new("explorer.exe")
-        .arg(url)
-        .spawn()
-        .map_err(err)?;
+    Command::new("explorer.exe").arg(url).spawn().map_err(err)?;
     Ok(())
 }
 #[tauri::command]
@@ -1400,6 +2089,7 @@ async fn resume_transcript(
         cancel: AtomicBool::new(false),
         duration: Mutex::new(s.duration),
         failure: Mutex::new(None),
+        speech: meeting_soniox::Control::default(),
     });
     m.reserve_resume(run.clone()).map_err(err)?;
     std::thread::spawn(move || {
@@ -1471,6 +2161,7 @@ async fn test_audio(
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
         failure: Mutex::new(None),
+        speech: meeting_soniox::Control::default(),
     });
     {
         let mut active = m.active.lock().unwrap();
@@ -1621,6 +2312,7 @@ mod controller_tests {
             cancel: AtomicBool::new(false),
             duration: Mutex::new(0.),
             failure: Mutex::new(None),
+            speech: meeting_soniox::Control::default(),
         })
     }
     fn may(root: PathBuf) -> May {
@@ -1632,7 +2324,86 @@ mod controller_tests {
             devices: Arc::new(Mutex::new(vec![])),
             soniox_key: Arc::new(Mutex::new(String::new())),
             llm_key: Arc::new(Mutex::new(String::new())),
+            profiles: Arc::new(Mutex::new(Vec::new())),
+            caption_stop: Arc::new(Mutex::new(None)),
+            caption_done: Arc::new(AtomicBool::new(true)),
+            verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+    #[test]
+    fn profiles_require_fresh_matching_verification_and_survive_restart() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let m = may(dir.clone());
+        let input =
+            |provider: &str, base: &str, key: &str, id: Option<String>| config::AiProfileInput {
+                id,
+                name: "Work API".into(),
+                provider: provider.into(),
+                base_url: base.into(),
+                api_key: key.into(),
+            };
+        assert!(save_profile_inner(&m, input("soniox", "", "fake-key", None)).is_err());
+        m.verified_ai.lock().unwrap().insert(
+            config::verification_id("soniox", "", "fake-key"),
+            std::time::Instant::now(),
+        );
+        let first = save_profile_inner(&m, input("soniox", "", "fake-key", None)).unwrap();
+        let second = save_profile_inner(&m, input("soniox", "", "fake-key", None)).unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(config::load(&dir).len(), 2);
+        assert!(save_profile_inner(
+            &m,
+            input("soniox", "", "changed-key", Some(first.id.clone()))
+        )
+        .is_err());
+        assert!(
+            save_profile_inner(&m, input("openai", "", "fake-key", Some(first.id.clone())))
+                .is_err()
+        );
+        assert!(save_profile_inner(
+            &m,
+            input(
+                "soniox",
+                "https://proxy.test",
+                "fake-key",
+                Some(first.id.clone())
+            )
+        )
+        .is_err());
+        // Blank key on edit preserves it, but still requires this session's verification.
+        save_profile_inner(&m, input("soniox", "", "", Some(first.id.clone()))).unwrap();
+        let restarted = may(dir.clone());
+        *restarted.profiles.lock().unwrap() = config::load(&dir);
+        assert_eq!(restarted.profile(&first.id).unwrap().key, "fake-key");
+        let task = restarted
+            .task_config(
+                "gemini",
+                "https://wrong-endpoint.test",
+                Some("wrong-key".into()),
+                Some(&first.id),
+            )
+            .unwrap();
+        assert_eq!(task, ("soniox".into(), "".into(), "fake-key".into()));
+        assert!(restarted
+            .task_config("openai", "", None, Some("deleted-profile"))
+            .is_err());
+        assert!(save_profile_inner(&restarted, input("soniox", "", "", Some(first.id))).is_err());
+        assert!(!std::fs::read_to_string(config::profile_file(&dir))
+            .unwrap()
+            .contains("fake-key"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn captions_cannot_restart_while_previous_session_is_draining() {
+        let m = may(std::env::temp_dir());
+        m.caption_begin(Arc::new(AtomicBool::new(false))).unwrap();
+        m.caption_stop_now();
+        assert!(m.caption_running());
+        assert!(m.caption_begin(Arc::new(AtomicBool::new(false))).is_err());
+        m.caption_done.store(true, Ordering::Release);
+        assert!(!m.caption_running());
+        m.caption_begin(Arc::new(AtomicBool::new(false))).unwrap();
     }
     #[test]
     fn repeated_stop_freezes_duration_and_storage_failure_cancels_asr() {
@@ -1665,6 +2436,7 @@ mod controller_tests {
         let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let run = run(uuid::Uuid::new_v4().to_string());
         let session = Session {
+            speech_quality: Default::default(),
             id: run.id.clone(),
             title: "Nháp".into(),
             created: "now".into(),
@@ -1687,6 +2459,8 @@ mod controller_tests {
             warnings: vec![],
             smoothed: None,
             summary: None,
+            translations: vec![],
+            speech: None,
         };
         storage::save(&root, &session).unwrap();
         let may = may(root.clone());
@@ -1713,25 +2487,92 @@ mod controller_tests {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--ai-probe") {
+        // Explicit QA entry point: uses existing keys without echoing them or
+        // modifying profiles. Captures no microphone or system audio.
+        let result = (|| -> Result<serde_json::Value> {
+            let provider = config::normalize(args.get(2).context("Usage: --ai-probe PROVIDER")?)?;
+            let root = storage::root();
+            let profiles = config::load(&root);
+            let legacy = secure::load(&root);
+            let key = profiles
+                .iter()
+                .find(|p| p.provider == provider)
+                .map(|p| p.key.clone())
+                .unwrap_or_else(|| match provider.as_str() {
+                    "soniox" => legacy.0,
+                    "openai" => legacy.1,
+                    _ => String::new(),
+                });
+            if key.is_empty() {
+                return Ok(serde_json::json!({"provider":provider,"available":false}));
+            }
+            let base = profiles
+                .iter()
+                .find(|p| p.provider == provider)
+                .map(|p| p.base_url.as_str())
+                .unwrap_or("");
+            let started = std::time::Instant::now();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let outcome = if provider == "soniox" {
+                runtime.block_on(soniox::test_connection(&key))
+            } else if let Some(model) = args.get(3) {
+                runtime.block_on(caption::test_connection(&provider, &key, base, model))
+            } else {
+                llm::fetch_models(&provider, base, &key).map(|_| ())
+            };
+            let error = outcome
+                .err()
+                .map(|e| classify_ai_error(&e, &provider).replace(&key, "[redacted]"));
+            Ok(
+                serde_json::json!({"provider":provider,"available":true,"success":error.is_none(),"elapsed_ms":started.elapsed().as_millis(),"error":error}),
+            )
+        })();
+        println!("{}", serde_json::to_string(&result.map_err(err)).unwrap());
+        return;
+    }
     if matches!(
         args.get(1).map(String::as_str),
         Some("--live-worker" | "--stream-test")
     ) {
         // Set before loading the native library or starting any child threads.
         // Avoid a BLAS thread pool competing with capture, Zoom and Whisper.
-        std::env::set_var("OPENBLAS_NUM_THREADS", "1");
-        std::env::set_var("OMP_NUM_THREADS", "1");
+        let selected_nemo = args.get(5).is_some_and(|p|std::path::Path::new(p).extension().is_some_and(|s|s=="gguf"))
+            || args.get(2).is_some_and(|language|["multi","ko","zh"].contains(&language.as_str()));
+        if !selected_nemo {
+            std::env::set_var("OPENBLAS_NUM_THREADS", "1");
+            std::env::set_var("OMP_NUM_THREADS", "1");
+        }
         let result = (|| -> Result<()> {
             let language = args.get(2).context("Cần ngôn ngữ vi/en/ko/zh/multi")?;
             let path = std::path::Path::new(args.get(3).context("Cần đường dẫn audio")?);
             if args[1] == "--stream-test" {
                 live::benchmark(language, path)
             } else {
-                live::worker(language, path)
+                live::worker_with_model(
+                    language,
+                    path,
+                    args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0),
+                    args.get(5).map(|s| std::path::Path::new(s)),
+                    speech_quality::SpeechQuality::parse(args.get(6).map(String::as_str))?,
+                )
             }
         })();
         if let Err(e) = result {
             eprintln!("{e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("--caption-stream-worker") {
+        let result = speech_quality::SpeechQuality::parse(args.get(4).map(String::as_str)).and_then(|quality| local_stream_caption::worker(
+            std::path::Path::new(args.get(2).map(String::as_str).unwrap_or("")),
+            args.get(3).map(String::as_str).unwrap_or("multi"), quality,
+        ));
+        if let Err(error) = result {
+            println!("{}", serde_json::json!({"error":format!("{error:#}")}));
             std::process::exit(1);
         }
         return;
@@ -1803,6 +2644,7 @@ fn main() {
             }
             anyhow::ensure!(duration > 0., "Không tìm thấy PCM để chép tiếp");
             let mut s = Session {
+            speech_quality: Default::default(),
                 id: "resume-test".into(),
                 title: "resume-test".into(),
                 created: String::new(),
@@ -1822,6 +2664,8 @@ fn main() {
                 warnings: vec![],
                 smoothed: None,
                 summary: None,
+                translations: vec![],
+                speech: None,
             };
             if let Some(text) = args.get(5).filter(|x| !x.is_empty()) {
                 s.segments.push(Segment {
@@ -1919,13 +2763,22 @@ fn main() {
         devices: Arc::new(Mutex::new(available)),
         soniox_key: Arc::new(Mutex::new(String::new())),
         llm_key: Arc::new(Mutex::new(String::new())),
+        profiles: Arc::new(Mutex::new(Vec::new())),
+        caption_stop: Arc::new(Mutex::new(None)),
+        caption_done: Arc::new(AtomicBool::new(true)),
+        verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
     // Restore previously saved API keys so in-app updates / restarts do not
     // require the user to re-enter or reconnect them.
     {
         let (soniox, llm) = secure::load(&may.root);
-        *may.soniox_key.lock().unwrap() = soniox;
-        *may.llm_key.lock().unwrap() = llm;
+        *may.soniox_key.lock().unwrap() = soniox.clone();
+        *may.llm_key.lock().unwrap() = llm.clone();
+        // Multi-profile store: load saved profiles and import the legacy keys
+        // once, preserving compatibility with versions stored before 0.9.
+        let mut profiles = config::load(&may.root);
+        profiles = config::migrate_legacy(&may.root, profiles, &soniox, &llm);
+        *may.profiles.lock().unwrap() = profiles;
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1938,6 +2791,18 @@ fn main() {
             set_llm_key,
             test_llm_connection,
             fetch_llm_models,
+            list_ai_profiles,
+            save_ai_profile,
+            delete_ai_profile,
+            test_ai_connection,
+            start_caption,
+            stop_caption,
+            caption_running,
+            caption_snapshot,
+            open_caption_window,
+            caption_window_visible,
+            hide_caption_window,
+            close_caption_window,
             smooth_transcript,
             summarize_transcript,
             delete_summary,
@@ -1958,15 +2823,40 @@ fn main() {
             open_folder,
             delete_session,
             resume_transcript,
-            refine_transcript,
             test_audio
         ])
         .on_window_event(|window, event| {
+            if window.label() == "caption" && matches!(event, tauri::WindowEvent::Destroyed) {
+                let _ = window.app_handle().emit("caption-window-visibility", false);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<May>();
+                if window.label() == "caption" {
+                    api.prevent_close();
+                    caption_window::hide_later(window.app_handle());
+                    let shared = state
+                        .current()
+                        .is_some_and(|r| r.speech.enabled.load(Ordering::Acquire));
+                    state.caption_stop_now();
+                    if shared {
+                        caption::emit_status(
+                            window.app_handle(),
+                            "soniox",
+                            "idle",
+                            false,
+                            "Đã đóng phụ đề; Soniox vẫn tiếp tục chép lời cuộc họp.",
+                        );
+                    }
+                    return;
+                }
                 if state.current().is_some() {
                     api.prevent_close();
                     let _ = window.emit("close-blocked", ());
+                } else {
+                    state.caption_stop_now();
+                    if let Some(caption) = window.app_handle().get_webview_window("caption") {
+                        let _ = caption.destroy();
+                    }
                 }
             }
         })

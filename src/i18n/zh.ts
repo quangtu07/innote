@@ -18,6 +18,7 @@ const part1 = {
   meetingSpace: "会议空间",
   yourMeeting: "你的会议",
   processingLocal: "本机处理",
+  processingCloud: "音频 → {provider} · 云服务",
   sonioxExternal: "Soniox · 外部服务",
   sonioxMixed: "Soniox + 本地",
   previewNotice: "这是界面预览。录音和转写功能在桌面应用中可用。",
@@ -58,9 +59,19 @@ const part1 = {
   apiStatusConfigured: "已保存 API 密钥",
   apiStatusNotConfigured: "未配置 API 密钥",
 
+  modelBundled: "Innote 已内置",
+  modelMissingBundled: "内置模型缺失，请重新安装 Innote。",
+  modelMigrated: "PhoWhisper 已由内置 Moonshine 替代。旧本地选项已更新，已保存的转写保持不变。",
+  processingLevel: "处理级别",
+  processingFast: "快速",
+  processingBalanced: "均衡",
+  processingAccurate: "准确优先",
+  processingHint: "模型和 API 配置保持不变。准确优先使用更多时间和上下文，不保证每句话更准确。开始会话时应用。",
+  localSpeechModel: "本地转写模型",
+  localFallbackModel: "本地备用模型",
   modelTitle: "转写模型",
   modelDesc:
-    "此版本使用越南语专用 PhoWhisper 模型和多语言模型。不提供低质量选项。",
+    "Innote 已包含越南语/英语 Moonshine。仅在本地多语言、韩语或中文转写时下载 Nemotron。",
   modelLangsMulti: "越南语、英语、韩语和中文",
   modelLangsViEn: "越南语和英语",
   onDevice: "在本机运行",
@@ -99,7 +110,7 @@ const part2 = {
   zhHint: "转写中文（普通话）并保留原话。模型下载一次后可免费在本机运行。",
   multiSwitchHint: "多语言交替的会议请选择“多语言”。",
   turboHint:
-    "使用 PhoWhisper (VinAI) 针对越南语深度优化。录音与转写始终安全保存在本机。",
+    "越南语/英语实时转写使用内置 Moonshine。录音和转写保存在本机。",
   downloadOnce: "下载一次模型即可在本机转写。",
   downloading: "正在下载…",
   downloadSize: "下载 · {size} MB",
@@ -357,7 +368,6 @@ const part2 = {
   refining: "正在校正…",
   refiningBanner: "正在校正转写，请稍候…",
   notifyRefined: "转写校正已完成。",
-  modelLangsPhoWhisper: "越南语专用 (VinAI)",
 };
 
 export const zh: Partial<UiStrings> = { ...part1, ...part2 };

@@ -55,12 +55,13 @@ pub struct Decoder {
     cursor: f64,
     pending: usize,
     interval_samples: usize,
+    minimum_samples: usize,
     pending_cost: std::time::Duration,
     completed: HashSet<u64>,
     finished: bool,
 }
 impl Decoder {
-    pub fn new(model: &Path) -> Result<Self> {
+    pub fn with_quality(model: &Path, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
         let dll = std::env::current_exe()?
             .parent()
             .context("Executable directory")?
@@ -97,8 +98,10 @@ impl Decoder {
             anyhow::ensure!(name.is_ascii(), "Tên thư mục model phải là ASCII");
             let path = CString::new(name)?;
             let options = [
-                ("transcription_interval", "0.08"),
-                ("vad_window_duration", "0.5"),
+                ("transcription_interval", quality.moonshine_interval()),
+                ("vad_window_duration", quality.moonshine_vad_window()),
+                ("vad_look_behind_sample_count", quality.moonshine_lookbehind()),
+                ("vad_max_segment_duration", quality.moonshine_segment()),
                 ("use_speculative_decoding", "true"),
                 ("identify_speakers", "false"),
                 ("return_audio_data", "false"),
@@ -138,7 +141,8 @@ impl Decoder {
                 base: 0.,
                 cursor: 0.,
                 pending: 0,
-                interval_samples: 1280,
+                interval_samples: quality.moonshine_floor(),
+                minimum_samples: quality.moonshine_floor(),
                 pending_cost: std::time::Duration::ZERO,
                 completed: HashSet::new(),
                 finished: false,
@@ -176,7 +180,7 @@ impl Decoder {
         self.base = at;
         self.cursor = at;
         self.pending = 0;
-        self.interval_samples = 1280;
+        self.interval_samples = self.minimum_samples;
         self.pending_cost = std::time::Duration::ZERO;
         self.completed.clear();
         self.open_stream()
@@ -272,7 +276,7 @@ impl Decoder {
             words: vec![],
         });
         self.interval_samples =
-            next_interval(self.interval_samples, self.pending_cost + started.elapsed());
+            next_interval(self.interval_samples, self.pending_cost + started.elapsed()).max(self.minimum_samples);
         self.pending_cost = std::time::Duration::ZERO;
         Ok(updates)
     }
@@ -292,7 +296,10 @@ impl Drop for Decoder {
 /// oscillation. This bounds scheduling only; it is not a word latency guarantee.
 fn next_interval(previous: usize, cost: std::time::Duration) -> usize {
     let work = (cost.as_secs_f64() * 16000. * 1.2 + 160.).ceil() as usize;
-    let target = (work.div_ceil(320) * 320).clamp(1280, 5120);
+    // A long, uninterrupted phrase can take >320 ms to decode. Capping the
+    // interval below that work cost creates permanent backlog. Allow up to
+    // two seconds between partial passes; audio ingestion is never skipped.
+    let target = (work.div_ceil(320) * 320).clamp(1280, 32000);
     target.max(previous * 3 / 4).div_ceil(320) * 320
 }
 
@@ -324,9 +331,10 @@ mod tests {
         use std::time::Duration;
         assert_eq!(next_interval(1280, Duration::from_millis(20)), 1280);
         assert_eq!(next_interval(1280, Duration::from_millis(120)), 2560);
-        assert_eq!(next_interval(1280, Duration::from_secs(3)), 5120);
-        let mut interval = 5120;
-        for _ in 0..10 {
+        assert!(next_interval(1280, Duration::from_millis(700)) >= 11200);
+        assert_eq!(next_interval(1280, Duration::from_secs(3)), 32000);
+        let mut interval = 32000;
+        for _ in 0..20 {
             interval = next_interval(interval, Duration::from_millis(20));
             assert_eq!(interval % 320, 0);
         }

@@ -66,6 +66,30 @@ fn deobfuscate(entry: &Entry) -> Result<String> {
     String::from_utf8(out).context("Không đọc được key đã lưu")
 }
 
+/// Public helpers so other modules can store obfuscated secrets with the same
+/// scheme (used by the multi-profile AI configuration store).
+#[derive(Default, Serialize, Deserialize)]
+pub struct ObfuscatedEntry {
+    pub nonce: String,
+    pub data: String,
+}
+
+pub fn obfuscate_entry(text: &str) -> ObfuscatedEntry {
+    let compiled = obfuscate(text);
+    ObfuscatedEntry {
+        nonce: compiled.nonce,
+        data: compiled.data,
+    }
+}
+
+pub fn deobfuscate_from(entry: &ObfuscatedEntry) -> Result<String> {
+    let compiled = Entry {
+        nonce: entry.nonce.clone(),
+        data: entry.data.clone(),
+    };
+    deobfuscate(&compiled)
+}
+
 fn path(root: &Path) -> std::path::PathBuf {
     root.join(FILE_NAME)
 }
@@ -80,8 +104,16 @@ pub fn load(root: &Path) -> (String, String) {
         Ok(s) => s,
         Err(_) => return (String::new(), String::new()),
     };
-    let soniox = stored.soniox.as_ref().and_then(|e| deobfuscate(e).ok()).unwrap_or_default();
-    let llm = stored.llm.as_ref().and_then(|e| deobfuscate(e).ok()).unwrap_or_default();
+    let soniox = stored
+        .soniox
+        .as_ref()
+        .and_then(|e| deobfuscate(e).ok())
+        .unwrap_or_default();
+    let llm = stored
+        .llm
+        .as_ref()
+        .and_then(|e| deobfuscate(e).ok())
+        .unwrap_or_default();
     (soniox, llm)
 }
 
@@ -125,9 +157,7 @@ mod tests {
         assert_eq!(l, "");
         save(&dir, "", "").unwrap();
         assert_eq!(
-            std::fs::metadata(path(&dir))
-                .map(|m| m.len())
-                .unwrap_or(0),
+            std::fs::metadata(path(&dir)).map(|m| m.len()).unwrap_or(0),
             0
         ); // empty JSON entry, key removed
         let _ = std::fs::remove_dir_all(&dir);

@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const js=ts.transpileModule(readFileSync('src/lib/speech-quality.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {parseProcessingLevels,qualityKey,qualitySupported,processingDetails}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const a=qualityKey('meeting','p1','stt-rt-v5','en',false),b=qualityKey('captionsonly','p1','stt-rt-v5','en',false),c=qualityKey('meeting','p1','stt-rt-v5','en',true);
+assert.notEqual(a,b);assert.notEqual(a,c);
+for(const bad of ['{', 'null','[]','"fast"'])assert.deepEqual(parseProcessingLevels(bad),{});
+assert.deepEqual(parseProcessingLevels(JSON.stringify({[a]:'accurate',[b]:'fast',[c]:'invalid',__proto__:{polluted:true}})),{[a]:'accurate',[b]:'fast'});
+assert(!qualitySupported('gemini'));assert(qualitySupported('groq'));
+assert(processingDetails('groq','whisper-large-v3-turbo','fast').includes('3.2'));
+assert(processingDetails('groq','whisper-large-v3-turbo','accurate').includes('4'));
+assert(processingDetails('local','moonshine-en','fast')!==processingDetails('local','moonshine-en','accurate'));
+console.log('PASS processing levels: isolated modes/models/translation, malformed storage, supported controls, truthful timing');

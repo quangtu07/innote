@@ -319,6 +319,57 @@ pub fn capture(
     file.sync_data()?;
     outcome
 }
+pub fn capture_frames(
+    id: &str,
+    stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    tx: Sender<Vec<f32>>,
+) -> Result<()> {
+    initialize_mta().ok()?;
+    let d = DeviceEnumerator::new()?.get_device(id)?;
+    let mut client = d.get_iaudioclient()?;
+    let format = WaveFormat::new(32, 32, &SampleType::Float, RATE as usize, 1, None);
+    let mode = StreamMode::PollingShared {
+        autoconvert: true,
+        buffer_duration_hns: 2_000_000,
+    };
+    client.initialize_client(&format, &Direction::Capture, &mode)?;
+    let input = client.get_audiocaptureclient()?;
+    client.start_stream()?;
+    let outcome = (|| -> Result<()> {
+        while !stop.load(Ordering::Relaxed) {
+            while let Some(frames) = input.get_next_packet_size()? {
+                if frames == 0 {
+                    break;
+                }
+                let mut bytes = vec![0u8; frames as usize * 4];
+                let (count, info) = input.read_from_device(&mut bytes)?;
+                bytes.truncate(count as usize * 4);
+                if paused.load(Ordering::Relaxed) {
+                    continue;
+                }
+                let samples: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|x| {
+                        if info.flags.silent {
+                            0.
+                        } else {
+                            f32::from_le_bytes(x.try_into().unwrap())
+                        }
+                    })
+                    .collect();
+                if samples.is_empty() || tx.send(samples).is_err() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    })();
+    let _ = client.stop_stream();
+    outcome
+}
+
 pub fn read_pcm(path: &Path, start: usize, len: usize) -> Result<Vec<f32>> {
     let mut out = vec![0.; len];
     if !path.exists() {

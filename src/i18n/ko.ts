@@ -18,6 +18,7 @@ const part1 = {
   meetingSpace: "회의 공간",
   yourMeeting: "내 회의",
   processingLocal: "기기에서 처리",
+  processingCloud: "오디오 → {provider} · 클라우드",
   sonioxExternal: "Soniox · 외부 서비스",
   sonioxMixed: "Soniox + 로컬",
   previewNotice:
@@ -60,9 +61,19 @@ const part1 = {
   apiStatusConfigured: "API 키 저장됨",
   apiStatusNotConfigured: "API 키 없음",
 
+  modelBundled: "Innote에 포함됨",
+  modelMissingBundled: "내장 모델이 없습니다. Innote를 다시 설치하세요.",
+  modelMigrated: "PhoWhisper가 내장 Moonshine으로 대체되었습니다. 기존 로컬 선택은 업데이트되며 저장된 전사는 유지됩니다.",
+  processingLevel: "처리 수준",
+  processingFast: "빠르게",
+  processingBalanced: "균형",
+  processingAccurate: "정확도 우선",
+  processingHint: "모델과 API 설정은 유지됩니다. 정확도 우선은 더 많은 시간과 문맥을 사용하며 모든 문장의 정확도를 보장하지 않습니다. 세션 시작 시 적용됩니다.",
+  localSpeechModel: "로컬 전사 모델",
+  localFallbackModel: "로컬 대체 모델",
   modelTitle: "전사 모델",
   modelDesc:
-    "이 버전은 베트남어 전용 PhoWhisper 모델과 다국어 모델을 사용합니다. 더 낮은 품질 옵션은 없습니다.",
+    "베트남어/영어 Moonshine은 Innote에 포함됩니다. 다국어, 한국어 또는 중국어 로컬 전사에만 Nemotron을 다운로드하세요.",
   modelLangsMulti: "베트남어, 영어, 한국어, 중국어",
   modelLangsViEn: "베트남어 및 영어",
   onDevice: "기기에서 실행",
@@ -104,7 +115,7 @@ const part2 = {
     "중국어(표준어)를 전사하며 말한 내용을 유지합니다. 모델은 한 번 다운로드하면 기기에서 무료로 실행됩니다.",
   multiSwitchHint: "여러 언어가 섞인 회의에는 다국어를 선택하세요.",
   turboHint:
-    "PhoWhisper(VinAI)로 베트남어에 최적화되었습니다. 녹음과 전사는 항상 기기에 안전하게 보관됩니다.",
+    "베트남어/영어 실시간 전사는 내장 Moonshine을 사용합니다. 녹음과 전사는 기기에 보관됩니다.",
   downloadOnce: "기기에서 전사하려면 모델을 한 번 다운로드하세요.",
   downloading: "다운로드 중…",
   downloadSize: "다운로드 · {size} MB",
@@ -379,7 +390,6 @@ const part2 = {
   refining: "보정 중…",
   refiningBanner: "전사를 보정하는 중입니다. 잠시만 기다려주세요…",
   notifyRefined: "전사 보정을 완료했습니다.",
-  modelLangsPhoWhisper: "베트남어 전용 (VinAI)",
 };
 
 export const ko: Partial<UiStrings> = { ...part1, ...part2 };

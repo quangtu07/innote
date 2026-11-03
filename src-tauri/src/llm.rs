@@ -5,12 +5,41 @@ use std::time::Duration;
 
 const SYSTEM_PROMPT: &str = "Bạn là bộ hiệu đính bản chép lời cuộc họp. Nhiệm vụ duy nhất là làm mịn câu chữ: sửa lỗi chính tả, dấu câu, viết hoa, tách câu và sửa những từ bị nhận dạng sai rõ ràng do âm thanh. Tuyệt đối KHÔNG thêm ý mới, không bỏ ý, không tóm tắt, không diễn giải, không đổi nghĩa, không đổi số liệu, tên riêng, mốc thời gian hay thứ tự nội dung. Không dịch sang ngôn ngữ khác. Giữ nguyên ngôn ngữ gốc của từng đoạn. Nếu không chắc một từ có bị sai hay không, giữ nguyên từ đó. Chỉ trả về văn bản đã làm mịn, không thêm lời giải thích, tiêu đề hay code fence.";
 
+fn safe_api_error(code: u16, raw: &str) -> anyhow::Error {
+    let value: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
+    let kind = value["error"]["status"]
+        .as_str()
+        .or(value["error"]["code"].as_str())
+        .unwrap_or("");
+    let hint = match (code, kind) {
+        (401, _) | (_, "API_KEY_INVALID") => "API key không đúng hoặc đã hết hạn",
+        (403, _) => "key không có quyền dùng tài nguyên hoặc model",
+        (402 | 429, _) => "đã hết số dư hoặc vượt hạn mức",
+        (404, _) => "model không đúng hoặc tài khoản không có quyền",
+        (400, _) => "key, model hoặc cấu hình không hợp lệ",
+        _ => "nhà cung cấp chưa xử lý được yêu cầu",
+    };
+    anyhow::anyhow!("AI {code}: {hint}")
+}
+
+fn groq_options(body: &mut Value, model: &str) {
+    body["max_completion_tokens"] = json!(2048);
+    if model.starts_with("openai/gpt-oss-") {
+        body["include_reasoning"] = json!(false);
+        body["reasoning_effort"] = json!("low");
+    } else if model.starts_with("qwen/") {
+        body["reasoning_format"] = json!("hidden");
+        body["reasoning_effort"] = json!("none");
+    }
+}
+
 pub fn default_model(provider: &str) -> Result<&'static str> {
     match provider.trim().to_ascii_lowercase().as_str() {
         "openai" => Ok("gpt-4o-mini"),
         "deepseek" => Ok("deepseek-chat"),
         "gemini" => Ok("gemini-2.5-flash"),
         "openai-compatible" => Ok(""),
+        "groq" => Ok("openai/gpt-oss-20b"),
         other => bail!("Nhà cung cấp AI không hợp lệ: {other}"),
     }
 }
@@ -20,6 +49,7 @@ fn resolved_base(provider: &str, base_url: &str) -> Result<String> {
         match provider {
             "openai" => "https://api.openai.com/v1".into(),
             "deepseek" => "https://api.deepseek.com".into(),
+            "groq" => "https://api.groq.com/openai/v1".into(),
             "openai-compatible" => bail!("Cần nhập Base URL cho OpenAI-compatible"),
             _ => bail!("Nhà cung cấp AI không hợp lệ"),
         }
@@ -52,15 +82,24 @@ fn models_endpoint(provider: &str, base_url: &str) -> Result<String> {
     })
 }
 
-fn gemini_endpoint(model: &str, key: &str) -> Result<String> {
+fn gemini_endpoint(model: &str, key: &str, base_url: &str) -> Result<String> {
     ensure!(!model.trim().is_empty(), "Cần nhập model Gemini");
     ensure!(!key.trim().is_empty(), "Cần nhập API key Gemini");
-    let model = model.trim();
-    let parsed = reqwest::Url::parse(&format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    ))
-    .context("Model Gemini không hợp lệ")?;
-    Ok(format!("{parsed}?key={}", key.trim()))
+    let model = model.trim().trim_start_matches("models/");
+    ensure!(
+        model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
+        "Model Gemini không hợp lệ"
+    );
+    let base = if base_url.trim().is_empty() {
+        "https://generativelanguage.googleapis.com/v1beta"
+    } else {
+        base_url.trim().trim_end_matches('/')
+    };
+    let parsed = reqwest::Url::parse(&format!("{base}/models/{model}:generateContent"))
+        .context("Model Gemini không hợp lệ")?;
+    Ok(parsed.to_string())
 }
 
 fn user_prompt(original: &str, additional: &str) -> String {
@@ -120,12 +159,8 @@ fn parse_ai_response(raw: &str, provider: &str) -> Result<String> {
                 }
                 if let Ok(v) = serde_json::from_str::<Value>(rest) {
                     if let Some(err) = v.get("error") {
-                        let msg = err
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .or_else(|| err.as_str())
-                            .unwrap_or("Lỗi từ AI");
-                        bail!("AI báo lỗi: {msg}");
+                        let _ = err;
+                        bail!("AI trả thông báo lỗi; hãy kiểm tra cấu hình và hạn mức");
                     }
                     if let Some(t) = v["choices"][0]["delta"]["content"].as_str() {
                         full_text.push_str(t);
@@ -148,18 +183,11 @@ fn parse_ai_response(raw: &str, provider: &str) -> Result<String> {
     let json_candidate = clean_response(trimmed);
     let value: Value = serde_json::from_str(&json_candidate)
         .or_else(|_| serde_json::from_str(trimmed))
-        .map_err(|e| {
-            let snippet: String = trimmed.chars().take(200).collect();
-            anyhow::anyhow!("AI trả về JSON không hợp lệ: {e}. Nội dung phản hồi: {snippet}")
-        })?;
+        .map_err(|_| anyhow::anyhow!("AI trả về JSON không hợp lệ"))?;
 
     if let Some(err) = value.get("error") {
-        let msg = err
-            .get("message")
-            .and_then(Value::as_str)
-            .or_else(|| err.as_str())
-            .unwrap_or("Lỗi từ AI");
-        bail!("AI báo lỗi: {msg}");
+        let _ = err;
+        bail!("AI trả thông báo lỗi; hãy kiểm tra cấu hình và hạn mức");
     }
 
     let text = if provider == "gemini" {
@@ -208,6 +236,26 @@ pub fn smooth(
     original: &str,
     additional: &str,
 ) -> Result<String> {
+    smooth_with_timeout(
+        provider,
+        model,
+        base_url,
+        api_key,
+        original,
+        additional,
+        Duration::from_secs(120),
+    )
+}
+
+fn smooth_with_timeout(
+    provider: &str,
+    model: &str,
+    base_url: &str,
+    api_key: &str,
+    original: &str,
+    additional: &str,
+    timeout: Duration,
+) -> Result<String> {
     let provider = provider.trim().to_ascii_lowercase();
     let model = if model.trim().is_empty() {
         default_model(&provider)?
@@ -226,13 +274,14 @@ pub fn smooth(
     );
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(timeout)
         .build()
         .context("Không tạo được HTTP client")?;
     let prompt = user_prompt(original, additional);
 
-    let (url, body, key) = match provider.as_str() {
-        "openai" | "deepseek" | "openai-compatible" => {
+    let (url, mut body, key) = match provider.as_str() {
+        "openai" | "deepseek" | "openai-compatible" | "groq" => {
             ensure!(
                 !api_key.trim().is_empty(),
                 "Cần nhập API key cho nhà cung cấp này"
@@ -251,7 +300,7 @@ pub fn smooth(
         }
         "gemini" => {
             ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
-            let url = gemini_endpoint(model, api_key)?;
+            let url = gemini_endpoint(model, api_key, base_url)?;
             let body = json!({
                 "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -262,19 +311,31 @@ pub fn smooth(
         _ => bail!("Nhà cung cấp AI không hợp lệ"),
     };
 
+    if provider == "groq" {
+        groq_options(&mut body, model);
+    }
     let mut request = client
         .post(&url)
         .header("Accept", "application/json")
         .json(&body);
+    if provider == "gemini" {
+        request = request.header("x-goog-api-key", api_key.trim());
+    }
     if !key.is_empty() {
         request = request.bearer_auth(key);
     }
-    let response = request.send().context("Không gửi được yêu cầu tới AI")?;
+    let response = request
+        .send()
+        .map_err(|e| anyhow::anyhow!(e.without_url()))
+        .context("Không gửi được yêu cầu tới AI")?;
     let status = response.status();
     let raw = response.text().context("Không đọc được phản hồi AI")?;
     if !status.is_success() {
-        let detail: String = raw.chars().take(500).collect();
-        bail!("AI trả về lỗi {status}: {detail}");
+        return Err(safe_api_error(status.as_u16(), &raw));
+    }
+    if provider == "groq" {
+        let value: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        ensure!(value["choices"][0]["finish_reason"] != "length", "Groq đã chạm giới hạn đầu ra; chưa lưu kết quả dở dang. Hãy chọn đoạn ngắn hơn hoặc tóm tắt gọn hơn.");
     }
     let text = parse_ai_response(&raw, &provider)?;
     ensure!(!text.is_empty(), "AI trả về bản làm mịn rỗng");
@@ -289,9 +350,7 @@ fn summary_prompt(transcript: &str, style: &str, additional: &str) -> String {
         "full" => "Cho bản tóm tắt đầy đủ hơn nhưng vẫn ngắn gọn và có cấu trúc.",
         _ => "Cho bản tóm tắt ngắn gọn 3–6 gạch đầu dòng.",
     };
-    let mut prompt = format!(
-        "BẢN CHÉP CUỘC HỌP:\n{transcript}\n\nYÊU CẦU: {focus}"
-    );
+    let mut prompt = format!("BẢN CHÉP CUỘC HỌP:\n{transcript}\n\nYÊU CẦU: {focus}");
     let additional = additional.trim();
     if !additional.is_empty() {
         prompt.push_str(&format!("\n\nLƯU Ý THÊM CỦA NGƯỜI DÙNG: {additional}"));
@@ -334,8 +393,8 @@ pub fn summarize(
         .context("Không tạo được HTTP client")?;
     let prompt = summary_prompt(transcript, style, additional);
 
-    let (url, body, key) = match provider.as_str() {
-        "openai" | "deepseek" | "openai-compatible" => {
+    let (url, mut body, key) = match provider.as_str() {
+        "openai" | "deepseek" | "openai-compatible" | "groq" => {
             ensure!(
                 !api_key.trim().is_empty(),
                 "Cần nhập API key cho nhà cung cấp này"
@@ -355,7 +414,7 @@ pub fn summarize(
         }
         "gemini" => {
             ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
-            let url = gemini_endpoint(model, api_key)?;
+            let url = gemini_endpoint(model, api_key, base_url)?;
             let body = json!({
                 "system_instruction": {"parts": [{"text": SUMMARY_SYSTEM}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -366,51 +425,63 @@ pub fn summarize(
         _ => bail!("Nhà cung cấp AI không hợp lệ"),
     };
 
+    if provider == "groq" {
+        groq_options(&mut body, model);
+    }
     let mut request = client
         .post(&url)
         .header("Accept", "application/json")
         .json(&body);
+    if provider == "gemini" {
+        request = request.header("x-goog-api-key", api_key.trim());
+    }
     if !key.is_empty() {
         request = request.bearer_auth(key);
     }
-    let response = request.send().context("Không gửi được yêu cầu tới AI")?;
+    let response = request
+        .send()
+        .map_err(|e| anyhow::anyhow!(e.without_url()))
+        .context("Không gửi được yêu cầu tới AI")?;
     let status = response.status();
     let raw = response.text().context("Không đọc được phản hồi AI")?;
     if !status.is_success() {
-        let detail: String = raw.chars().take(500).collect();
-        bail!("AI trả về lỗi {status}: {detail}");
+        return Err(safe_api_error(status.as_u16(), &raw));
+    }
+    if provider == "groq" {
+        let value: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        ensure!(value["choices"][0]["finish_reason"] != "length", "Groq đã chạm giới hạn đầu ra; chưa lưu kết quả dở dang. Hãy chọn đoạn ngắn hơn hoặc tóm tắt gọn hơn.");
     }
     let text = parse_ai_response(&raw, &provider)?;
     ensure!(!text.is_empty(), "AI trả về bản tóm tắt rỗng");
     Ok(text)
 }
 
-pub fn test_connection(
-    provider: &str,
-    model: &str,
-    base_url: &str,
-    api_key: &str,
-) -> Result<()> {
-    let reply = smooth(
+pub fn test_connection(provider: &str, model: &str, base_url: &str, api_key: &str) -> Result<()> {
+    let reply = smooth_with_timeout(
         provider,
         model,
         base_url,
         api_key,
         "Kiểm tra kết nối.",
         "Chỉ trả lời một từ: OK",
+        Duration::from_secs(20),
     )?;
-    ensure!(!reply.trim().is_empty(), "AI không trả về nội dung kiểm tra");
+    ensure!(
+        !reply.trim().is_empty(),
+        "AI không trả về nội dung kiểm tra"
+    );
     Ok(())
 }
 
 pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec<String>> {
     let provider = provider.trim().to_ascii_lowercase();
     let client = Client::builder()
-        .timeout(Duration::from_secs(45))
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(12))
         .build()
         .context("Không tạo được HTTP client")?;
     let (url, key) = match provider.as_str() {
-        "openai" | "deepseek" | "openai-compatible" => {
+        "openai" | "deepseek" | "openai-compatible" | "groq" => {
             ensure!(
                 !api_key.trim().is_empty(),
                 "Cần nhập API key cho nhà cung cấp này"
@@ -421,8 +492,12 @@ pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec
             ensure!(!api_key.trim().is_empty(), "Cần nhập API key Gemini");
             (
                 format!(
-                    "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-                    api_key.trim()
+                    "{}/models",
+                    if base_url.trim().is_empty() {
+                        "https://generativelanguage.googleapis.com/v1beta"
+                    } else {
+                        base_url.trim().trim_end_matches('/')
+                    }
                 ),
                 "",
             )
@@ -430,15 +505,20 @@ pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec
         _ => bail!("Nhà cung cấp AI không hợp lệ"),
     };
     let mut request = client.get(&url);
+    if provider == "gemini" {
+        request = request.header("x-goog-api-key", api_key.trim());
+    }
     if !key.is_empty() {
         request = request.bearer_auth(key);
     }
-    let response = request.send().context("Không gửi được yêu cầu lấy model")?;
+    let response = request
+        .send()
+        .map_err(|e| anyhow::anyhow!(e.without_url()))
+        .context("Không gửi được yêu cầu lấy model")?;
     let status = response.status();
     let raw = response.text().context("Không đọc được danh sách model")?;
     if !status.is_success() {
-        let detail: String = raw.chars().take(300).collect();
-        bail!("API trả về lỗi {status}: {detail}");
+        return Err(safe_api_error(status.as_u16(), &raw));
     }
     let value: Value = serde_json::from_str(&raw).context("API trả về JSON không hợp lệ")?;
     let mut models = Vec::new();
@@ -448,7 +528,11 @@ pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec
                 if let Some(name) = item["name"].as_str() {
                     let supported = item["supportedGenerationMethods"]
                         .as_array()
-                        .map(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
+                        .map(|methods| {
+                            methods
+                                .iter()
+                                .any(|m| m.as_str() == Some("generateContent"))
+                        })
                         .unwrap_or(true);
                     if supported {
                         models.push(name.strip_prefix("models/").unwrap_or(name).to_string());
@@ -472,6 +556,31 @@ pub fn fetch_models(provider: &str, base_url: &str, api_key: &str) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_error_bodies_and_malformed_success_never_echo_keys() {
+        for raw in [
+            "secret-key",
+            r#"{"error":{"message":"secret-key","code":"invalid_api_key"}}"#,
+        ] {
+            assert!(!safe_api_error(401, raw).to_string().contains("secret-key"));
+            assert!(!parse_ai_response(raw, "openai")
+                .unwrap_err()
+                .to_string()
+                .contains("secret-key"));
+        }
+        let endpoint = gemini_endpoint(
+            "gemini-2.5-flash",
+            "secret-key",
+            "https://proxy.example/v1beta",
+        )
+        .unwrap();
+        assert_eq!(
+            endpoint,
+            "https://proxy.example/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+        assert!(!endpoint.contains("secret-key"));
+    }
 
     #[test]
     fn provider_defaults_and_endpoints_are_safe() {

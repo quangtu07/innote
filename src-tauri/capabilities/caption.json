@@ -1,0 +1,16 @@
+{
+  "identifier": "caption",
+  "description": "Floating subtitle window controls",
+  "windows": ["caption"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-ignore-cursor-events"
+  ]
+}

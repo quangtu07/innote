@@ -24,14 +24,34 @@ pub fn validate_key(key: &str) -> Result<String> {
     Ok(key.into())
 }
 
-fn provider_error(code: u64) -> &'static str {
+pub fn describe_error(code: u64) -> &'static str {
     match code {
-        401 => "Soniox: key không đúng hoặc đã hết hạn",
-        402 => "Soniox: đã hết số dư hoặc chạm hạn mức chi tiêu",
-        403 => "Soniox: key không có quyền hoặc phiên đã hết hạn",
-        429 => "Soniox: vượt giới hạn yêu cầu",
-        _ => "Soniox không xử lý được yêu cầu",
+        400 => "Soniox 400: cấu hình, model hoặc định dạng âm thanh không hợp lệ",
+        401 => "Soniox 401: key không đúng hoặc đã hết hạn",
+        402 => "Soniox 402: đã hết số dư hoặc chạm hạn mức chi tiêu",
+        403 => "Soniox 403: key không có quyền hoặc phiên đã hết hạn",
+        429 => "Soniox 429: vượt giới hạn yêu cầu",
+        _ => "Soniox 5xx: dịch vụ không xử lý được yêu cầu; thử lại sau",
     }
+}
+
+/// Preserve HTTP status without echoing headers, URLs or untrusted error bodies.
+pub fn websocket_error(e: tokio_tungstenite::tungstenite::Error) -> anyhow::Error {
+    use tokio_tungstenite::tungstenite::Error;
+    match e {
+        Error::Http(response) => {
+            anyhow::anyhow!("{}", describe_error(response.status().as_u16() as u64))
+        }
+        Error::Tls(_) => {
+            anyhow::anyhow!("Soniox: lỗi TLS/chứng chỉ; kiểm tra proxy hoặc đồng hồ Windows")
+        }
+        Error::Io(_) => anyhow::anyhow!("Soniox: lỗi mạng/DNS hoặc kết nối bị gián đoạn"),
+        _ => anyhow::anyhow!("Soniox: lỗi giao thức WebSocket"),
+    }
+}
+
+fn provider_error(code: u64) -> &'static str {
+    describe_error(code)
 }
 
 #[derive(Default)]
@@ -55,10 +75,10 @@ impl Transcript {
             bail!(provider_error(v["error_code"].as_u64().unwrap_or(500)));
         }
         ensure!(
-            v.is_object() && v["tokens"].is_array(),
+            v.is_object() && (v["tokens"].is_array() || v["finished"] == true),
             "Soniox trả dữ liệu không hợp lệ"
         );
-        for t in v["tokens"].as_array().unwrap() {
+        for t in v["tokens"].as_array().into_iter().flatten() {
             if t["is_final"].as_bool() != Some(true) || t["translation_status"] == "translation" {
                 continue;
             }
@@ -137,14 +157,12 @@ pub async fn test_connection_at(endpoint: &str, key: &str, timeout: Duration) ->
         let (mut socket, _) = tokio::time::timeout(Duration::from_secs(6), connect_async(request))
             .await
             .map_err(|_| anyhow::anyhow!("Kết nối Soniox quá lâu"))?
-            .map_err(|_| {
-                anyhow::anyhow!("Không kết nối được Soniox; kiểm tra mạng hoặc dịch vụ")
-            })?;
+            .map_err(websocket_error)?;
         socket
             .send(Message::Text(
                 json!({
                     "model": "stt-rt-v5",
-                    "audio_format": "s16le",
+                    "audio_format": "pcm_s16le",
                     "sample_rate": 16000,
                     "num_channels": 1,
                     "language_hints": ["vi"],
@@ -154,10 +172,16 @@ pub async fn test_connection_at(endpoint: &str, key: &str, timeout: Duration) ->
             ))
             .await
             .map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
+        // Exercise configuration + audio processing, then explicitly end input.
+        // Silence alone does not guarantee an acknowledgement; wait for finished.
+        socket
+            .send(Message::Binary(vec![0; 6400]))
+            .await
+            .map_err(|_| anyhow::anyhow!("Không gửi được audio kiểm tra Soniox"))?;
         socket
             .send(Message::Text(String::new()))
             .await
-            .map_err(|_| anyhow::anyhow!("Không gửi được tín hiệu tới Soniox"))?;
+            .map_err(|_| anyhow::anyhow!("Không kết thúc được audio kiểm tra Soniox"))?;
         while let Some(msg) = socket.next().await {
             match msg.map_err(|_| anyhow::anyhow!("Kết nối Soniox bị gián đoạn"))? {
                 Message::Text(text) => {
@@ -170,15 +194,21 @@ pub async fn test_connection_at(endpoint: &str, key: &str, timeout: Duration) ->
                         if err_type == "unauthenticated" || err_type == "permission_denied" {
                             bail!("Soniox: key không đúng hoặc đã hết hạn");
                         }
-                        bail!("Lỗi Soniox: {}", err_type);
+                        bail!("Soniox: lỗi cấu hình hoặc dịch vụ (không có mã lỗi)");
                     }
-                    return Ok(());
+                    ensure!(
+                        v.is_object() && v["tokens"].is_array(),
+                        "Soniox trả dữ liệu không hợp lệ"
+                    );
+                    if v["finished"].as_bool() == Some(true) {
+                        return Ok(());
+                    }
                 }
                 Message::Close(_) => break,
                 _ => {}
             }
         }
-        Ok(())
+        bail!("Soniox đóng kết nối trước khi xác nhận finished")
     };
     tokio::time::timeout(timeout, operation)
         .await
@@ -227,10 +257,8 @@ async fn transcribe_at(
         let (mut socket, _) = tokio::time::timeout(Duration::from_secs(8), connect_async(request))
             .await
             .map_err(|_| anyhow::anyhow!("Kết nối Soniox quá lâu"))?
-            .map_err(|_| {
-                anyhow::anyhow!("Không kết nối được Soniox; kiểm tra mạng hoặc dịch vụ")
-            })?;
-        socket.send(Message::Text(json!({"model":"stt-rt-v5","audio_format":"s16le","sample_rate":16000,"num_channels":1,"language_hints":[job.language],"enable_speaker_diarization":false}).to_string())).await.map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
+            .map_err(websocket_error)?;
+        socket.send(Message::Text(json!({"model":"stt-rt-v5","audio_format":"pcm_s16le","sample_rate":16000,"num_channels":1,"language_hints":[job.language],"enable_speaker_diarization":false}).to_string())).await.map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
         for chunk in pcm.chunks(64000) {
             socket
                 .send(Message::Binary(chunk.to_vec()))
@@ -280,6 +308,60 @@ async fn transcribe_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn probe_preserves_handshake_auth_status_and_never_accepts_early_close() {
+        for status in [401, 403] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let _ = tokio_tungstenite::accept_hdr_async(
+                    stream,
+                    move |_: &tokio_tungstenite::tungstenite::handshake::server::Request, _| {
+                        Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                            .status(status)
+                            .body(Some("secret-key must not be echoed".into()))
+                            .unwrap())
+                    },
+                )
+                .await;
+            });
+            let e = test_connection_at(&endpoint, "secret-key", Duration::from_secs(2))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(&status.to_string()), "{e}");
+            assert!(!e.contains("secret-key"));
+            server.await.unwrap();
+        }
+        for mode in ["close", "arbitrary", "stall"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                while let Some(Ok(m)) = socket.next().await {
+                    if matches!(m, Message::Text(t) if t.is_empty()) {
+                        break;
+                    }
+                }
+                if mode == "arbitrary" {
+                    socket.send(Message::Text("{}".into())).await.unwrap();
+                }
+                if mode == "stall" {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+                let _ = socket.close(None).await;
+            });
+            assert!(
+                test_connection_at(&endpoint, "test-key", Duration::from_millis(150))
+                    .await
+                    .is_err()
+            );
+            server.abort();
+        }
+    }
     async fn mock_job(mode: &str, cancel: &AtomicBool, limit: Duration) -> Result<WorkerResult> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("ws://{}", listener.local_addr().unwrap());
@@ -415,16 +497,26 @@ mod tests {
             )
             .await
             .unwrap();
-            let _ = socket.next().await;
+            let config = socket.next().await.unwrap().unwrap();
+            let config: Value = serde_json::from_str(config.to_text().unwrap()).unwrap();
+            assert_eq!(config["audio_format"], "pcm_s16le");
+            assert!(
+                matches!(socket.next().await.unwrap().unwrap(), Message::Binary(b) if b.len() == 6400)
+            );
+            assert!(
+                matches!(socket.next().await.unwrap().unwrap(), Message::Text(t) if t.is_empty())
+            );
             let _ = socket
                 .send(Message::Text(
                     json!({"tokens":[], "finished": true}).to_string(),
                 ))
                 .await;
         });
-        assert!(test_connection_at(&endpoint, "valid-test-key", Duration::from_secs(3))
-            .await
-            .is_ok());
+        assert!(
+            test_connection_at(&endpoint, "valid-test-key", Duration::from_secs(3))
+                .await
+                .is_ok()
+        );
 
         let listener_err = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint_err = format!("ws://{}", listener_err.local_addr().unwrap());
@@ -438,7 +530,15 @@ mod tests {
             )
             .await
             .unwrap();
-            let _ = socket.next().await;
+            let config = socket.next().await.unwrap().unwrap();
+            let config: Value = serde_json::from_str(config.to_text().unwrap()).unwrap();
+            assert_eq!(config["audio_format"], "pcm_s16le");
+            assert!(
+                matches!(socket.next().await.unwrap().unwrap(), Message::Binary(b) if b.len() == 6400)
+            );
+            assert!(
+                matches!(socket.next().await.unwrap().unwrap(), Message::Text(t) if t.is_empty())
+            );
             let _ = socket
                 .send(Message::Text(
                     json!({"error_code": 401, "error_type": "unauthenticated"}).to_string(),
