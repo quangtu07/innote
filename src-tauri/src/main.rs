@@ -2854,9 +2854,18 @@ fn main() {
                     let _ = window.emit("close-blocked", ());
                 } else {
                     state.caption_stop_now();
-                    if let Some(caption) = window.app_handle().get_webview_window("caption") {
-                        let _ = caption.destroy();
-                    }
+                    // Do not synchronously destroy another native WebView from
+                    // this window's close callback. Let the main window close,
+                    // drain the standalone worker, then exit hidden windows too.
+                    let app = window.app_handle().clone();
+                    let done = state.caption_done.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                        while !done.load(Ordering::Acquire) && std::time::Instant::now() < until {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                        app.exit(0);
+                    });
                 }
             }
         })

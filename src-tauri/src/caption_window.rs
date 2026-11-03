@@ -12,7 +12,9 @@ pub async fn show(app: tauri::AppHandle) -> Result<()> {
     let window = if let Some(window) = app.get_webview_window("caption") {
         window
     } else {
-        let url = if let Some(dev_url) = app.config().build.dev_url.as_ref() {
+        // build.dev_url remains present in production configuration. Only debug
+        // builds may load Vite; installed captions must use bundled assets.
+        let url = if let Some(dev_url) = app.config().build.dev_url.as_ref().filter(|_| cfg!(debug_assertions)) {
             WebviewUrl::External(tauri::Url::parse(&format!(
                 "{}/caption.html",
                 dev_url.as_str().trim_end_matches('/')

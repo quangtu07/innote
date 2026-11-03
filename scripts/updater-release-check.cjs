@@ -1,6 +1,8 @@
 // Run an older production client against the published endpoint. Downloads and
 // verifies through Tauri's updater, then frees resources; never installs/exits.
 const fs=require('node:fs'),assert=require('node:assert/strict');
+const expectedVersion=process.argv[2]||'0.8.6';
+const expectedCurrent=process.argv[3]||'0.8.4';
 (async()=>{
  const tabs=await(await fetch('http://127.0.0.1:9223/json/list')).json();
  const target=tabs.find(t=>t.type==='page'&&/^https?:\/\/tauri\.localhost\/?$/.test(t.url));assert(target);
@@ -13,7 +15,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
    const api=window.__TAURI_INTERNALS__;
    if((await api.invoke('snapshot')).active_id||await api.invoke('caption_running'))throw Error('User session active');
    const update=await api.invoke('plugin:updater|check',{timeout:30000});
-   if(!update||update.version!=='0.8.5'||update.currentVersion!=='0.8.4')throw Error('Older client did not find the expected 0.8.5 update');
+   if(!update||update.version!==${JSON.stringify(expectedVersion)}||update.currentVersion!==${JSON.stringify(expectedCurrent)})throw Error('Older client did not find the expected update');
    let bytesRid;const callback=api.transformCallback(()=>{});
    try{
     bytesRid=await api.invoke('plugin:updater|download',{rid:update.rid,onEvent:'__CHANNEL__:'+callback,timeout:120000});
@@ -25,6 +27,6 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
    }
   })()`});
   if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);
-  fs.writeFileSync('test-results/release-0.8.5-old-client-updater.json',JSON.stringify(result.result.value,null,2));console.log(JSON.stringify(result.result.value));
+  fs.writeFileSync('test-results/release-'+expectedVersion+'-old-client-updater.json',JSON.stringify(result.result.value,null,2));console.log(JSON.stringify(result.result.value));
  }finally{socket.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

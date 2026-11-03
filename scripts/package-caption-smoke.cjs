@@ -17,7 +17,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert(before.models.some(m=>m.id==='moonshine-en'&&m.installed));
   assert(!before.models.some(m=>m.id==='phowhisper-small'));
   const releaseNotice=page.getByRole('dialog',{name:'Có gì mới trong Innote?',exact:true});
-  await releaseNotice.waitFor();assert((await releaseNotice.innerText()).includes('v0.8.5'));
+  await releaseNotice.waitFor();assert((await releaseNotice.innerText()).includes(process.env.RELEASE_VERSION||'v0.8.6'));
   await releaseNotice.getByRole('button',{name:'Đóng thông báo cập nhật',exact:true}).click();
   await page.reload();await page.waitForTimeout(500);
   assert.equal(await page.locator('dialog.whats-new[open]').count(),0,'Dismissal must persist in the actual production WebView');
@@ -30,6 +30,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await api('open_caption_window');
   await wait(async()=>pages().some(p=>p.url().includes('caption.html')));
   const overlay=pages().find(p=>p.url().includes('caption.html'));assert(overlay);
+  assert(/^https?:\/\/tauri\.localhost\/caption.html/.test(overlay.url()),'Production caption window must use bundled assets, never Vite');
+  await overlay.route('http://127.0.0.1:1420/**',route=>route.abort());
   await api('start_caption',{options:{provider:'',apiKey:'',baseUrl:'',profileId:'__local__',model:'moonshine-en',sourceLanguage:'en',targetLanguage:'vi',translate:false,speechQuality:'balanced',mode:'standalone',device:null,sessionDir:null}});ownsCaption=true;
   await wait(async()=>{const s=(await api('caption_snapshot')).status;assert.notEqual(s.state,'error',s.message);return s.state==='active';});
   await page.evaluate(async file=>{
@@ -39,10 +41,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await window.packageFixture.play();await done;
   },path.resolve('test-results/fixtures/realtime/reference.wav'));
   const caption=await api('caption_snapshot');assert(caption.caption.text.trim());assert.equal(caption.status.provider,'local');assert(!caption.status.sending);
+  await wait(async()=>!!(await overlay.locator('.caption-text').textContent().catch(()=>''))?.trim());
   await api('stop_caption');await wait(async()=>!await api('caption_running'));ownsCaption=false;
   assert.equal((await api('caption_snapshot')).status.state,'idle');
   const after=await api('snapshot');assert.deepEqual(after.sessions,before.sessions);assert.deepEqual(await api('list_ai_profiles'),profiles);
-  const result={packagedAssets:true,currentDialog:true,upgradeNoticeOnce:true,bundledMoonshine:true,noPhoWhisper:true,speakerCaptions:true,cleanStop:true,existingDataPreserved:true,passed:true};
+  const result={packagedAssets:true,bundledCaptionUrl:overlay.url(),overlayRendered:true,currentDialog:true,upgradeNoticeOnce:true,bundledMoonshine:true,noPhoWhisper:true,speakerCaptions:true,cleanStop:true,existingDataPreserved:true,passed:true};
   fs.writeFileSync('test-results/final-review-package-smoke.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
  }finally{
   await page.evaluate(()=>window.packageFixture?.pause()).catch(()=>{});

@@ -265,8 +265,8 @@ Public key đã có trong `src-tauri/tauri.conf.json`. Sao lưu private key + m�
 ```powershell
 .\scripts\release.ps1 `
   -Repo USERNAME/innote `
-  -Version 0.8.5 `
-  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.5.md"))
+  -Version 0.8.6 `
+  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.6.md"))
 ```
 
 Script tự:

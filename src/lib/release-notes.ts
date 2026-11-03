@@ -32,4 +32,5 @@ export const releaseNotes: Record<string,Record<UiLocale,ReleaseContent>> = {
     ]},
   },
 };
-export const previewReleaseVersion = "0.8.5";
+releaseNotes["0.8.6"]=releaseNotes["0.8.5"];
+export const previewReleaseVersion = "0.8.6";
