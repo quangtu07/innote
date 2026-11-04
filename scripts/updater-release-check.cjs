@@ -1,7 +1,7 @@
 // Run an older production client against the published endpoint. Downloads and
 // verifies through Tauri's updater, then frees resources; never installs/exits.
 const fs=require('node:fs'),assert=require('node:assert/strict');
-const expectedVersion=process.argv[2]||'0.8.6';
+const expectedVersion=process.argv[2]||JSON.parse(fs.readFileSync('package.json','utf8')).version;
 const expectedCurrent=process.argv[3]||'0.8.4';
 (async()=>{
  const tabs=await(await fetch('http://127.0.0.1:9223/json/list')).json();

@@ -1,0 +1,81 @@
+// Opt-in live QA: saved Soniox profile, Windows speaker loopback, microphone off.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+(async()=>{
+  const browser=await chromium.connectOverCDP('http://127.0.0.1:9223');
+  const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().endsWith(':1420/'));
+  assert(page);
+  const api=(cmd,args)=>page.evaluate(({cmd,args})=>window.__TAURI_INTERNALS__.invoke(cmd,args),{cmd,args});
+  const wait=async(fn,timeout=30000)=>{const until=Date.now()+timeout;while(Date.now()<until){if(await fn())return;await page.waitForTimeout(100)}throw Error('QA timed out')};
+  const initial=await api('snapshot');
+  assert(!initial.active_id && !await api('caption_running'),'Do not interrupt a user session');
+  const profiles=await api('list_ai_profiles');
+  const profile=profiles.find(p=>p.provider==='soniox');assert(profile?.has_key);
+  const output=path.resolve('test-results/meeting-translation-controls-live');fs.mkdirSync(output,{recursive:true});
+  const prefs=await page.evaluate(()=>localStorage.getItem('may.preferences'));
+  let ownId;
+  try {
+    await api('hide_caption_window');
+    await page.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();
+    await page.getByLabel('Ngôn ngữ',{exact:true}).selectOption('zh');
+    await page.getByLabel('Micro của bạn',{exact:true}).selectOption('');
+    await page.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').uncheck();
+    await page.getByLabel('Dịch sang trong cuộc họp').check();
+    await page.getByLabel('Ngôn ngữ bản dịch',{exact:true}).selectOption('vi');
+    await page.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:profile.id,model:'stt-rt-v5'}));
+    await page.screenshot({path:path.join(output,'setup-independent-translation.png')});
+    await page.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    await wait(async()=>!!(await api('snapshot')).active_id);
+    ownId=(await api('snapshot')).active_id;
+    await page.evaluate(async()=>{window.translationPreviewObserved=false;const{listen}=await import('/node_modules/@tauri-apps/api/event.js');window.translationQAUnlisten=await listen('meeting-translation-preview',({payload})=>{if(payload?.text?.trim())window.translationPreviewObserved=true})});
+    assert(!await api('caption_running'));
+    assert(!await api('caption_window_visible'));
+    await page.getByLabel('Nội dung hiển thị').selectOption('bilingual');
+    const fixture=path.resolve('test-results/fixtures/multilingual/cmn_hans_cn.wav');
+    const play=()=>page.evaluate(async file=>{
+      const {convertFileSrc}=await import('/node_modules/@tauri-apps/api/core.js');
+      const a=new Audio(convertFileSrc(file));window.translationQA=a;
+      window.translationQAEnd=new Promise((resolve,reject)=>{a.onended=resolve;a.onerror=()=>reject(Error('Speaker fixture failed'))});
+      await a.play();
+    },fixture);
+    await play();
+    await wait(async()=>{const s=await api('snapshot');return !!s.translation_preview?.text?.trim() || !!s.sessions.find(s=>s.id===ownId).translations?.length});
+    await wait(async()=>!!(await page.locator('.translation-track .saved-translation').innerText()).trim());
+    assert(!await api('caption_running'),'Recording translation does not implicitly enable overlay');
+    await page.screenshot({path:path.join(output,'translation-before-captions.png')});
+    await page.locator('.record-controls').getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await wait(async()=>await api('caption_running') && await api('caption_window_visible'));
+    await page.evaluate(()=>window.translationQAEnd);
+    await page.waitForTimeout(1800);
+    await play();
+    await wait(async()=>!!(await api('caption_snapshot')).caption.text.trim());
+    const overlay=await api('caption_snapshot');
+    assert(overlay.translating);
+    await page.screenshot({path:path.join(output,'bilingual-live.png')});
+    await page.locator('.record-controls').getByRole('button',{name:'Tắt phụ đề',exact:true}).click();
+    assert(!await api('caption_running'));
+    assert.equal((await api('snapshot')).sessions.find(s=>s.id===ownId).speech.translation_language,'vi','Stopping captions retains meeting translation');
+    await page.evaluate(()=>window.translationQAEnd);
+    await page.waitForTimeout(1500);
+    await api('stop');
+    await wait(async()=>!(await api('snapshot')).active_id);
+    const final=await api('snapshot');
+    const meeting=final.sessions.find(s=>s.id===ownId);
+    assert.equal(meeting.status,'completed');assert.equal(meeting.speech.connections,1);
+    assert(meeting.segments.length && meeting.translations.length);
+    assert(meeting.translations.every(t=>t.language==='vi' && /[A-Za-zÀ-ỹ]/u.test(t.text)),'Saved Vietnamese track must contain translated text');
+    for(const old of initial.sessions) assert.deepEqual(final.sessions.find(s=>s.id===old.id),old,'Existing meetings preserved');
+    assert.deepEqual(await api('list_ai_profiles'),profiles,'API profiles preserved');
+    fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:true,id:ownId,connections:meeting.speech.connections,originals:meeting.segments.length,translations:meeting.translations.length,translationBeforeOverlay:true,interimPreviewObserved:await page.evaluate(()=>window.translationPreviewObserved),overlayTranslated:true,translationRetainedAfterCaptionStop:true,microphone:false},null,2));
+    console.log('PASS Soniox Chinese → Vietnamese: independent translation, live preview, late captions, clean stop, preserved user data');
+  } finally {
+    await page.evaluate(()=>{window.translationQA?.pause();window.translationQAUnlisten?.()}).catch(()=>{});
+    if(ownId && (await api('snapshot')).active_id===ownId){await api('stop');await wait(async()=>!(await api('snapshot')).active_id)}
+    await api('hide_caption_window');
+    await page.evaluate(prefs=>{if(prefs===null)localStorage.removeItem('may.preferences');else localStorage.setItem('may.preferences',prefs)},prefs);
+    await page.reload();
+    await browser.close();
+  }
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -6,6 +6,7 @@
   export let model = "";
   export let disabled = false;
   export let scope = "";
+  export let compact = false;
   export let locale: UiLocale = "vi";
   export let onchange: (quality: SpeechQuality)=>void = ()=>{};
   $: tr=stringsFor(locale);
@@ -14,9 +15,9 @@
   $: labels=[tr.processingFast,tr.processingBalanced,tr.processingAccurate];
 </script>
 
-<fieldset class="speech-quality" disabled={disabled || !model || !provider} aria-label={`${scope} · ${tr.processingLevel}`}>
+<fieldset class="speech-quality" class:compact disabled={disabled || !model || !provider} aria-label={`${scope} · ${tr.processingLevel}`}>
   <legend>{tr.processingLevel}</legend>
-  <div class="speech-quality-options">
+  <div class="quality-row">{#if compact}<span class="quality-label" aria-hidden="true">{tr.processingLevel}</span>{/if}<div class="speech-quality-options">
     {#each ["fast","balanced","accurate"] as level,index}
       <label class:chosen={selected===level} class:unavailable={!supported && level!=="balanced"}>
         <input type="radio" name={`speech-quality-${scope}`} value={level} checked={selected===level} disabled={!supported && level!=="balanced"} aria-label={`${scope} · ${labels[index]}`} onchange={()=>onchange(level as SpeechQuality)} />
@@ -24,8 +25,9 @@
       </label>
     {/each}
   </div>
-  <p class="processing-description">{processingDetails(provider,model,selected,locale)}</p>
-  <small>{tr.processingHint}</small>
+  </div>
+  {#if compact}<details class="quality-explanation"><summary>{tr.processingHelp}</summary><p class="processing-description">{processingDetails(provider,model,selected,locale)}</p><small>{tr.processingHint}</small></details>
+  {:else}<p class="processing-description">{processingDetails(provider,model,selected,locale)}</p><small>{tr.processingHint}</small>{/if}
 </fieldset>
 
 <style>
@@ -41,4 +43,14 @@
   .processing-description{font-size:13px;line-height:1.7;color:#446250;margin:12px 0 4px;max-width:78ch}
   small{font-size:12px;color:#526b5d;line-height:1.6;display:block}
   @media(max-width:650px){.speech-quality-options{gap:8px}label{padding:12px 8px;gap:6px}span{font-size:13px}}
+  .compact{margin:16px 0}
+  .compact legend{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .quality-row{min-width:0}
+  .compact .quality-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .quality-label{font-size:12px;font-weight:600;color:#263f36}
+  .compact .speech-quality-options{display:flex;gap:8px;flex-wrap:wrap}
+  .compact label{padding:9px 12px;border-radius:8px;gap:8px}
+  .compact label span{font-size:12px;font-weight:500}
+  .quality-explanation{margin-top:8px;font-size:12px;color:#526b5d}
+  .quality-explanation summary{cursor:pointer;padding:4px 0}
 </style>

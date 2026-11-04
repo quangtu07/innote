@@ -63,6 +63,8 @@ const part1 = {
   modelMissingBundled: "Thiếu model đi kèm. Hãy cài lại Innote.",
   modelMigrated: "PhoWhisper đã được thay bằng Moonshine có sẵn. Lựa chọn local cũ đã được cập nhật; bản chép đã lưu được giữ nguyên.",
   processingLevel: "Mức xử lý",
+  processingHelp: "Giải thích mức xử lý",
+  readyTranslationModel: "Chọn model Soniox để bật dịch",
   processingFast: "Nhanh",
   processingBalanced: "Cân bằng",
   processingAccurate: "Chính xác",

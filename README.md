@@ -265,8 +265,8 @@ Public key đã có trong `src-tauri/tauri.conf.json`. Sao lưu private key + m�
 ```powershell
 .\scripts\release.ps1 `
   -Repo USERNAME/innote `
-  -Version 0.8.6 `
-  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.6.md"))
+  -Version 0.8.7 `
+  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.7.md"))
 ```
 
 Script tự:
@@ -274,8 +274,8 @@ Script tự:
 - trỏ updater về `https://github.com/USERNAME/innote/releases/latest/download/latest.json`
 - build binary + NSIS
 - ký bằng `%USERPROFILE%\.tauri\innote.key`
-- tạo `release\Innote-Setup-0.6.3.exe`
-- tạo `release\Innote-Setup-0.6.3.exe.sig`
+- tạo `release\Innote-Setup-0.8.7.exe`
+- tạo `release\Innote-Setup-0.8.7.exe.sig`
 - tạo `release\latest.json`
 
 Sau đó commit cấu hình endpoint:
@@ -289,8 +289,8 @@ git commit -m "Configure GitHub updater endpoint"
 
 Tạo tag `v0.6.3`, rồi upload đúng **3 file**:
 
-1. `release\Innote-Setup-0.6.3.exe`
-2. `release\Innote-Setup-0.6.3.exe.sig`
+1. `release\Innote-Setup-0.8.7.exe`
+2. `release\Innote-Setup-0.8.7.exe.sig`
 3. `release\latest.json`
 
 Không upload source/build folder vào release. Endpoint `releases/latest/download/latest.json` sẽ được app đọc ở lần kiểm tra sau.

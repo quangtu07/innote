@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { version as appVersion } from "../package.json";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { listen, emit } from "@tauri-apps/api/event";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import type { Segment } from "./types";
   import Logo from "./Logo.svelte";
@@ -12,7 +12,7 @@
   import CaptionControls from "./CaptionControls.svelte";
   import CaptionWindowToggle from "./CaptionWindowToggle.svelte";
   import { CaptionPresentation, type CaptionCue } from "./lib/caption-presentation";
-  import { readCaptionStyle, CAPTION_STYLE_KEY } from "./lib/caption-style";
+  import { readCaptionStyle, CAPTION_STYLE_KEY, type CaptionStyle } from "./lib/caption-style";
   import { showCaptionWindow, closeCaptionWindow } from "./lib/caption-window";
   import {
     Plus,
@@ -42,8 +42,11 @@
     ClipboardList,
     Copy,
     Captions,
+    PanelLeftClose,
+    PanelLeftOpen,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
+  import {PRESETS_KEY,parsePresets,serializePresets,copyPreset,writePresetPreferences,type WorkflowPreset,type PresetMode,type TaskAssignments} from "./lib/workflow-presets";
   import {
     locales,
     localeNames,
@@ -84,7 +87,11 @@
     active_id: null,
   };
   let selected: string | null = null;
+  let sidebarCollapsed=false;
+  try{sidebarCollapsed=localStorage.getItem("innote.sidebar.collapsed")==="true";}catch{}
+  function toggleSidebar(){sidebarCollapsed=!sidebarCollapsed;try{localStorage.setItem("innote.sidebar.collapsed",String(sidebarCollapsed));}catch{}}
   let page = "meeting";
+  $: captionNavLabel=uiLocale === "en" ? "Captions only" : uiLocale === "ko" ? "자막만" : uiLocale === "zh" ? "仅字幕" : "Chỉ phụ đề";
   let pendingActions = 0;
   $: busy = pendingActions > 0;
   let pendingEdits: Promise<unknown> = Promise.resolve();
@@ -110,13 +117,16 @@
     localStorage.setItem("may.meeting.local-models",JSON.stringify(localMeetingModels));
   }
   function chooseProcessingLevel(key:string,quality:SpeechQuality) {
+    const mode=JSON.parse(key)[0] as PresetMode;
+    if(mode === "meeting" || mode === "captionsonly")markPresetCustom(mode);
     processingLevels={...processingLevels,[key]:quality};
     localStorage.setItem(SPEECH_LEVELS_KEY,JSON.stringify(processingLevels));
   }
   let sourcesInitialized = false;
   let transcribe = true;
-  let meetingCaptions = false;
-  let meetingTranslate = false;
+  let meetingCaptions = true;
+  let meetingTranslate = true;
+  let meetingStyleOpen=false;
   let meetingTargetLang = "vi";
   let localFallback = false;
   let translationView: "original" | "translation" | "bilingual" = "original";
@@ -124,9 +134,18 @@
   let translationMeeting = "";
   $: if ((selected ?? "") !== translationMeeting) { translationMeeting=selected ?? ""; translationView="original"; translationLanguage=""; }
   $: translationLanguages = [...new Set((meeting?.translations ?? []).map(t=>t.language))];
-  $: visibleTranslationLanguage = translationLanguage || translationLanguages[0] || "vi";
+  $: visibleTranslationLanguage = translationLanguage || meeting?.speech?.translation_language || translationLanguages[0] || "vi";
   $: savedTranslations = (meeting?.translations ?? []).filter(t=>t.language===visibleTranslationLanguage);
-  $: if(active?.speech?.translation_language) meetingTargetLang=active.speech.translation_language;
+  let meetingTranslationPreview: Snapshot["translation_preview"] = null;
+  let translationPreviewRevision = 0;
+  $: liveTranslation = continuousTranscript && meetingTranslationPreview?.id === meeting?.id
+    && meetingTranslationPreview?.language === visibleTranslationLanguage
+    && meetingTranslationPreview?.committed === savedTranslations.length
+    ? meetingTranslationPreview.text : "";
+  $: if(active?.speech) {
+    meetingTranslate=!!active.speech.translation_language;
+    if(active.speech.translation_language) meetingTargetLang=active.speech.translation_language;
+  }
 
   let provider = "local";
   let sonioxKey = "";
@@ -143,12 +162,7 @@
   }
   interface ModelChoice { profileId: string; model: string; }
   function modelLabel(id:string|undefined,model:string){return id === "__local__" ? `Local/${model}${model === "moonshine-vi" ? " · Tiếng Việt" : model === "moonshine-en" ? " · English" : " · Việt, Anh, Hàn, Trung"}` : `${profileOf(id,aiProfiles)?.name ?? "Cấu hình"}/${model}`;}
-  interface TaskAssign {
-    transcription?: { profileId: string; model: string; fallback?:ModelChoice };
-    caption?: { profileId: string; model: string; targetLang: string; translate?: boolean; fallback?:ModelChoice };
-    smooth?: { profileId: string; model: string; fallback?:ModelChoice };
-    summary?: { profileId: string; model: string; fallback?:ModelChoice };
-  }
+  type TaskAssign = TaskAssignments;
   const chatProviders = [
     "groq",
     "openai",
@@ -204,7 +218,7 @@
   }
   function fallbackChoices(task:keyof TaskAssign, profiles:AiProfileSummary[], assignment:TaskAssign|undefined, mode:string, translate:boolean) {
     return profiles.flatMap(p=>{
-      const models=task === "transcription" ? (p.provider === "soniox" ? ["stt-rt-v5"] : []) : task === "caption" ? (mode === "meeting" && p.provider === "groq" ? [] : captionModels(p.id,profiles,translate)) : chatProviders.includes(p.provider as any) ? textModels(p.id,profiles) : [];
+      const models=task === "transcription" ? (p.provider === "soniox" ? ["stt-rt-v5"] : []) : task === "caption" ? (mode === "meeting" && p.provider !== "soniox" ? [] : captionModels(p.id,profiles,translate)) : chatProviders.includes(p.provider as any) ? textModels(p.id,profiles) : [];
       return models.map(model=>({profileId:p.id,model}));
     }).filter(choice=>choice.profileId!==assignment?.[task]?.profileId || choice.model!==assignment?.[task]?.model);
   }
@@ -642,6 +656,7 @@
   }
   $: if (flowingFinalText || liveText || partialText)
     void followLive(flowingFinalText, `${liveText} ${partialText}`, autoScroll);
+  $: if(liveTranslation) void followLive("",liveTranslation,autoScroll);
   $: segments =
     (translationView === "translation" ? savedTranslations.map(t=>({...t,edited:false})) : meeting?.segments ?? []).filter((s) =>
       s.text
@@ -654,7 +669,7 @@
     try {
       localStorage.setItem(
         "may.preferences",
-        JSON.stringify({ system, microphone, language, model, transcribe }),
+        JSON.stringify({ system, microphone, language, model, transcribe, meetingCaptions, meetingTranslate, meetingTargetLang, localFallback }),
       );
     } catch {
       /* Storage may be unavailable; session data still lives in SQLite. */
@@ -721,10 +736,12 @@
     if (!desktop) return;
     try {
       const request = ++snapshotRequest;
+      const previewRevision = translationPreviewRevision;
       const snapshot = await invoke<Snapshot>("snapshot");
       if (request < snapshotApplied) return;
       snapshotApplied = request;
       data = snapshot;
+      if(previewRevision === translationPreviewRevision) meetingTranslationPreview=snapshot.translation_preview ?? null;
       if (!sourcesInitialized && data.devices.length) {
         system =
           data.devices.find((d) => d.kind === "system" && d.default)?.id ?? "";
@@ -868,7 +885,8 @@
     }
   }
   function newMeeting() {
-    meetingCaptions=false;meetingTranslate=false;localFallback=false;
+    selectedPresets={...selectedPresets,meeting:""};pendingPresets={...pendingPresets,meeting:""};
+    meetingCaptions=true;meetingTranslate=true;localFallback=false;meetingStyleOpen=false;
     if (testing) {
       error = tr.errorNewTesting;
       return;
@@ -906,7 +924,8 @@
   }
   async function start() {
     await action(async () => {
-      if (transcribe && meetingCaptions && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)) {
+      if(meetingPresetPending)throw new Error("Mẫu cuộc họp chưa được áp dụng. Hãy bấm Áp mẫu hoặc chọn Tùy chỉnh.");
+      if (transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)) {
         throw new Error("Hãy chọn cấu hình/model Soniox dùng chung cho chép lời và phụ đề ngay trong phần phụ đề cuộc họp.");
       }
       const s = await invoke<Meeting>("start", {
@@ -919,7 +938,7 @@
           speechQuality: meetingSpeechQuality,
           transcribe,
           provider,
-          translationLanguage: transcribe && provider === "soniox" && meetingCaptions && meetingTranslate ? meetingTargetLang : null,
+          translationLanguage: transcribe && provider === "soniox" && meetingTranslate ? meetingTargetLang : null,
           captionsEnabled: transcribe && meetingCaptions && (provider === "soniox" || !meetingTranslate),
           localFallback: provider === "soniox" && localFallback,
           transcriptionFallback: provider === "soniox" ? taskAssigns.meeting?.transcription?.fallback ?? null : null,
@@ -1452,6 +1471,8 @@
           : "vi";
         transcribe =
           typeof stored.transcribe === "boolean" ? stored.transcribe : true;
+        meetingCaptions=stored.meetingCaptions!==false;meetingTranslate=stored.meetingTranslate!==false;
+        meetingTargetLang=["vi","en","ko","zh","ja"].includes(stored.meetingTargetLang)?stored.meetingTargetLang:"vi";localFallback=stored.localFallback===true;
         sourcesInitialized = true;
       }
     } catch {
@@ -1833,6 +1854,10 @@
     }
     if(migratedLocal)notify(tr.modelMigrated);
     assignmentsReady = true;
+    const savedPresets=localStorage.getItem(PRESETS_KEY);
+    workflowPresets=parsePresets(savedPresets);
+    if(savedPresets===null)persistPresets([capturePreset("meeting"),capturePreset("captionsonly")]);
+    else if(workflowPresets.some(p=>!p.captionStyle))persistPresets(workflowPresets.map(p=>({...p,captionStyle:p.captionStyle??copyPreset(readCaptionStyle())})));
     listen<{
       state: string;
       provider: string;
@@ -1864,6 +1889,10 @@
     )
       .then((fn) => un.push(fn))
       .catch(() => {});
+    listen<Snapshot["translation_preview"]>("meeting-translation-preview", ({payload})=>{
+      translationPreviewRevision++;
+      meetingTranslationPreview=payload;
+    }).then(fn=>un.push(fn)).catch(()=>{});
     listen<boolean>("caption-mode",({payload})=>{captionTextRevision++;captionPresentation.setMode(payload);applyCaptionPreview();}).then(fn=>un.push(fn)).catch(()=>{});
     const syncCaptionStyle=()=>{captionBilingual=readCaptionStyle().showOriginal;applyCaptionPreview();};
     listen("caption-style",syncCaptionStyle).then(fn=>un.push(fn)).catch(()=>{});
@@ -1940,6 +1969,7 @@
     }
   }
   async function startCaptionSession(mode: "meeting" | "standalone") {
+    if(mode==="standalone" && captionPresetPending){error="Mẫu phụ đề chưa được áp dụng. Hãy bấm Áp mẫu hoặc chọn Tùy chỉnh.";return;}
     captionFallbackMessage = "";
     const assign = taskAssigns[mode === "meeting" ? "meeting" : "captionsonly"];
     const profileId =
@@ -2016,6 +2046,13 @@
     }
     await startCaptionSession("meeting");
   }
+  async function changeMeetingTranslation(enabled: boolean, target=meetingTargetLang) {
+    await action(async()=>{
+      await invoke("set_meeting_translation",{target:enabled?target:null});
+      meetingTranslationPreview=null;
+      await refresh();
+    });
+  }
   function setAssignment(
     task: keyof TaskAssign,
     value: Partial<TaskAssign[keyof TaskAssign]> | undefined,
@@ -2051,6 +2088,108 @@
       /* best-effort */
     }
   }
+  let workflowPresets:WorkflowPreset[]=[];
+  let selectedPresets:Record<PresetMode,string>={meeting:"",captionsonly:""};
+  let pendingPresets:Record<PresetMode,string>={meeting:"",captionsonly:""};
+  $: meetingPresetPending=!!pendingPresets.meeting&&pendingPresets.meeting!==selectedPresets.meeting;
+  $: captionPresetPending=!!pendingPresets.captionsonly&&pendingPresets.captionsonly!==selectedPresets.captionsonly;
+  let presetEditing=false,presetEditingId="",presetName="",presetError="",presetDeleteId="";
+  let presetSource="vi",presetTranslate=false,presetCaptions=false,presetLocalFallback=false;
+  let presetQuality:SpeechQuality="balanced";
+  let presetCaptionStyle:CaptionStyle=readCaptionStyle();
+  let presetAssignments:Record<string,TaskAssign>={};
+  function capturePreset(mode:PresetMode):WorkflowPreset {
+    const tasks=copyPreset(taskAssigns[mode]??{});
+    if(mode==="meeting"){
+      tasks.transcription={...tasks.transcription,profileId:provider==="local"?"__local__":transcriptionProfileId,model:provider==="local"?effectiveModel:"stt-rt-v5"};
+      if(meetingCaptions||meetingTranslate)tasks.caption={...tasks.caption,...tasks.transcription,targetLang:meetingTargetLang,translate:meetingTranslate};
+    }else tasks.caption={...tasks.caption,profileId:captionProfileId,model:captionModel,targetLang:captionTargetLang,translate:captionTranslate};
+    return {id:crypto.randomUUID(),name:mode==="meeting"?"Cuộc họp hiện tại":"Phụ đề hiện tại",mode,tasks,source:mode==="meeting"?language:captionSourceLang,quality:mode==="meeting"?meetingSpeechQuality:captionSpeechQuality,captions:mode==="meeting"&&meetingCaptions,translate:mode==="meeting"?meetingTranslate:captionTranslate,target:mode==="meeting"?meetingTargetLang:captionTargetLang,transcribe:mode==="meeting"?transcribe:true,localFallback:mode==="meeting"&&localFallback,captionStyle:copyPreset(readCaptionStyle())};
+  }
+  function persistPresets(next:WorkflowPreset[]){try{localStorage.setItem(PRESETS_KEY,serializePresets(next));workflowPresets=next;return true;}catch{presetError="Không lưu được mẫu trên máy. Hãy kiểm tra dung lượng hoặc quyền lưu dữ liệu.";return false;}}
+  function editPreset(p?:WorkflowPreset){
+    const draft=copyPreset(p??capturePreset(taskMode));presetEditingId=p?.id??"";presetName=p?.name??"";presetSource=draft.source;presetQuality=draft.quality;presetCaptionStyle=copyPreset(draft.captionStyle??readCaptionStyle());presetTranslate=draft.translate;presetCaptions=draft.captions;presetLocalFallback=draft.localFallback;presetAssignments={[taskMode]:draft.tasks};presetError="";presetEditing=true;
+  }
+  function setPresetAssignment(task:keyof TaskAssign,value:any){
+    const next={...presetAssignments[taskMode]};
+    if(value===undefined)delete next[task];else (next as any)[task]=value;
+    if(taskMode==="meeting"&&(presetCaptions||presetTranslate)&&value?.profileId){
+      if(task==="caption")next.transcription={profileId:value.profileId,model:value.model,fallback:value.fallback??next.transcription?.fallback};
+      if(task==="transcription")next.caption={...next.caption,profileId:value.profileId,model:value.model,targetLang:next.caption?.targetLang??"vi",translate:presetTranslate};
+    }
+    presetAssignments={...presetAssignments,[taskMode]:next};
+  }
+  function choosePresetFallback(task:keyof TaskAssign,value:string){const c=presetAssignments[taskMode]?.[task];if(c)setPresetAssignment(task,{...c,fallback:value?JSON.parse(value):undefined});}
+  function presetProblem(p:WorkflowPreset){
+    if(!p.name.trim())return "Hãy đặt tên cho mẫu.";
+    if(!(p.mode==="meeting"?["vi","en","ko","zh","multi","auto"]:["vi","en","ko","zh","ja","auto"]).includes(p.source))return "Ngôn ngữ gốc của mẫu chưa được hỗ trợ trong chế độ này.";
+    if(p.translate&&!["vi","en","ko","zh","ja"].includes(p.target))return "Ngôn ngữ đích của mẫu không hợp lệ.";
+    if(p.mode==="meeting"&&(p.captions||p.translate)&&p.tasks.caption?.profileId&&(p.tasks.caption.profileId!==p.tasks.transcription?.profileId||p.tasks.caption.model!==p.tasks.transcription?.model))return "Mẫu cuộc họp phải dùng cùng cấu hình/model cho chép lời và phụ đề.";
+    for(const [task,c] of Object.entries(p.tasks)){
+      if(!c?.profileId)continue;
+      if(c.profileId!=="__local__"&&!profileOf(c.profileId,aiProfiles))return `Cấu hình API cho ${taskLabel(task as keyof TaskAssign)} không còn tồn tại. Hãy chọn lại.`;
+      if(c.profileId!=="__local__"&&!profileOf(c.profileId,aiProfiles)?.has_key)return "Cấu hình API chưa có key. Hãy kiểm tra và lưu key trong Cài đặt.";
+      if(!c.model)return "Hãy chọn model cụ thể cho tác vụ đã bật.";
+      if(c.fallback&&!profileOf(c.fallback.profileId,aiProfiles)?.has_key)return "Cấu hình dự phòng không còn tồn tại. Hãy chọn lại.";
+      if(c.fallback&&!fallbackChoices(task as keyof TaskAssign,aiProfiles,p.tasks,p.mode,p.translate).some(x=>x.profileId===c.fallback!.profileId&&x.model===c.fallback!.model))return "Model dự phòng không phù hợp tác vụ hoặc trùng model chính. Hãy chọn lại.";
+      if(task === "transcription" && c.profileId!=="__local__" && (profileOf(c.profileId,aiProfiles)?.provider!=="soniox" || c.model!=="stt-rt-v5"))return "Model chép lời cuộc họp không được hỗ trợ. Hãy chọn local hoặc Soniox.";
+      if(task === "caption" && (p.mode === "captionsonly" || p.captions || p.translate) && !captionModels(c.profileId,aiProfiles,p.translate,p.source).includes(c.model))return "Model phụ đề không phù hợp chế độ/ngôn ngữ đã chọn.";
+      if(["smooth","summary"].includes(task)&&!chatProviders.includes(profileOf(c.profileId,aiProfiles)?.provider as any))return "Tác vụ biên tập/tóm tắt cần model văn bản của nhà cung cấp phù hợp.";
+    }
+    const c=p.mode==="meeting"?p.tasks.transcription:p.tasks.caption;
+    if(!c?.profileId||!c.model)return "Hãy chọn cấu hình và model chép lời/phụ đề.";
+    if(p.quality!=="balanced"&&!qualitySupported(c.profileId==="__local__"?"local":profileOf(c.profileId,aiProfiles)?.provider??""))return "API này chỉ có mức mặc định đã được xác minh. Hãy chọn Cân bằng.";
+    if(c.profileId==="__local__"&&!(p.mode==="meeting"?compatibleLocalModels(p.source==="auto"?"multi":p.source):captionModels("__local__",aiProfiles,false,p.source)).includes(c.model))return "Model local không phù hợp ngôn ngữ gốc. Hãy chọn lại model hoặc ngôn ngữ.";
+    if(p.translate && (p.mode==="meeting"?profileOf(c.profileId,aiProfiles)?.provider!=="soniox":!captionModels(c.profileId,aiProfiles,true,p.source).includes(c.model)))return "Model này không hỗ trợ dịch trong chế độ đã chọn. Cuộc họp dùng chung cần Soniox.";
+    return "";
+  }
+  function savePreset(){
+    const tasks=copyPreset(presetAssignments[taskMode]??{});
+    if(taskMode==="meeting"&&(presetCaptions||presetTranslate)&&tasks.caption?.profileId){tasks.transcription={profileId:tasks.caption.profileId,model:tasks.caption.model,fallback:tasks.caption.fallback??tasks.transcription?.fallback};}
+    if(tasks.caption)tasks.caption={...tasks.caption,translate:presetTranslate};
+    const draft:WorkflowPreset={id:presetEditingId||crypto.randomUUID(),name:presetName.trim(),mode:taskMode,tasks,source:presetSource,quality:presetQuality,captions:presetCaptions,translate:presetTranslate,target:tasks.caption?.targetLang??"vi",transcribe:true,localFallback:presetLocalFallback,captionStyle:copyPreset(presetCaptionStyle)};
+    presetError=presetProblem(draft);if(presetError)return;
+    if(persistPresets([...workflowPresets.filter(p=>p.id!==draft.id),draft])){if(selectedPresets[taskMode]===draft.id)selectedPresets={...selectedPresets,[taskMode]:""};presetEditing=false;notify("Đã lưu mẫu cấu hình.");}
+  }
+  function removePreset(id:string){if(persistPresets(workflowPresets.filter(p=>p.id!==id))){presetDeleteId="";pendingPresets={meeting:pendingPresets.meeting===id?"":pendingPresets.meeting,captionsonly:pendingPresets.captionsonly===id?"":pendingPresets.captionsonly};selectedPresets={meeting:selectedPresets.meeting===id?"":selectedPresets.meeting,captionsonly:selectedPresets.captionsonly===id?"":selectedPresets.captionsonly};}}
+  function choosePreset(mode:PresetMode,id:string){
+    if(data.active_id||captionRunning)return;
+    if(!id){selectedPresets={...selectedPresets,[mode]:""};return;}
+    const p=workflowPresets.find(p=>p.id===id&&p.mode===mode);if(!p)return;
+    const problem=presetProblem(p);if(problem){error=problem;return;}
+    const c=(mode==="meeting"?p.tasks.transcription:p.tasks.caption)!;
+    const source=mode==="meeting"&&p.source==="auto"?"multi":p.source;
+    const levels={...processingLevels,[qualityKey(mode,c.profileId,c.model,source,p.translate)]:p.quality};
+    const localModels=mode==="meeting"&&c.profileId==="__local__"?{...localMeetingModels,[source]:c.model}:localMeetingModels;
+    const entries:Record<string,string>={[`may.task_assign.${mode}`]:JSON.stringify(p.tasks),[SPEECH_LEVELS_KEY]:JSON.stringify(levels)};
+    if(p.captionStyle)entries[CAPTION_STYLE_KEY]=JSON.stringify(p.captionStyle);
+    if(mode==="meeting"){
+      entries["may.meeting.local-models"]=JSON.stringify(localModels);
+      entries["may.preferences"]=JSON.stringify({system,microphone,language:source,model,transcribe:p.transcribe,meetingCaptions:p.captions,meetingTranslate:p.translate,meetingTargetLang:p.target,localFallback:p.localFallback});
+    }else entries["may.caption.standalone"]=JSON.stringify({profileId:c.profileId,model:c.model,targetLang:p.target,translate:p.translate,sourceLang:source,device:captionDevice});
+    try{writePresetPreferences(localStorage,entries);}catch{error="Không lưu được cấu hình mẫu trên máy. Chưa áp mẫu; hãy kiểm tra dung lượng hoặc quyền lưu dữ liệu.";return;}
+    taskAssigns={...taskAssigns,[mode]:copyPreset(p.tasks)};processingLevels=levels;
+    if(mode==="meeting"){
+      localMeetingModels=localModels;language=source;transcribe=p.transcribe;meetingCaptions=p.captions;meetingTranslate=p.translate;meetingTargetLang=p.target;localFallback=p.localFallback;
+      provider=c.profileId==="__local__"?"local":"soniox";transcriptionProfileId=provider==="local"?"":c.profileId;
+    }else{captionProfileId=c.profileId;captionModel=c.model;captionSourceLang=source;captionTranslate=p.translate;captionTargetLang=p.target;}
+    if(p.captionStyle)void emit("caption-style",p.captionStyle).catch(()=>{});
+    selectedPresets={...selectedPresets,[mode]:id};pendingPresets={...pendingPresets,[mode]:id};error="";return true;
+  }
+  function markPresetCustom(mode:PresetMode){
+    selectedPresets={...selectedPresets,[mode]:""};pendingPresets={...pendingPresets,[mode]:""};
+  }
+  function applyPendingPreset(mode:PresetMode){
+    const id=pendingPresets[mode];if(!id)return;
+    if(choosePreset(mode,id))notify(`Áp mẫu thành công: ${workflowPresets.find(p=>p.id===id)?.name??""}`);
+  }
+  function usePreset(p:WorkflowPreset){
+    if(data.active_id||captionRunning)return;
+    const problem=presetProblem(p);if(problem){error=problem;return;}
+    if(p.mode==="meeting")newMeeting();
+    if(choosePreset(p.mode,p.id)){page=p.mode==="meeting"?"meeting":"caption";notify(`Áp mẫu thành công: ${p.name}`);}
+  }
+
 </script>
 
 <svelte:head><title>Innote</title></svelte:head>
@@ -2086,20 +2225,25 @@
 {:else}
   <div class="app-shell" lang={localeTags[uiLocale ?? "vi"]}>
     <WhatsNewDialog version={appVersion} locale={uiLocale ?? "vi"} existingInstall={hadPreviousInstallation} ready={desktop && captionStateReady && !!data.data_dir && !data.active_id && !captionRunning && !testing && !confOpen && !meetingsOpen && !summaryOpen && !smoothOpen && !modelPickerOpen && !deleteOpen && !stopOpen && updatePhase !== "downloading" && updatePhase !== "installing"}/>
-    <aside class="sidebar" aria-label={tr.navAria}>
+    <aside class="sidebar" class:collapsed={sidebarCollapsed} id="sidebar-navigation" aria-label={tr.navAria}>
+      <div class="sidebar-header">
       <button
         class="brand"
+        title="Innote" aria-label="Innote"
         style="background:transparent;padding:0;text-align:left"
         onclick={newMeeting}
-        ><span class="brand-mark"><Logo size={24} /></span><span
+        ><span class="brand-mark"><Logo size={24} /></span><span class="brand-copy"
           >Innote<span class="brand-sub">{tr.appTagline}</span></span
         ></button
       >
-      <button class="new-button" onclick={newMeeting}
-        ><Plus size={18} /> {tr.newMeeting}</button
+      <button class="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên"} title={sidebarCollapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên"} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onclick={toggleSidebar}>{#if sidebarCollapsed}<PanelLeftOpen size={18}/>{:else}<PanelLeftClose size={18}/>{/if}</button>
+      </div>
+      <button class="new-button" aria-label={tr.newMeeting} title={tr.newMeeting} onclick={newMeeting}
+        ><Plus size={18} /> <span class="nav-label">{tr.newMeeting}</span></button
       >
       <button
         class="sidebar-nav-button"
+        aria-label={captionNavLabel} title={captionNavLabel}
         class:chosen={page === "caption"}
         onclick={() => {
           if (testing) {
@@ -2108,12 +2252,14 @@
           }
           page = "caption";
           taskMode = "captionsonly";
-        }}><Captions size={18} /> {tr.captionPage}</button
+        }}><Captions size={18} /> <span class="nav-label">{captionNavLabel}</span></button
       >
+      <button class="sidebar-nav-button" aria-label="Mẫu cấu hình" title="Mẫu cấu hình" class:chosen={page === "presets"} onclick={()=>{page="presets";presetEditing=false;presetDeleteId="";void tick().then(()=>document.querySelector(".preset-page")?.scrollTo({top:0}));}}><NotebookPen size={18}/> <span class="nav-label">Mẫu cấu hình</span></button>
       <button
         class="meetings-button"
         class:chosen={meetingsOpen}
         aria-label={tr.meetingListButton}
+        title={`${tr.meetingListButton} · ${data.sessions.length}`}
         onclick={() => {
           meetingsOpen = true;
         }}
@@ -2126,7 +2272,7 @@
         ><span class="meetings-count">{data.sessions.length}</span>
       </button>
       <div class="sidebar-author-group">
-        <button class="feedback-link" onclick={() => openAuthor("feedback")}>
+        <button class="feedback-link" aria-label={tr.feedbackButton} title={tr.feedbackButton} onclick={() => openAuthor("feedback")}>
           <AlertCircle size={15} />
           <span>{tr.feedbackButton}</span>
         </button>
@@ -2173,6 +2319,7 @@
       <div class="sidebar-bottom">
         <button
           class:chosen={page === "settings"}
+          aria-label={tr.settings} title={tr.settings}
           onclick={() => {
             if (testing) {
               error = tr.errorSettingsTesting;
@@ -2184,7 +2331,7 @@
             }
             page = "settings";
             taskMode = "meeting";
-          }}><Settings size={18} /> {tr.settings}</button
+          }}><Settings size={18} /> <span class="nav-label">{tr.settings}</span></button
         ><span><span class="local-dot"></span> {tr.dataOnDevice}</span>
       </div>
     </aside>
@@ -2196,6 +2343,7 @@
             ? tr.settings
             : page === "caption"
               ? tr.captionPage
+              : page === "presets" ? "Mẫu cấu hình"
               : meeting
                 ? tr.yourMeeting
                 : tr.meetingSpace}
@@ -2262,128 +2410,50 @@
         </div>
       {/if}
 
-      {#if page === "settings"}
-        <section class="settings-page">
-          <h1>{tr.settingsHeading}</h1>
-          <p class="subtitle">
-            {fill(tr.settingsSubtitle, { version: appVersion })}
-          </p>
-          <div class="settings-section">
-            <h2>{tr.interfaceLanguage}</h2>
-            <p>{tr.interfaceLanguageHint}</p>
-            <label
-              >{tr.interfaceLanguage}<select
-                aria-label={tr.interfaceLanguage}
-                value={uiLocale ?? "vi"}
-                disabled={busy}
-                onchange={(event) =>
-                  setUiLocale(event.currentTarget.value as UiLocale)}
-              >
-                {#each locales as value}
-                  <option {value}
-                    >{localeNames[value]} — {localeEnglishNames[value]}</option
-                  >
-                {/each}
-              </select></label
-            >
+      {#if page === "presets"}
+        <section class="settings-page preset-page">
+          <h1><NotebookPen size={22}/> Mẫu cấu hình</h1>
+          <p class="subtitle">Chuẩn bị sẵn model và cách xử lý cho từng nhu cầu. API key được quản lý trong Cài đặt.</p>
+          <div class="task-mode-tabs" role="tablist" aria-label="Loại mẫu cấu hình">
+            <button role="tab" aria-selected={taskMode === "meeting"} class:active={taskMode === "meeting"} disabled={presetEditing} onclick={()=>taskMode="meeting"}>Cuộc họp</button>
+            <button role="tab" aria-selected={taskMode === "captionsonly"} class:active={taskMode === "captionsonly"} disabled={presetEditing} onclick={()=>taskMode="captionsonly"}>Phụ đề</button>
           </div>
-          <div class="settings-section">
-            <h2>{tr.updateSection}</h2>
-            <p>{fill(tr.updateDescription, { version: appVersion })}</p>
-            <button
-              class="button secondary"
-              disabled={updateChecking ||
-                updatePhase === "downloading" ||
-                updatePhase === "installing"}
-              onclick={() => void checkForUpdate(true)}
-            >
-              <RefreshCw size={17} />
-              {updateChecking ? tr.updateChecking : tr.checkUpdates}
-            </button>
-          </div>
+          {#if !presetEditing}
+            <div class="preset-library-heading"><h2>{taskMode === "meeting" ? "Mẫu cho cuộc họp" : "Mẫu cho phụ đề"}</h2><button class="button primary" onclick={()=>editPreset()}><Plus size={16}/> Tạo mẫu</button></div>
+            {#each workflowPresets.filter(p=>p.mode===taskMode) as preset (preset.id)}
+              <div class="preset-row"><div><h3>{preset.name}</h3><p>{preset.source === "auto" ? "Tự nhận diện" : preset.source.toUpperCase()} · {preset.translate ? `Dịch sang ${preset.target.toUpperCase()}` : "Chỉ chép lời gốc"} · {modelLabel((preset.mode === "meeting" ? preset.tasks.transcription : preset.tasks.caption)?.profileId,(preset.mode === "meeting" ? preset.tasks.transcription : preset.tasks.caption)?.model??"Chưa chọn model")}</p></div><div class="preset-row-actions"><button class="button secondary small" disabled={!!data.active_id || captionRunning} onclick={()=>usePreset(preset)}>Sử dụng</button><button class="text-button" onclick={()=>editPreset(preset)}>Sửa</button><button class="text-button danger" onclick={()=>presetDeleteId=preset.id}>Xóa</button></div></div>
+              {#if presetDeleteId===preset.id}<div class="notice warning" role="alert"><span>Xóa mẫu “{preset.name}”? API key và cuộc họp đã lưu vẫn được giữ.</span><button class="text-button danger" onclick={()=>removePreset(preset.id)}>Xóa mẫu</button><button class="text-button" onclick={()=>presetDeleteId=""}>Hủy</button></div>{/if}
+            {:else}<p class="quality-hint">Chưa có mẫu. Tạo mẫu để không phải chọn lại từng model.</p>{/each}
+          {:else}
+            <div class="preset-editor-header"><h2>{presetEditingId ? "Sửa mẫu" : "Tạo mẫu"}</h2><p>Chỉ lưu khi bấm Lưu mẫu. Phiên đang chạy không bị ảnh hưởng.</p></div>
+            <div class="settings-section preset-basics">
+              <label class="ai-field">Tên mẫu<input aria-label="Tên mẫu" maxlength="80" bind:value={presetName}/></label>
+              <label class="ai-field">Ngôn ngữ gốc<select aria-label="Ngôn ngữ gốc của mẫu" bind:value={presetSource}><option value="auto">Tự nhận diện</option><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="zh">中文</option><option value="ko">한국어</option>{#if taskMode !== "meeting"}<option value="ja">日本語</option>{/if}</select></label>
+              <label class="ai-field">Mức xử lý<select aria-label="Mức xử lý của mẫu" bind:value={presetQuality}><option value="fast">Nhanh</option><option value="balanced">Cân bằng</option><option value="accurate">Chính xác</option></select></label>
+              {#if taskMode === "meeting"}<label class="checkbox"><input type="checkbox" bind:checked={presetCaptions}/> Bật phụ đề khi bắt đầu</label><label class="checkbox"><input type="checkbox" bind:checked={presetLocalFallback}/> Dự phòng local khi Soniox lỗi</label>{/if}
+            </div>
           <div class="settings-section ai-settings">
             <div class="soniox-heading">
               <div>
-                <h2><Captions size={18} /> {tr.aiProfilesTitle}</h2>
-                <p>{tr.aiProfilesDesc}</p>
-              </div>
-              <button
-                class="button secondary"
-                disabled={!!editing}
-                onclick={openAddProfile}
-                ><Plus size={15} /> {tr.aiProfileAdd}</button
-              >
-            </div>
-            {#if aiProfiles.length === 0}<p class="quality-hint">
-                {tr.aiProfilesEmpty}
-              </p>{:else}
-              <div class="ai-profiles-list">
-                {#each aiProfiles as p}
-                  <div class="ai-profile-row">
-                    <div class="ai-profile-name">
-                      <strong>{p.name}</strong>
-                      <span
-                        >{p.provider} · {tr.aiProfileKey} …{p.key_tail ||
-                          "—"}</span
-                      >
-                    </div>
-                    <button
-                      class="text-button"
-                      disabled={!!editing}
-                      onclick={() => openEditProfile(p)}
-                      >{tr.aiProfileEdit}</button
-                    ><button
-                      class="text-button danger"
-                      disabled={!!editing}
-                      onclick={() => deleteProfile(p)}
-                      >{tr.aiProfileDelete}</button
-                    >
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <div class="settings-section ai-settings">
-            <div class="soniox-heading">
-              <div>
-                <h2><Sparkles size={18} /> {tr.taskAssignTitle}</h2>
-                <p>{tr.taskAssignHint}</p>
+                <h2>Model và tác vụ</h2>
+                <p>Chọn cấu hình API đã lưu và model cho từng tác vụ. Khi dịch trong cuộc họp, Soniox dùng chung chép lời và phụ đề.</p>
               </div>
             </div>
-            <div
-              class="task-mode-tabs"
-              role="tablist"
-              aria-label={tr.taskAssignTitle}
-            >
-              <button
-                type="button"
-                role="tab"
-                class:active={taskMode === "meeting"}
-                onclick={() => (taskMode = "meeting")}
-                >{tr.taskModeMeeting}</button
-              >
-              <button
-                type="button"
-                role="tab"
-                class:active={taskMode === "captionsonly"}
-                onclick={() => (taskMode = "captionsonly")}
-                >{tr.taskModeCaptionsOnly}</button
-              >
-            </div>
-            {#if taskMode === "captionsonly"}<label class="checkbox" style="margin: 20px 0"><input type="checkbox" aria-label="Dịch sang cho phụ đề dùng riêng" checked={taskCaptionTranslate} onchange={e=>setAssignment("caption",{...taskAssigns[taskMode]?.caption,profileId:taskAssigns[taskMode]?.caption?.profileId??"",model:taskAssigns[taskMode]?.caption?.model??"",targetLang:taskAssigns[taskMode]?.caption?.targetLang??"vi",translate:e.currentTarget.checked})} /> Dịch sang cho phụ đề dùng riêng</label>{/if}
+            <label class="checkbox preset-translate"><input type="checkbox" aria-label="Dịch sang trong mẫu" bind:checked={presetTranslate}/> Dịch sang</label>
             <div class="task-assign-grid">
+              {#if taskMode === "meeting"}
               <label class="ai-field"
-                >{tr.taskTranscription}<select
-                  value={taskAssigns[taskMode]?.transcription?.profileId ?? ""}
+                >{tr.taskTranscription}<select aria-label={tr.taskTranscription}
+                  value={presetAssignments[taskMode]?.transcription?.profileId ?? ""}
                   disabled={busy}
                   onchange={(e) => {
                     const value = e.currentTarget.value;
-                    if (!value) setAssignment("transcription", undefined);
+                    if (!value) setPresetAssignment("transcription", undefined);
                     else
-                      setAssignment("transcription", {
-                        ...taskAssigns[taskMode]?.transcription,
+                      setPresetAssignment("transcription", {
+                        ...presetAssignments[taskMode]?.transcription,
                         profileId: value,
-                        model: value === "__local__" ? effectiveModel : "stt-rt-v5",
+                        model: value === "__local__" ? (compatibleLocalModels(presetSource==="auto"?"multi":presetSource)[0] ?? "moonshine-vi") : "stt-rt-v5",
                       });
                   }}
                   ><option value="">{tr.taskNone}</option><option
@@ -2393,41 +2463,42 @@
                     >{/each}</select
                 ></label
               >
+              {/if}
               <label class="ai-field"
-                >{tr.taskCaption}<select
-                  value={taskAssigns[taskMode]?.caption?.profileId ?? ""}
+                >{tr.taskCaption}<select aria-label={tr.taskCaption}
+                  value={presetAssignments[taskMode]?.caption?.profileId ?? ""}
                   disabled={busy}
                   onchange={(e) => {
                     const value = e.currentTarget.value;
-                    if (!value) setAssignment("caption", undefined);
+                    if (!value) setPresetAssignment("caption", undefined);
                     else
-                      setAssignment("caption", {
-                        ...taskAssigns[taskMode]?.caption,
+                      setPresetAssignment("caption", {
+                        ...presetAssignments[taskMode]?.caption,
                         profileId: value,
-                        model: captionModels(value, aiProfiles, taskCaptionTranslate)[0] ?? "",
-                        translate: taskCaptionTranslate,
+                        model: captionModels(value, aiProfiles, presetTranslate, presetSource)[0] ?? "",
+                        translate: presetTranslate,
                         targetLang:
-                          taskAssigns[taskMode]?.caption?.targetLang ?? "vi",
+                          presetAssignments[taskMode]?.caption?.targetLang ?? "vi",
                       });
                   }}
                   ><option value="">{tr.taskNone}</option
-                  >{#if taskMode === "captionsonly" && !taskCaptionTranslate}<option value="__local__">Local trên máy · không cần API</option>{/if}{#each captionableProfiles(aiProfiles).filter(p=>captionModels(p.id,aiProfiles,taskCaptionTranslate).length>0) as p}<option
+                  >{#if !presetTranslate}<option value="__local__">Local trên máy · không cần API</option>{/if}{#each captionableProfiles(aiProfiles).filter(p=>(taskMode !== "meeting" || p.provider === "soniox") && captionModels(p.id,aiProfiles,presetTranslate,presetSource).length>0) as p}<option
                       value={p.id}>{p.name} · {p.provider}</option
                     >{/each}</select
                 ></label
               >
               <label class="ai-field"
-                >{tr.captionTargetLang}<select
-                  value={taskAssigns[taskMode]?.caption?.targetLang ?? "vi"}
+                >{tr.captionTargetLang}<select aria-label={tr.captionTargetLang}
+                  value={presetAssignments[taskMode]?.caption?.targetLang ?? "vi"}
                   disabled={busy}
                   onchange={(e) =>
-                    setAssignment("caption", {
-                      ...taskAssigns[taskMode]?.caption,
+                    setPresetAssignment("caption", {
+                      ...presetAssignments[taskMode]?.caption,
                       profileId:
-                        taskAssigns[taskMode]?.caption?.profileId ?? "",
-                      model: taskAssigns[taskMode]?.caption?.model ?? "",
+                        presetAssignments[taskMode]?.caption?.profileId ?? "",
+                      model: presetAssignments[taskMode]?.caption?.model ?? "",
                       targetLang: e.currentTarget.value,
-                      translate: taskCaptionTranslate,
+                      translate: presetTranslate,
                     })}
                   ><option value="vi">{tr.langVi}</option><option value="en"
                     >{tr.langEn}</option
@@ -2436,16 +2507,17 @@
                   ><option value="ja">日本語</option></select
                 ></label
               >
+              {#if taskMode === "meeting"}
               <label class="ai-field"
-                >{tr.taskSmooth}<select
-                  value={taskAssigns[taskMode]?.smooth?.profileId ?? ""}
+                >{tr.taskSmooth}<select aria-label={tr.taskSmooth}
+                  value={presetAssignments[taskMode]?.smooth?.profileId ?? ""}
                   disabled={busy}
                   onchange={(e) => {
                     const value = e.currentTarget.value;
-                    if (!value) setAssignment("smooth", undefined);
+                    if (!value) setPresetAssignment("smooth", undefined);
                     else
-                      setAssignment("smooth", {
-                        ...taskAssigns[taskMode]?.smooth,
+                      setPresetAssignment("smooth", {
+                        ...presetAssignments[taskMode]?.smooth,
                         profileId: value,
                         model: textModels(value, aiProfiles)[0] ?? "",
                       });
@@ -2457,15 +2529,15 @@
                 ></label
               >
               <label class="ai-field"
-                >{tr.taskSummary}<select
-                  value={taskAssigns[taskMode]?.summary?.profileId ?? ""}
+                >{tr.taskSummary}<select aria-label={tr.taskSummary}
+                  value={presetAssignments[taskMode]?.summary?.profileId ?? ""}
                   disabled={busy}
                   onchange={(e) => {
                     const value = e.currentTarget.value;
-                    if (!value) setAssignment("summary", undefined);
+                    if (!value) setPresetAssignment("summary", undefined);
                     else
-                      setAssignment("summary", {
-                        ...taskAssigns[taskMode]?.summary,
+                      setPresetAssignment("summary", {
+                        ...presetAssignments[taskMode]?.summary,
                         profileId: value,
                         model: textModels(value, aiProfiles)[0] ?? "",
                       });
@@ -2476,42 +2548,43 @@
                     >{/each}</select
                 ></label
               >
+              {/if}
             </div>
             <div class="task-assign-grid task-model-grid">
-              {#if taskAssigns[taskMode]?.caption?.profileId}
+              {#if presetAssignments[taskMode]?.caption?.profileId}
                 <label class="ai-field"
                   >{tr.captionModel}<select
                     aria-label={tr.captionModel}
-                    value={taskAssigns[taskMode]?.caption?.model ||
+                    value={presetAssignments[taskMode]?.caption?.model ||
                       captionModels(
-                        taskAssigns[taskMode]?.caption?.profileId ?? "",
+                        presetAssignments[taskMode]?.caption?.profileId ?? "",
                         aiProfiles,
-                        taskCaptionTranslate,
+                        presetTranslate, presetSource,
                       )[0]}
                     onchange={(e) =>
-                      setAssignment("caption", {
-                        ...taskAssigns[taskMode]?.caption!,
+                      setPresetAssignment("caption", {
+                        ...presetAssignments[taskMode]?.caption!,
                         model: e.currentTarget.value,
                       })}
                   >
-                    {#each captionModels(taskAssigns[taskMode]?.caption?.profileId ?? "", aiProfiles, taskCaptionTranslate) as m}<option
-                        value={m}>{modelLabel(taskAssigns[taskMode]?.caption?.profileId,m)}</option
+                    {#each captionModels(presetAssignments[taskMode]?.caption?.profileId ?? "", aiProfiles, presetTranslate,presetSource) as m}<option
+                        value={m}>{modelLabel(presetAssignments[taskMode]?.caption?.profileId,m)}</option
                       >{/each}
                   </select></label
                 >
               {/if}
-              {#each ["smooth", "summary"] as task}
+              {#each (taskMode === "meeting" ? ["smooth", "summary"] : []) as task}
                 {@const key = task as "smooth" | "summary"}
-                {#if taskAssigns[taskMode]?.[key]?.profileId}
+                {#if presetAssignments[taskMode]?.[key]?.profileId}
                   <label class="ai-field"
                     >{key === "smooth" ? tr.taskSmooth : tr.taskSummary} · {tr.aiModel}
-                    {#if textModels(taskAssigns[taskMode]?.[key]?.profileId??"",aiProfiles).length}
-                      <select aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model`} value={taskAssigns[taskMode]?.[key]?.model??""} onchange={e=>setAssignment(key,{...taskAssigns[taskMode]?.[key]!,model:e.currentTarget.value})}>
+                    {#if textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles).length}
+                      <select aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model`} value={presetAssignments[taskMode]?.[key]?.model??""} onchange={e=>setPresetAssignment(key,{...presetAssignments[taskMode]?.[key]!,model:e.currentTarget.value})}>
                         <option value="">Chọn model…</option>
-                        {#if taskAssigns[taskMode]?.[key]?.model && !textModels(taskAssigns[taskMode]?.[key]?.profileId??"",aiProfiles).includes(taskAssigns[taskMode]?.[key]?.model??"")}<option value={taskAssigns[taskMode]?.[key]?.model}>{modelLabel(taskAssigns[taskMode]?.[key]?.profileId,taskAssigns[taskMode]?.[key]?.model??"")} · đã lưu</option>{/if}
-                        {#each textModels(taskAssigns[taskMode]?.[key]?.profileId??"",aiProfiles) as m}<option value={m}>{modelLabel(taskAssigns[taskMode]?.[key]?.profileId,m)}{m === "qwen/qwen3.8-27b" ? " · Preview" : ""}</option>{/each}
+                        {#if presetAssignments[taskMode]?.[key]?.model && !textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles).includes(presetAssignments[taskMode]?.[key]?.model??"")}<option value={presetAssignments[taskMode]?.[key]?.model}>{modelLabel(presetAssignments[taskMode]?.[key]?.profileId,presetAssignments[taskMode]?.[key]?.model??"")} · đã lưu</option>{/if}
+                        {#each textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles) as m}<option value={m}>{modelLabel(presetAssignments[taskMode]?.[key]?.profileId,m)}{m === "qwen/qwen3.8-27b" ? " · Preview" : ""}</option>{/each}
                       </select>
-                    {:else}<input aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model ID`} value={taskAssigns[taskMode]?.[key]?.model??""} onchange={e=>setAssignment(key,{...taskAssigns[taskMode]?.[key]!,model:e.currentTarget.value})} />{/if}
+                    {:else}<input aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model ID`} value={presetAssignments[taskMode]?.[key]?.model??""} onchange={e=>setPresetAssignment(key,{...presetAssignments[taskMode]?.[key]!,model:e.currentTarget.value})} />{/if}
                   </label>
                 {/if}
               {/each}
@@ -2522,9 +2595,9 @@
               <div class="task-assign-grid">
                 {#each (taskMode === "meeting" ? ["transcription","caption","smooth","summary"] as const : ["caption"] as const) as task (task)}
                   <label class="ai-field">Dự phòng · {taskLabel(task)}
-                    <select aria-label={`Dự phòng · ${taskLabel(task)}`} value={taskAssigns[taskMode]?.[task]?.fallback ? JSON.stringify(taskAssigns[taskMode]?.[task]?.fallback) : ""} disabled={busy || !taskAssigns[taskMode]?.[task]?.profileId || taskAssigns[taskMode]?.[task]?.profileId === "__local__"} onchange={e=>chooseFallback(task,e.currentTarget.value)}>
+                    <select aria-label={`Dự phòng · ${taskLabel(task)}`} value={presetAssignments[taskMode]?.[task]?.fallback ? JSON.stringify(presetAssignments[taskMode]?.[task]?.fallback) : ""} disabled={busy || !presetAssignments[taskMode]?.[task]?.profileId || presetAssignments[taskMode]?.[task]?.profileId === "__local__"} onchange={e=>choosePresetFallback(task,e.currentTarget.value)}>
                       <option value="">Không dùng dự phòng</option>
-                      {#each fallbackChoices(task,aiProfiles,taskAssigns[taskMode],taskMode,taskCaptionTranslate) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
+                      {#each fallbackChoices(task,aiProfiles,presetAssignments[taskMode],taskMode,presetTranslate) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
                     </select>
                   </label>
                 {/each}
@@ -2533,12 +2606,17 @@
             </div>
             <p class="fine-print">{tr.taskAssignNote}</p>
           </div>
-          <div class="settings-section" id="caption-settings">
-            <h2><Captions size={18} /> Cài đặt phụ đề</h2>
-            <p>Áp dụng cho cả phụ đề cuộc họp và phụ đề dùng riêng. Thay đổi hiển thị có hiệu lực ngay, không khởi động lại phiên.</p>
-            <CaptionControls />
-          </div>
-          <div class="settings-section">
+
+            {#if taskMode === "meeting" && presetAssignments[taskMode]?.transcription?.profileId === "__local__"}<label class="ai-field">Model chép lời local của mẫu<select aria-label="Model chép lời local của mẫu" value={presetAssignments[taskMode]?.transcription?.model} onchange={e=>setPresetAssignment("transcription",{...presetAssignments[taskMode].transcription!,model:e.currentTarget.value})}>{#each compatibleLocalModels(presetSource==="auto"?"multi":presetSource) as model}<option value={model}>{modelLabel("__local__",model)}</option>{/each}</select></label>{/if}
+            <div class="settings-section preset-caption-style" id="caption-settings">
+              <h2><Captions size={18}/> Hiển thị phụ đề của mẫu</h2>
+              <p>Cỡ chữ, màu, nền và song ngữ được lưu cùng mẫu này. Chỉnh ở đây chưa thay đổi phiên đang chạy; chọn mẫu để áp dụng.</p>
+              <CaptionControls bind:style={presetCaptionStyle} persist={false} visibilityControl={false} expanded={true}/>
+            </div>
+            {#if presetError}<div class="notice warning" role="alert">{presetError}</div>{/if}
+            <div class="preset-save"><button class="button primary" onclick={savePreset}>Lưu mẫu</button><button class="button secondary" onclick={()=>{presetEditing=false;presetError="";}}>Hủy chỉnh sửa</button></div>
+          {/if}
+          <div class="settings-section" id="local-model-settings">
             <h2>{tr.modelTitle}</h2>
             <p>{tr.modelDesc}</p>
             <p>Nemotron là model chép lời đa ngôn ngữ chạy trên máy, không dùng để dịch hay tóm tắt. Chỉ cần cho chế độ local đa ngôn ngữ hoặc dự phòng đã bật; Soniox hoạt động không cần tải Nemotron.</p>
@@ -2582,6 +2660,88 @@
                 >
               </div>{/if}
           </div>
+
+        </section>
+      {:else if page === "settings"}
+        <section class="settings-page">
+          <h1>{tr.settingsHeading}</h1>
+          <p class="subtitle">Quản lý kết nối AI, ngôn ngữ giao diện, cập nhật và dữ liệu. Mẫu sử dụng và kiểu hiển thị phụ đề nằm tại Mẫu cấu hình.</p>
+          <div class="settings-section ai-settings">
+            <div class="soniox-heading">
+              <div>
+                <h2><Captions size={18} /> {tr.aiProfilesTitle}</h2>
+                <p>{tr.aiProfilesDesc}</p>
+              </div>
+              <button
+                class="button secondary"
+                disabled={!!editing}
+                onclick={openAddProfile}
+                ><Plus size={15} /> {tr.aiProfileAdd}</button
+              >
+            </div>
+            {#if aiProfiles.length === 0}<p class="quality-hint">
+                {tr.aiProfilesEmpty}
+              </p>{:else}
+              <div class="ai-profiles-list">
+                {#each aiProfiles as p}
+                  <div class="ai-profile-row">
+                    <div class="ai-profile-name">
+                      <strong>{p.name}</strong>
+                      <span
+                        >{p.provider} · {tr.aiProfileKey} …{p.key_tail ||
+                          "—"}</span
+                      >
+                    </div>
+                    <button
+                      class="text-button"
+                      disabled={!!editing}
+                      onclick={() => openEditProfile(p)}
+                      >{tr.aiProfileEdit}</button
+                    ><button
+                      class="text-button danger"
+                      disabled={!!editing}
+                      onclick={() => deleteProfile(p)}
+                      >{tr.aiProfileDelete}</button
+                    >
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="settings-section">
+            <h2>{tr.interfaceLanguage}</h2>
+            <p>{tr.interfaceLanguageHint}</p>
+            <label
+              >{tr.interfaceLanguage}<select
+                aria-label={tr.interfaceLanguage}
+                value={uiLocale ?? "vi"}
+                disabled={busy}
+                onchange={(event) =>
+                  setUiLocale(event.currentTarget.value as UiLocale)}
+              >
+                {#each locales as value}
+                  <option {value}
+                    >{localeNames[value]} — {localeEnglishNames[value]}</option
+                  >
+                {/each}
+              </select></label
+            >
+          </div>
+          <div class="settings-section">
+            <h2>{tr.updateSection}</h2>
+            <p>{fill(tr.updateDescription, { version: appVersion })}</p>
+            <button
+              class="button secondary"
+              disabled={updateChecking ||
+                updatePhase === "downloading" ||
+                updatePhase === "installing"}
+              onclick={() => void checkForUpdate(true)}
+            >
+              <RefreshCw size={17} />
+              {updateChecking ? tr.updateChecking : tr.checkUpdates}
+            </button>
+          </div>
           <div class="settings-section">
             <h2>{tr.dataTitle}</h2>
             <p>{tr.dataDesc}</p>
@@ -2600,20 +2760,39 @@
               {fill(tr.finePrint, { version: appVersion })}
             </p>
           </div>
-        </section>
+                  </section>
       {:else if page === "caption"}
         <section class="caption-page">
           <h1><Captions size={20} /> {tr.captionPage}</h1>
+          {#if active}
+          <p class="subtitle">Phụ đề đang dùng âm thanh và model của cuộc họp hiện tại.</p>
+          <div class="settings-section caption-setup active-meeting-caption" aria-label="Phụ đề cuộc họp đang ghi">
+            <h2>{active.title}</h2>
+            <p class="quality-hint">{active.speech && !active.speech.local_fallback ? modelLabel(active.speech.profile_id ?? undefined,active.speech.model) : `Local/${active.model}`} · {active.status === "paused" ? "Cuộc họp đang tạm dừng" : "Cuộc họp đang ghi"}. Bản chép và bản dịch được lưu trong cuộc họp.</p>
+            <div class="meeting-caption-options">
+              <label class="checkbox"><input type="checkbox" aria-label="Dịch sang trong phiên đang ghi" checked={meetingTranslate} disabled={busy || !active.speech || active.speech.local_fallback} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} /> Dịch sang</label>
+              {#if meetingTranslate}<label class="ai-field">Ngôn ngữ bản dịch<select aria-label="Ngôn ngữ bản dịch phiên đang ghi" value={meetingTargetLang} disabled={busy} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(true,input.value).finally(()=>input.value=meetingTargetLang);}}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
+            </div>
+            <div class="caption-actions">
+              <button class="button secondary" disabled={busy} onclick={()=>toggleMeetingCaption()}><Captions size={16}/>{captionRunning ? "Tắt phụ đề cuộc họp" : "Bật phụ đề cuộc họp"}</button>
+              <CaptionWindowToggle />
+              <button class="text-button" onclick={()=>choose(active!)}>Về cuộc họp đang ghi</button>
+            </div>
+            {#if captionError}<p class="test-error" role="alert">{captionError}</p>{/if}
+            {#if captionText || (meetingTranslationPreview?.id === active.id && meetingTranslationPreview.text)}<div class="caption-preview"><div class="caption-preview-text">{meetingTranslationPreview?.id === active.id && meetingTranslate ? meetingTranslationPreview.text || captionText : captionText}</div></div>{/if}
+          </div>
+          {:else}
           <p class="subtitle">
             {tr.captionPageHint}
           </p>
-          <div class="settings-section caption-setup">
+          <div class="preset-launch"><label class="ai-field">Mẫu cấu hình phụ đề<select aria-label="Mẫu cấu hình phụ đề" value={pendingPresets.captionsonly} disabled={busy || !!data.active_id || captionRunning} onchange={e=>{pendingPresets={...pendingPresets,captionsonly:e.currentTarget.value};if(!e.currentTarget.value)selectedPresets={...selectedPresets,captionsonly:""};}}><option value="">Tùy chỉnh</option>{#each workflowPresets.filter(p=>p.mode==="captionsonly") as preset}<option value={preset.id}>{preset.name}</option>{/each}</select></label><button class="button primary" disabled={busy || !!data.active_id || captionRunning || !pendingPresets.captionsonly} onclick={()=>applyPendingPreset("captionsonly")}>Áp mẫu</button>{#if pendingPresets.captionsonly}<p aria-live="polite">{pendingPresets.captionsonly ? selectedPresets.captionsonly===pendingPresets.captionsonly ? "Đã áp dụng mẫu. Bạn có thể tùy chỉnh cho phiên này; mẫu gốc được giữ nguyên." : "Đã chọn mẫu. Bấm Áp mẫu để đưa thiết lập vào phiên này." : "Tùy chỉnh các mục bên dưới cho phiên này, hoặc chọn một mẫu đã lưu."}</p>{/if}<button class="text-button" disabled={!!data.active_id || captionRunning} onclick={()=>{taskMode="captionsonly";editPreset();page="presets";}}>Lưu thành mẫu</button></div>
+          <div class="settings-section caption-setup" onchange={()=>markPresetCustom("captionsonly")}>
             <div class="caption-intent">
               <div class="caption-intent-choice">
                 <label class="checkbox"><input type="checkbox" aria-label="Dịch sang" bind:checked={captionTranslate} disabled={busy || captionRunning || captionTesting} /> Dịch sang</label>
                 {#if captionTranslate}<label class="caption-intent-target">{tr.captionTargetLang}<select aria-label={tr.captionTargetLang} bind:value={captionTargetLang} disabled={busy || captionRunning || captionTesting}><option value="vi">{tr.langVi}</option><option value="en">{tr.langEn}</option><option value="ko">{tr.langKo}</option><option value="zh">{tr.langZh}</option><option value="ja">日本語</option></select></label>{/if}
               </div>
-              <p>{captionTranslate ? "Hiển thị bản dịch và tùy chọn song ngữ. Âm thanh được gửi lên cấu hình đã chọn." : "Chỉ chép và hiện lời gốc đang nghe. Chọn Local trên máy để dùng Moonshine Việt/Anh có sẵn hoặc Nemotron đa ngôn ngữ không cần API, hoặc dùng Soniox/Groq."}</p>
+              <p>{captionTranslate ? "Dịch âm thanh đang nghe sang ngôn ngữ đã chọn. Âm thanh được gửi lên nhà cung cấp." : "Hiện lời gốc từ loa/tai nghe. Chọn Local để xử lý trên máy, hoặc dùng cấu hình cloud."}</p>
             </div>
             <div class="caption-mode-row">
               <label>{tr.captionDevice}<select aria-label={tr.captionDevice} bind:value={captionDevice} disabled={busy || captionRunning || captionTesting}>
@@ -2651,10 +2830,13 @@
                 ></label
               >
             </div>
-            <SpeechQualityControl scope="Phụ đề" locale={uiLocale??"vi"} value={captionSpeechQuality} provider={captionQualityProvider} model={captionModel} disabled={busy || captionRunning || captionTesting} onchange={q=>chooseProcessingLevel(captionLevelKey,q)} />
+            <SpeechQualityControl compact scope="Phụ đề" locale={uiLocale??"vi"} value={captionSpeechQuality} provider={captionQualityProvider} model={captionModel} disabled={busy || captionRunning || captionTesting} onchange={q=>chooseProcessingLevel(captionLevelKey,q)} />
             {#if captionProfileId && !captionModels(captionProfileId,aiProfiles,captionTranslate,captionSourceLang).includes(captionModel)}<p class="test-error">Model đã chọn không phù hợp chế độ hoặc ngôn ngữ gốc. Moonshine có model riêng cho Việt/Anh; Nemotron hỗ trợ đa ngôn ngữ. Hãy chọn lại model.</p>{/if}
-            {#if captionProfileId === "__local__"}<p class="quality-hint">Chép trên máy, không cần API và không tự chuyển lên cloud. {captionModel === multilingualModel ? "Nemotron nhận audio liên tục, có chữ tạm theo lời nói; hỗ trợ Việt, Anh, Hàn và Trung. Tốc độ phụ thuộc CPU." : "Moonshine có sẵn trong Innote, chép streaming theo ngôn ngữ Việt/Anh của model đã chọn; không tự nhận diện đa ngôn ngữ. Tốc độ phụ thuộc CPU."} {captionLocalReady ? captionModel.startsWith("moonshine-") ? tr.modelBundled : "Model đã có trên máy." : captionModel.startsWith("moonshine-") ? tr.modelMissingBundled : "Model chưa tải: mở Cài đặt → Model chép lời để tải trước."}</p>{/if}
+            {#if captionProfileId === "__local__" && !captionLocalReady}<p class="test-error" role="status">{captionModel.startsWith("moonshine-") ? tr.modelMissingBundled : "Model chưa tải: mở Mẫu cấu hình → Model chép lời để tải trước."}</p>{/if}
+            {#if captionProfileId === "__local__" || aiProfiles.find(p=>p.id===captionProfileId)?.provider === "groq"}<details class="workflow-help caption-engine-guide"><summary>Thông tin xử lý và hạn mức</summary>
+            {#if captionProfileId === "__local__"}<p class="quality-hint">Chép trên máy, không cần API và không tự chuyển lên cloud. {captionModel === multilingualModel ? "Nemotron nhận audio liên tục, có chữ tạm theo lời nói; hỗ trợ Việt, Anh, Hàn và Trung. Tốc độ phụ thuộc CPU." : "Moonshine có sẵn trong Innote, chép streaming theo ngôn ngữ Việt/Anh của model đã chọn; không tự nhận diện đa ngôn ngữ. Tốc độ phụ thuộc CPU."} {captionLocalReady ? captionModel.startsWith("moonshine-") ? tr.modelBundled : "Model đã có trên máy." : ""}</p>{/if}
             {#if profileOf(captionProfileId,aiProfiles)?.provider === "groq"}<p class="quality-hint">Groq Whisper: độ dài đoạn và ngữ cảnh thay đổi theo Mức xử lý đã chọn; phần audio chồng lấn cũng dùng hạn mức API. Có thể trễ thêm do API, không có chữ tạm từng từ. Khi lỗi chỉ chuyển sang dự phòng bạn đã chọn, nếu có. Hiện hỗ trợ phụ đề dùng riêng.</p>{/if}
+            </details>{/if}
             <div class="caption-actions">
               {#if captionProfileId !== "__local__"}
               <button
@@ -2680,6 +2862,7 @@
                 >{:else}<button
                   class="button primary"
                   disabled={busy ||
+                    captionPresetPending ||
                     captionTesting ||
                     !captionProfileId ||
                     !captionModel ||
@@ -2707,11 +2890,13 @@
                 <div class="caption-preview-text">{captionText}</div>
               </div>{/if}
           </div>
-          <button class="text-button caption-settings-link" onclick={()=>{page="settings";void tick().then(()=>document.getElementById("caption-settings")?.scrollIntoView({block:"start"}));}}><Settings size={16} /> Cài đặt chữ và hộp phụ đề</button>
-          <div class="settings-section">
-            <h2>{tr.captionNoMicNoteTitle}</h2>
-            <p>{tr.captionNoMicNote}</p>
-          </div>
+          {/if}
+          <section class="caption-inline-style" id="standalone-caption-style" aria-labelledby="standalone-caption-style-title">
+            <h2 id="standalone-caption-style-title"><Settings size={16} /> Cài đặt chữ và hộp phụ đề</h2>
+            <p class="quality-hint">Kiểu đang áp dụng cho phiên này. Dùng Lưu thành mẫu nếu muốn giữ các thay đổi trong một mẫu.</p>
+            <CaptionControls visibilityControl={false} collapsible={false} onstylechange={()=>markPresetCustom(active?"meeting":"captionsonly")}/>
+          </section>
+
         </section>
       {:else}
         <section class="meeting-page" class:preparing={!meeting}>
@@ -2740,7 +2925,7 @@
                     ><span></span>{states[meeting.status] ??
                       meeting.status}</span
                   ><span class="time">{clock(meeting.duration)}</span
-                  >{:else}<span>{readyMessage}</span>{/if}
+                  >{:else if transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)}<button class="text-button setup-recovery" onclick={()=>document.getElementById("meeting-shared-model")?.focus()}>{tr.readyTranslationModel}</button>{:else}<span>{readyMessage}</span>{/if}
               </div>
             </div>
             <div class="record-controls">
@@ -2769,12 +2954,13 @@
               {:else if !meeting}<button
                   class="button primary"
                   disabled={busy ||
+                    meetingPresetPending ||
                     !!data.active_id ||
                     !desktop ||
                     (!system && !microphone) ||
                     systemMissing ||
                     microphoneMissing ||
-                    (transcribe && meetingCaptions && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)) ||
+                    (transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)) ||
                     (transcribe && (provider === "local" || localFallback) && !currentModel?.installed)}
                   onclick={start}
                   ><Circle size={15} fill="currentColor" />{testing
@@ -2798,12 +2984,14 @@
 
           {#if active && selected === active.id && recording}<div class="meeting-caption-controls">
             <CaptionWindowToggle />
-            <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" bind:checked={meetingTranslate} disabled={captionRunning || busy} /> Dịch sang</label>
-            {#if meetingTranslate}<label>Ngôn ngữ dịch đích<select aria-label="Ngôn ngữ dịch đích cuộc họp" bind:value={meetingTargetLang} disabled={captionRunning || busy}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
-            <button class="text-button" onclick={()=>{page="settings";void tick().then(()=>document.getElementById("caption-settings")?.scrollIntoView({block:"start"}));}}><Settings size={15} /> Cài đặt phụ đề</button>
+            <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" checked={meetingTranslate} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} disabled={busy || !active.speech || active.speech.local_fallback} /> Dịch sang</label>
+            {#if meetingTranslate}<label>Ngôn ngữ dịch đích<select aria-label="Ngôn ngữ dịch đích cuộc họp" value={meetingTargetLang} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(true,input.value).finally(()=>input.value=meetingTargetLang);}} disabled={busy}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
+            <button class="text-button" aria-expanded={meetingStyleOpen} aria-controls="meeting-caption-style" onclick={()=>{meetingStyleOpen=true;void tick().then(()=>document.getElementById("meeting-caption-style")?.scrollIntoView({block:"nearest"}));}}><Settings size={15} /> Cài đặt phụ đề</button>
           </div>{/if}
+          {#if active && selected === active.id && recording && meetingStyleOpen}<section class="session-caption-style" id="meeting-caption-style"><h3>Cấu hình hiển thị phụ đề của phiên</h3><CaptionControls visibilityControl={false} collapsible={false} onstylechange={()=>markPresetCustom("meeting")}/></section>{/if}
           {#if !meeting}
-            <div class="setup-panel">
+            <div class="preset-launch"><label class="ai-field">Mẫu cấu hình cuộc họp<select aria-label="Mẫu cấu hình cuộc họp" value={pendingPresets.meeting} disabled={busy || !!data.active_id || captionRunning} onchange={e=>{pendingPresets={...pendingPresets,meeting:e.currentTarget.value};if(!e.currentTarget.value)selectedPresets={...selectedPresets,meeting:""};}}><option value="">Tùy chỉnh</option>{#each workflowPresets.filter(p=>p.mode==="meeting") as preset}<option value={preset.id}>{preset.name}</option>{/each}</select></label><button class="button primary" disabled={busy || !!data.active_id || captionRunning || !pendingPresets.meeting} onclick={()=>applyPendingPreset("meeting")}>Áp mẫu</button>{#if pendingPresets.meeting}<p aria-live="polite">{pendingPresets.meeting ? selectedPresets.meeting===pendingPresets.meeting ? "Đã áp dụng mẫu. Bạn có thể tùy chỉnh cho phiên này; mẫu gốc được giữ nguyên." : "Đã chọn mẫu. Bấm Áp mẫu để đưa thiết lập vào phiên này." : "Tùy chỉnh các mục bên dưới cho phiên này, hoặc chọn một mẫu đã lưu."}</p>{/if}<button class="text-button" disabled={!!data.active_id || captionRunning} onclick={()=>{taskMode="meeting";editPreset();page="presets";}}>Lưu thành mẫu</button></div>
+            <div class="setup-panel" onchange={()=>markPresetCustom("meeting")}>
               <div class="setup-heading">
                 <h2>{tr.sourceTitle}</h2>
                 <button
@@ -2880,7 +3068,7 @@
                 >
               </div>
               <div class="source-footer">
-                <span>{tr.sourceFooter}</span><button
+                <button
                   class="text-button"
                   disabled={busy ||
                     !!data.active_id ||
@@ -2962,7 +3150,7 @@
               </div>
               {#if transcribe}
                 <div class="provider-choice">
-                  <label for="transcription-provider">{tr.provider}</label>
+                  <div class="provider-primary"><label for="transcription-provider">{tr.provider}</label>
                   <select
                     id="transcription-provider"
                     aria-label={tr.provider}
@@ -2971,7 +3159,7 @@
                   >
                     <option value="local">{tr.providerLocal}</option>
                     <option value="soniox">{tr.providerSoniox}</option>
-                  </select>
+                  </select></div>
                   {#if provider === "local" || localFallback}
                     <label class="ai-field ai-field-full">{provider === "local" ? tr.localSpeechModel : tr.localFallbackModel}
                       <select aria-label={provider === "local" ? tr.localSpeechModel : tr.localFallbackModel} value={effectiveModel} disabled={busy} onchange={e=>chooseLocalMeetingModel(e.currentTarget.value)}>
@@ -3001,30 +3189,34 @@
                   {/if}
                 </div>
               {/if}
-              {#if transcribe}<SpeechQualityControl scope="Cuộc họp" locale={uiLocale??"vi"} value={meetingSpeechQuality} provider={provider} model={provider === "local" ? effectiveModel : "stt-rt-v5"} disabled={busy} onchange={q=>chooseProcessingLevel(meetingLevelKey,q)} />{/if}
+              {#if transcribe}<SpeechQualityControl compact scope="Cuộc họp" locale={uiLocale??"vi"} value={meetingSpeechQuality} provider={provider} model={provider === "local" ? effectiveModel : "stt-rt-v5"} disabled={busy} onchange={q=>chooseProcessingLevel(meetingLevelKey,q)} />{/if}
               {#if transcribe}<div class="meeting-caption-setup">
-                <label class="checkbox"><input type="checkbox" aria-label="Bật phụ đề khi bắt đầu cuộc họp" bind:checked={meetingCaptions} disabled={busy} /> Bật phụ đề khi bắt đầu cuộc họp</label>
-                <p class="quality-hint">Lời gốc hiển thị trực tiếp để theo dõi hoặc luyện nghe. Bản chép cuộc họp vẫn được lưu khi tắt phụ đề.</p>
-                {#if meetingCaptions}<div class="meeting-caption-options">
+                <h2>Phụ đề &amp; bản dịch</h2>
+                <div class="meeting-caption-switches"><label class="checkbox"><input type="checkbox" aria-label="Bật phụ đề khi bắt đầu cuộc họp" bind:checked={meetingCaptions} disabled={busy} /> Bật phụ đề khi bắt đầu cuộc họp</label>
+                <div class="meeting-caption-options">
                   <label class="checkbox"><input type="checkbox" aria-label="Dịch sang trong cuộc họp" bind:checked={meetingTranslate} disabled={busy} /> Dịch sang</label>
                   {#if meetingTranslate}<label class="ai-field">Ngôn ngữ bản dịch<select aria-label="Ngôn ngữ bản dịch" bind:value={meetingTargetLang} disabled={busy}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
                 </div>
-                <div class="meeting-shared-model">
+                </div>
+                <p class="quality-hint">Có thể bật/tắt hộp khi đang ghi. Bản chép và bản dịch vẫn được lưu.</p>
+                {#if meetingCaptions || meetingTranslate}<div class="meeting-shared-model">
                   <label class="ai-field">{meetingTranslate ? "Model dùng chung chép lời & dịch phụ đề" : "Model dùng chung chép lời & phụ đề"}
-                    <select aria-label="Model dùng chung cho cuộc họp" value={meetingSharedChoice} disabled={busy} onchange={e=>chooseMeetingSharedModel(e.currentTarget.value)}>
+                    <select id="meeting-shared-model" aria-label="Model dùng chung cho cuộc họp" value={meetingSharedChoice} disabled={busy} onchange={e=>chooseMeetingSharedModel(e.currentTarget.value)}>
                       <option value="" disabled>Chọn cấu hình/model dùng chung…</option>
                       {#if !meetingTranslate}{#each compatibleLocalModels(language) as id}<option value={JSON.stringify({profileId:"__local__",model:id})}>{modelLabel("__local__",id)}</option>{/each}{/if}
                       {#each sonioxProfiles(aiProfiles) as p}<option value={JSON.stringify({profileId:p.id,model:"stt-rt-v5"})}>{modelLabel(p.id,"stt-rt-v5")}</option>{/each}
                     </select>
                   </label>
-                  {#if provider === "soniox" && transcriptionProfileId}<p class="quality-hint">Chép lời và phụ đề cùng dùng {modelLabel(transcriptionProfileId,"stt-rt-v5")}. Một kết nối Soniox giữ bản gốc{meetingTranslate ? " và bản dịch" : ""}; không chạy local song song. Audio được gửi lên cấu hình này.</p>
+                  {#if provider === "soniox" && transcriptionProfileId}<p class="quality-hint">{modelLabel(transcriptionProfileId,"stt-rt-v5")} · Chép lời{meetingTranslate ? " và dịch" : ""} trên một kết nối. Âm thanh gửi lên Soniox.</p>
                   {:else if meetingTranslate}<p class="test-error" role="status">Hãy chọn Soniox ở đây; phần Cách chép lời sẽ đổi sang cùng cấu hình/model. Local không hỗ trợ dịch.</p>{/if}
-                  {#if meetingTranslate}<small>Hiện chỉ Soniox hỗ trợ chép lời và dịch dùng chung trong cuộc họp. OpenAI/Gemini/Groq chưa dùng được cho luồng chung này. Quản lý API key trong Cài đặt.</small>{/if}
+                  {#if meetingTranslate}<details class="workflow-help"><summary>Khả năng dịch trong cuộc họp</summary><p>Hiện chỉ Soniox hỗ trợ chép lời và dịch dùng chung trong cuộc họp. OpenAI/Gemini/Groq chưa dùng được cho luồng chung này. Quản lý API key trong Cài đặt.</p></details>{/if}
                 </div>{/if}
+              <section class="meeting-caption-appearance" id="meeting-caption-style"><h3>Hiển thị phụ đề</h3><CaptionControls visibilityControl={false} collapsible={false} onstylechange={()=>markPresetCustom("meeting")}/></section>
               </div>{/if}
               {#if !transcribe}<p class="quality-hint">
                   {tr.transcribeOnly}
                 </p>{/if}
+              {#if transcribe && provider === "local"}<details class="workflow-help engine-guide"><summary>Thông tin xử lý âm thanh</summary>
               {#if multilingual && provider === "local"}<p class="quality-hint">
                   {language === "multi"
                     ? tr.multiHint
@@ -3036,6 +3228,7 @@
               {#if !multilingual && transcribe && provider === "local"}<p class="quality-hint">
                   {tr.turboHint}
                 </p>{/if}
+              </details>{/if}
               {#if transcribe && (provider === "local" || localFallback) && !currentModel?.installed && effectiveModel.startsWith("moonshine-")}<p class="test-error" role="alert">{tr.modelMissingBundled}</p>{/if}
               {#if transcribe && (provider === "local" || localFallback) && !currentModel?.installed && !effectiveModel.startsWith("moonshine-")}<div
                   class="model-download"
@@ -3164,7 +3357,7 @@
                   })}</span
                 >{/if}
             </div>
-            {#if meeting?.translations?.length}
+            {#if meeting?.translations?.length || meeting?.speech?.translation_language}
               <label class="transcript-language-view">Nội dung hiển thị
                 <select aria-label="Nội dung hiển thị" bind:value={translationView} onchange={()=>{transcriptView="original";transcriptTab="transcript";}}>
                   <option value="original">Bản gốc</option><option value="translation">Bản dịch</option><option value="bilingual">Song ngữ</option>
@@ -3402,9 +3595,9 @@
                 <div class="original-track">
                 {#if translationView === "bilingual"}<h3 class="track-heading">{continuousTranscript ? "Bản gốc" : "Bản gốc · bấm mốc để nghe từng đoạn"}</h3>{/if}
                 {#if translationView === "translation"}<p class="track-note">Bản dịch được lưu riêng, không tự đổi khi sửa bản gốc và không có timestamp riêng. Chuyển sang Bản gốc để nghe lại đúng đoạn.</p>{/if}
-                {#if continuousTranscript && (segments.length || (liveSegment && translationView !== "translation"))}
+                {#if continuousTranscript && (segments.length || (liveSegment && translationView !== "translation") || (translationView === "translation" && liveTranslation))}
                   <article class="recording-transcript" aria-label={tr.liveAria}>
-                    <p>{flowingFinalText}{#if liveSegment && translationView !== "translation"}<span class="recording-partial" data-live-caption>{flowingFinalText ? " " : ""}{liveSegment.text}</span>{/if}</p>
+                    <p>{flowingFinalText}{#if translationView === "translation" && liveTranslation}<span class="recording-partial" data-live-translation>{flowingFinalText ? " " : ""}{liveTranslation}</span>{:else if liveSegment && translationView !== "translation"}<span class="recording-partial" data-live-caption>{flowingFinalText ? " " : ""}{liveSegment.text}</span>{/if}</p>
                   </article>
                 {:else}
                 {#each segments as s (s.id)}
@@ -3476,7 +3669,7 @@
                 {#if translationView === "bilingual"}<section class="translation-track" aria-label="Bản dịch đã lưu">
                   <h3 class="track-heading">Bản dịch · {visibleTranslationLanguage}</h3>
                   <p class="track-note">Hai luồng có thể chia/gộp câu khác nhau. Mốc nghe lại thuộc bản gốc. Bản dịch không tự đổi khi sửa bản gốc.</p>
-                  {#if continuousTranscript}<p class="saved-translation">{savedTranslations.map(t=>t.text).join(" ")}</p>
+                  {#if continuousTranscript}<p class="saved-translation">{savedTranslations.map(t=>t.text).join(" ")}{#if liveTranslation}<span class="recording-partial" data-live-translation>{savedTranslations.length ? " " : ""}{liveTranslation}</span>{/if}</p>
                   {:else}{#each savedTranslations as t}<p class="saved-translation">{t.text}</p>{/each}{/if}
                 </section>{/if}
               </div>
@@ -3620,7 +3813,7 @@
             </select></label
           >
           {#if confProvider === "openai-compatible"}<label class="ai-field ai-field-full">{tr.aiBaseUrl}<input aria-label={tr.aiBaseUrl} bind:value={confBaseUrl} placeholder="https://your-provider.example/v1" oninput={()=>{confTested=false;confStatusText="";}} /></label>{/if}
-          {#if confProvider === "groq"}<p class="ai-key-note ai-field-full">Dùng endpoint mặc định của Groq: https://api.groq.com/openai/v1. Chọn model sau khi lưu, tại phần Gán cấu hình cho tác vụ.</p>{/if}
+          {#if confProvider === "groq"}<p class="ai-key-note ai-field-full">Dùng endpoint mặc định của Groq: https://api.groq.com/openai/v1. Sau khi lưu, chọn model tại Mẫu cấu hình ở thanh bên.</p>{/if}
           <label class="ai-field ai-field-full"
             >{tr.aiProfileKey}<input
               type="password"

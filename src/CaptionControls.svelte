@@ -1,28 +1,37 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { emit, listen } from "@tauri-apps/api/event";
-  import { readCaptionStyle, CAPTION_STYLE_KEY } from "./lib/caption-style";
+  import { readCaptionStyle, CAPTION_STYLE_KEY,type CaptionStyle } from "./lib/caption-style";
   import { captionWindowVisible, refreshCaptionWindow } from "./lib/caption-window";
   import CaptionWindowToggle from "./CaptionWindowToggle.svelte";
   export let visibilityControl = true;
-
-  let style = readCaptionStyle();
+  export let persist = true;
+  export let expanded = false;
+  export let collapsible = true;
+  export let style:CaptionStyle = readCaptionStyle();
+  export let onstylechange:(style:CaptionStyle)=>void=()=>{};
   let error = "";
   onMount(() => {
+    if(!persist)return;
     let disposed = false;
     const unlisteners: (() => void)[] = [];
     const track = (promise: Promise<() => void>) => void promise.then(fn => { if(disposed)fn();else unlisteners.push(fn); }).catch(()=>{});
     track(listen<boolean>("caption-window-visibility", ({payload}) => captionWindowVisible.set(payload)));
     void refreshCaptionWindow().catch(() => {});
     const refresh = () => { void refreshCaptionWindow().catch(() => {}); };
+    track(listen("caption-style",()=>{style=readCaptionStyle();}));
+    const syncStyle=(event:StorageEvent)=>{if(event.key===CAPTION_STYLE_KEY)style=readCaptionStyle();};
+    window.addEventListener("storage",syncStyle);
     window.addEventListener("focus", refresh);
     track(listen("caption-layout-error", () => {
       error = "Không bật được thao tác kéo phụ đề. Hãy mở lại Innote bản mới.";
     }));
-    return () => { disposed = true; unlisteners.forEach(fn=>fn()); window.removeEventListener("focus", refresh); };
+    return () => { disposed = true; unlisteners.forEach(fn=>fn()); window.removeEventListener("focus", refresh);window.removeEventListener("storage",syncStyle); };
   });
   async function save() {
+    if(!persist)return;
     localStorage.setItem(CAPTION_STYLE_KEY, JSON.stringify(style));
+    onstylechange({...style});
     try { await emit("caption-style", style); } catch (e) { error = String(e); }
   }
 </script>
@@ -32,8 +41,8 @@
   <span>Hiện hộp trước để chỉnh vị trí. Ẩn hộp không dừng phụ đề; bắt đầu phụ đề sẽ tự hiện hộp.</span>
 </div>{/if}
 {#if error}<p class="test-error" role="alert">{error}</p>{/if}
-<details class="caption-customize">
-  <summary>Tùy chỉnh chữ phụ đề</summary>
+{#if persist}<p class="caption-style-summary" aria-label="Kiểu phụ đề hiện tại">{style.fontSize}px · {style.align === "left" ? "Căn trái" : "Căn giữa"} · {style.showOriginal ? "Song ngữ" : "Một dòng ngôn ngữ"} · {style.transparent ? "Nền trong suốt" : `Nền ${style.backgroundColor}`} · Màu chữ {style.color}</p>{/if}
+{#snippet appearanceFields()}
   <p>Chọn màu nền để dễ thấy hộp phụ đề, hoặc bật Trong suốt để chỉ hiện chữ. Mọi thao tác được thực hiện tại đây.</p>
   <div class="caption-customize-fields">
     <label><span>Cỡ chữ <output>{style.fontSize}px</output></span>
@@ -57,7 +66,15 @@
   <div class="caption-position-actions">
     <span>Giữ chuột trong hộp để di chuyển. Kéo bốn góc để phóng to hoặc thu nhỏ, kể cả khi chọn nền trong suốt.</span>
   </div>
-</details>
+{/snippet}
+{#if collapsible}
+  <details class="caption-customize" bind:open={expanded}>
+    <summary>Tùy chỉnh chữ phụ đề</summary>
+    {@render appearanceFields()}
+  </details>
+{:else}
+  <div class="caption-customize">{@render appearanceFields()}</div>
+{/if}
 
 <style>
   .caption-customize { margin: 24px 0; border-top: 1px solid var(--line); padding-top: 20px; }

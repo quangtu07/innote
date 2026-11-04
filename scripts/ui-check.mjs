@@ -123,11 +123,10 @@ async function setup(options = {}) {
       window.qa.snapshot.sessions[0].processed = 4;
     }
     if(options.standalone)localStorage.setItem("may.caption.standalone",JSON.stringify(options.standalone));
-    if (options.preferences)
-      localStorage.setItem(
-        "may.preferences",
-        JSON.stringify(options.preferences),
-      );
+    if (!localStorage.getItem("may.preferences") && !options.naturalMeetingDefaults) {
+      const defaults={system:window.qa.snapshot.devices.find(d=>d.kind==='system'&&d.default)?.id??"",microphone:window.qa.snapshot.devices.find(d=>d.kind==='microphone'&&d.default)?.id??"",language:"vi",transcribe:true,meetingCaptions:false,meetingTranslate:false};
+      localStorage.setItem("may.preferences",JSON.stringify({...defaults,...options.preferences}));
+    } else if(!localStorage.getItem("may.preferences") && options.preferences)localStorage.setItem("may.preferences",JSON.stringify(options.preferences));
     if (options.taskAssignMeeting)
       localStorage.setItem(
         "may.task_assign.meeting",
@@ -196,6 +195,12 @@ async function setup(options = {}) {
         }
         if (cmd === "start_caption") {
           qa.caption = { running: true, options: args.options };
+          return;
+        }
+        if (cmd === "set_meeting_translation") {
+          const s=qa.snapshot.sessions.find(s=>s.id===qa.snapshot.active_id);
+          s.speech.translation_language=args.target;
+          qa.snapshot.translation_preview=null;
           return;
         }
         if (cmd === "stop_caption") {
@@ -318,7 +323,7 @@ async function setup(options = {}) {
                 : [],
           };
           if(args.options.provider==='soniox')s.speech={model:'stt-rt-v5',profile_id:args.options.profileId,translation_language:args.options.translationLanguage??null,connections:1,uploaded_samples:0,local_fallback:false};
-          if(args.options.translationLanguage || args.options.captionsEnabled)qa.caption={running:true,options:{mode:'meeting'}};
+          if(args.options.captionsEnabled)qa.caption={running:true,options:{mode:'meeting'}};
           qa.snapshot.sessions.push(s);
           qa.snapshot.active_id = s.id;
           return structuredClone(s);
@@ -431,6 +436,291 @@ async function check(name, options, fn) {
   }
 }
 try {
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
+    await check(`Compact workflow layout ${viewport.width}`,{viewport,profiles:mockProfiles,naturalMeetingDefaults:true},async p=>{
+      const metrics={};
+      const measure=async (selector,name)=>{
+        const node=p.locator(selector);await node.evaluate(el=>el.scrollTop=0);
+        metrics[name]=await node.evaluate(el=>({height:el.scrollHeight,viewport:el.clientHeight,width:el.clientWidth,overflow:el.scrollWidth>el.clientWidth}));
+        assert(!metrics[name].overflow,`${name} horizontal overflow`);
+        if(name==='meeting')assert(await p.locator('.source-row').count()===2,'Both audio inputs remain available above the always-open appearance settings');
+        else assert(await p.locator('.caption-setup').evaluate(el=>el.getBoundingClientRect().height<650),'Primary caption controls stay compact above the requested expanded appearance settings');
+        await p.screenshot({path:join(output,`compact-${name}-${viewport.width}.png`)});
+      };
+      await measure('.meeting-page','meeting');
+      await p.getByRole('button',{name:'Chọn model Soniox để bật dịch',exact:true}).click();
+      assert(await p.getByLabel('Model dùng chung cho cuộc họp').evaluate(el=>document.activeElement===el),'Disabled start has a direct path to the missing model');
+      assert(!await p.locator('.preparing > .workspace').isVisible(),'No empty transcript panel before recording');
+      metrics.sections=await p.locator('.setup-panel').evaluate(el=>[...el.children].map(c=>({class:c.className,height:Math.round(c.getBoundingClientRect().height),margin:getComputedStyle(c).margin})));
+      await p.locator('.meeting-page').evaluate(el=>el.scrollTop=el.scrollHeight);
+      const stickyStart=await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).boundingBox();assert(stickyStart.y>=59&&stickyStart.y+stickyStart.height<=viewport.height,'Start recording stays reachable after scrolling');
+      const appearance=p.locator('#meeting-caption-style');assert(await appearance.getByLabel('Song ngữ',{exact:true}).isVisible(),'Meeting appearance is always expanded');assert.equal(await appearance.locator('summary').count(),0);
+      assert.equal(await appearance.locator('.caption-customize-fields').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),2,'Optional typography uses at most two columns');
+      await p.screenshot({path:join(output,`compact-meeting-bottom-${viewport.width}.png`)});
+      await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
+      await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-soniox');
+      await measure('.caption-page','captions');
+      const captionStart=await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).boundingBox();assert(captionStart.y>=59&&captionStart.y+captionStart.height<=viewport.height,'Caption start stays visible without scrolling through the form');
+      await p.getByText('Giải thích mức xử lý',{exact:true}).focus();await p.keyboard.press('Enter');assert(await p.locator('.processing-description').isVisible());
+      await p.getByText('Giải thích mức xử lý',{exact:true}).focus();await p.keyboard.press('Enter');
+      const radio=p.getByRole('radio',{name:'Phụ đề · Nhanh',exact:true});await radio.check();assert(await radio.isChecked(),'Sticky actions do not block processing controls');
+      writeFileSync(join(output,`compact-metrics-${viewport.width}.json`),JSON.stringify(metrics,null,2));
+    });
+  }
+  await check("New meetings default captions and translation on while applied presets keep explicit choices",{profiles:mockProfiles,naturalMeetingDefaults:true},async p=>{
+    assert(await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked());assert(await p.getByLabel('Dịch sang trong cuộc họp').isChecked());
+    await p.getByLabel('Dịch sang trong cuộc họp').uncheck();await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').uncheck();
+    await p.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();assert(await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked());assert(await p.getByLabel('Dịch sang trong cuộc họp').isChecked());
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key));root.presets.push({id:'quiet-preset',name:'Không phụ đề',mode:'meeting',tasks:{transcription:{profileId:'__local__',model:'moonshine-vi'}},source:'vi',quality:'balanced',captions:false,translate:false,target:'vi',transcribe:true});localStorage.setItem(key,JSON.stringify(root))});await p.reload();await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption('quiet-preset');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    assert(!await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked());assert(!await p.getByLabel('Dịch sang trong cuộc họp').isChecked());assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isEnabled());
+  });
+  await check("Meeting shows applied subtitle appearance and edits only the session copy",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key)),base=root.presets.find(p=>p.mode==='meeting');root.presets.push({...base,id:'visible-style',name:'Chữ lớn',captionStyle:{fontSize:36,align:'left',color:'#123456',backgroundColor:'#223344',showOriginal:true,transparent:false}});localStorage.setItem(key,JSON.stringify(root))});await p.reload();
+    const panel=p.locator('#meeting-caption-style');await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption('visible-style');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    assert(await panel.evaluate(el=>!!el.closest('.meeting-caption-setup')),'Appearance belongs inside the subtitle setup group');
+    const captionToggle=await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').boundingBox(),appearance=await panel.boundingBox();assert(appearance.y>captionToggle.y);
+    await p.waitForFunction(()=>document.querySelector('#meeting-caption-style [aria-label="Kiểu phụ đề hiện tại"]')?.textContent?.includes('36px'));
+    assert(await panel.getByLabel('Cỡ chữ phụ đề').isVisible());assert.equal(await panel.getByLabel('Cỡ chữ phụ đề').inputValue(),'36');assert.equal(await panel.getByLabel('Căn chữ phụ đề').inputValue(),'left');assert(await panel.getByLabel('Song ngữ',{exact:true}).isChecked());
+    await p.screenshot({path:join(output,'meeting-applied-subtitle-style.png')});
+    await panel.getByLabel('Cỡ chữ phụ đề').fill('28');await panel.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');assert.equal(await p.getByLabel('Mẫu cấu hình cuộc họp').inputValue(),'');
+    assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(p=>p.id==='visible-style').captionStyle.fontSize),36);
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();await p.getByRole('button',{name:'Cài đặt phụ đề',exact:true}).click();
+    assert.equal(await p.locator('#meeting-caption-style').getByLabel('Cỡ chữ phụ đề').inputValue(),'28');assert.equal(await p.locator('.preset-page').count(),0,'Runtime appearance controls stay on the meeting screen');
+    const activeStyle=p.locator('#meeting-caption-style').getByLabel('Cỡ chữ phụ đề');assert(await activeStyle.isVisible());await activeStyle.fill('30');await activeStyle.dispatchEvent('input');
+    assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')).fontSize),30);
+    assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(p=>p.id==='visible-style').captionStyle.fontSize),36);
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start').length),1);assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='stop'||c.cmd==='stop_caption')));
+  });
+  await check("Preset audit standalone reload, fallback and switching never launch a pending template",{profiles:[...mockProfiles,{id:'prof-groq',name:'Groq audit',provider:'groq',has_key:true,base_url:'',key_tail:'mock',created:'now'}]},async p=>{
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key)),style=root.presets[0].captionStyle;root.presets.push(
+      {id:'audit-groq',name:'Audit Groq',mode:'captionsonly',tasks:{caption:{profileId:'prof-groq',model:'whisper-large-v3',targetLang:'vi',translate:false,fallback:{profileId:'prof-soniox',model:'stt-rt-v5'}}},source:'en',quality:'accurate',translate:false,target:'vi',transcribe:true,captionStyle:{...style,fontSize:40}},
+      {id:'audit-soniox',name:'Audit Soniox',mode:'captionsonly',tasks:{caption:{profileId:'prof-soniox',model:'stt-rt-v5',targetLang:'vi',translate:true}},source:'en',quality:'balanced',translate:true,target:'vi',transcribe:true,captionStyle:{...style,fontSize:24}});localStorage.setItem(key,JSON.stringify(root))});
+    await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Mẫu cấu hình phụ đề').selectOption('audit-groq');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
+    assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');assert.equal(await p.getByLabel('Model phụ đề',{exact:true}).inputValue(),'whisper-large-v3');
+    await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();const first=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start_caption').args.options);assert.equal(first.speechQuality,'accurate');assert.equal(first.translate,false);assert.deepEqual(first.fallback,{profileId:'prof-soniox',model:'stt-rt-v5'});
+    await p.getByRole('button',{name:'Dừng phụ đề',exact:true}).click();await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).waitFor();
+    await p.getByLabel('Mẫu cấu hình phụ đề').selectOption('audit-soniox');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');
+    await p.getByLabel('Mẫu cấu hình phụ đề').selectOption('');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isEnabled());
+    await p.getByLabel('Mẫu cấu hình phụ đề').selectOption('audit-soniox');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start_caption').length),1);
+    await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();const second=await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start_caption').at(-1).args.options);assert.equal(second.profileId,'prof-soniox');assert.equal(second.model,'stt-rt-v5');assert.equal(second.translate,true);assert.equal(second.targetLanguage,'vi');assert.equal(second.fallback,null);
+  });
+  await check("Preset audit rejects unsupported languages and conflicting shared meeting models",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key)),base=root.presets.find(p=>p.mode==='meeting');root.presets.push({...base,id:'audit-language',name:'Bad language',source:'ja'},{...base,id:'audit-shared',name:'Conflicting shared',captions:true,translate:true,tasks:{transcription:{profileId:'__local__',model:'moonshine-vi'},caption:{profileId:'prof-soniox',model:'stt-rt-v5',targetLang:'vi',translate:true}}});localStorage.setItem(key,JSON.stringify(root))});await p.reload();
+    for(const id of ['audit-language','audit-shared']){await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption(id);await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();assert.equal(await p.getByText(/Áp mẫu thành công:/).count(),0);assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isDisabled());}
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='start')));
+  });
+  await check("Preset audit keeps Soniox translation, captions, quality and fallback after reload",{profiles:[...mockProfiles,{...mockProfiles[0],id:'prof-soniox-backup',name:'Soniox backup'}]},async p=>{
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key));root.presets.push({id:'audit-meeting',name:'Audit meeting',mode:'meeting',tasks:{transcription:{profileId:'prof-soniox',model:'stt-rt-v5',fallback:{profileId:'prof-soniox-backup',model:'stt-rt-v5'}},caption:{profileId:'prof-soniox',model:'stt-rt-v5',translate:true,targetLang:'en'}},source:'zh',quality:'fast',captions:true,translate:true,target:'en',transcribe:true,localFallback:false,captionStyle:{fontSize:34,color:'#123456',align:'left',showOriginal:true,transparent:false,backgroundColor:'#112233'}});localStorage.setItem(key,JSON.stringify(root))});
+    await p.reload();const captionAssign=await p.evaluate(()=>localStorage.getItem('may.task_assign.captionsonly'));
+    await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption('audit-meeting');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    await p.getByText('Áp mẫu thành công: Audit meeting',{exact:true}).waitFor();await p.reload();
+    assert.equal(await p.getByLabel('Cách chép lời',{exact:true}).inputValue(),'soniox');assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),'zh');
+    assert(await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked());assert(await p.getByLabel('Dịch sang trong cuộc họp').isChecked());assert.equal(await p.getByLabel('Ngôn ngữ bản dịch',{exact:true}).inputValue(),'en');
+    assert.equal(await p.evaluate(()=>localStorage.getItem('may.task_assign.captionsonly')),captionAssign);
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();const o=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
+    assert.equal(o.provider,'soniox');assert.equal(o.language,'zh');assert.equal(o.speechQuality,'fast');assert.equal(o.translationLanguage,'en');assert.equal(o.captionsEnabled,true);assert.deepEqual(o.transcriptionFallback,{profileId:'prof-soniox-backup',model:'stt-rt-v5'});
+  });
+  await check("Preset audit blocks false success and restores storage when applying fails",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key));const base=root.presets.find(p=>p.mode==='meeting');root.presets.push({...base,id:'audit-failure',name:'Audit write failure',source:'en',tasks:{transcription:{profileId:'__local__',model:'moonshine-en'}},captionStyle:{...base.captionStyle,fontSize:58}});localStorage.setItem(key,JSON.stringify(root));});await p.reload();
+    const before=await p.evaluate(()=>({assignment:localStorage.getItem('may.task_assign.meeting'),levels:localStorage.getItem('may.speech.processing-levels'),style:localStorage.getItem('innote.caption.style')}));
+    const language=await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue();
+    await p.evaluate(()=>{window.originalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='innote.caption.style'&&JSON.parse(v).fontSize===58)throw Error('quota');return window.originalSetItem.call(this,k,v)}});
+    await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption('audit-failure');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    await p.getByText(/Không lưu được cấu hình mẫu trên máy/).waitFor();assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),language);
+    assert.deepEqual(await p.evaluate(()=>({assignment:localStorage.getItem('may.task_assign.meeting'),levels:localStorage.getItem('may.speech.processing-levels'),style:localStorage.getItem('innote.caption.style')})),before);
+    assert.equal(await p.getByText('Áp mẫu thành công: Audit write failure',{exact:true}).count(),0);assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isDisabled());
+    await p.evaluate(()=>Storage.prototype.setItem=window.originalSetItem);await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();await p.getByText('Áp mẫu thành công: Audit write failure',{exact:true}).waitFor();
+  });
+  await check("Meeting preset selection waits for Apply and confirms the applied model and style",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Áp họp tiếng Anh');await p.getByLabel('Ngôn ngữ gốc của mẫu').selectOption('en');await p.getByLabel('Model chép lời local của mẫu').selectOption('moonshine-en');await p.getByLabel('Mức xử lý của mẫu').selectOption('fast');await p.getByLabel('Cỡ chữ phụ đề').fill('38');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    const id=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(x=>x.name==='Áp họp tiếng Anh').id);
+    await p.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();const original=await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue();const style=await p.evaluate(()=>localStorage.getItem('innote.caption.style'));
+    await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption(id);
+    assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isDisabled(),'Unapplied choice cannot launch old configuration');
+    assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),original);assert.equal(await p.evaluate(()=>localStorage.getItem('innote.caption.style')),style);
+    await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    await p.getByText('Áp mẫu thành công: Áp họp tiếng Anh',{exact:true}).waitFor();assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),'en');assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')).fontSize),38);
+    await p.screenshot({path:join(output,'meeting-preset-applied.png')});
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();const o=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);assert.equal(o.model,'moonshine-en');assert.equal(o.speechQuality,'fast');
+  });
+  await check("Standalone preset selection waits for Apply and confirms its provider",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();await p.getByLabel('Tên mẫu',{exact:true}).fill('Áp phụ đề Soniox');await p.getByLabel('Phụ đề trực tiếp',{exact:true}).selectOption('prof-soniox');await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    const id=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(x=>x.name==='Áp phụ đề Soniox').id);
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();const original=await p.getByLabel('Cấu hình AI phụ đề').inputValue();await p.getByLabel('Mẫu cấu hình phụ đề').selectOption(id);assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),original);
+    await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();await p.getByText('Áp mẫu thành công: Áp phụ đề Soniox',{exact:true}).waitFor();assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-soniox');
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='start_caption')),'Applying a preset must not start audio upload');
+  });
+  await check("Legacy presets inherit existing subtitle style without losing template choices",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>{
+      const key='innote.workflow-presets.v1',data=JSON.parse(localStorage.getItem(key));for(const preset of data.presets)delete preset.captionStyle;localStorage.setItem(key,JSON.stringify(data));
+      localStorage.setItem('innote.caption.style',JSON.stringify({fontSize:28,align:'left',color:'#123456',backgroundColor:'#654321',showOriginal:true,transparent:true}));
+    });
+    const before=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets);
+    await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    const after=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets);
+    assert.deepEqual(after.map(p=>p.id),before.map(p=>p.id));assert.deepEqual(after.map(p=>p.tasks),before.map(p=>p.tasks));assert(after.every(p=>p.captionStyle.fontSize===28&&p.captionStyle.color==='#123456'));
+  });
+  await check("Preset subtitle styles save per mode, cancel safely and apply with selected template",{profiles:mockProfiles},async p=>{
+    const key='innote.caption.style';const initial=await p.evaluate(key=>localStorage.getItem(key),key);
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    assert.equal(await p.locator('#caption-settings').count(),0,'No detached global caption settings');
+    await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();await p.getByLabel('Tên mẫu',{exact:true}).fill('Họp chữ 30');
+    await p.getByLabel('Cỡ chữ phụ đề').fill('30');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');
+    await p.getByLabel('Màu chữ phụ đề').fill('#ff0000');await p.getByLabel('Màu chữ phụ đề').dispatchEvent('input');
+    assert.equal(await p.evaluate(key=>localStorage.getItem(key),key),initial,'Draft changes must not affect live styles');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    const meeting=p.locator('.preset-row').filter({hasText:'Họp chữ 30'});await meeting.getByRole('button',{name:'Sửa',exact:true}).click();
+    await p.getByLabel('Cỡ chữ phụ đề').fill('50');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');await p.getByRole('button',{name:'Hủy chỉnh sửa',exact:true}).click();
+    const templates=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets);assert.equal(templates.find(x=>x.name==='Họp chữ 30').captionStyle.fontSize,30);
+    await meeting.getByRole('button',{name:'Sử dụng',exact:true}).click();assert.equal(await p.evaluate(key=>JSON.parse(localStorage.getItem(key)).fontSize,key),30);
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Phụ đề chữ 42');await p.getByLabel('Phụ đề trực tiếp',{exact:true}).selectOption('prof-soniox');
+    await p.getByLabel('Cỡ chữ phụ đề').fill('42');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');
+    await p.getByLabel('Song ngữ',{exact:true}).check();await p.getByLabel('Trong suốt',{exact:true}).check();await p.getByLabel('Căn chữ phụ đề').selectOption('left');
+    await p.screenshot({path:join(output,'subtitle-style-in-template.png')});
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Phụ đề chữ 42'}).getByRole('button',{name:'Sử dụng',exact:true}).click();
+    const style=await p.evaluate(key=>JSON.parse(localStorage.getItem(key)),key);assert.equal(style.fontSize,42);assert.equal(style.align,'left');assert(style.showOriginal&&style.transparent);
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Cuộc họp',exact:true}).click();await p.locator('.preset-row').filter({hasText:'Họp chữ 30'}).getByRole('button',{name:'Sử dụng',exact:true}).click();
+    assert.equal(await p.evaluate(key=>JSON.parse(localStorage.getItem(key)).fontSize,key),30);
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>['start','stop','start_caption','stop_caption'].includes(c.cmd))));
+  });
+  await check("Preset sidebar opens its catalog at the top with separate meeting and caption lists",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.locator('#local-model-settings').scrollIntoViewIfNeeded();
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+    await p.getByRole('heading',{name:'Ngôn ngữ giao diện',exact:true}).waitFor();
+    await p.getByRole('heading',{name:'Cập nhật',exact:true}).waitFor();
+    await p.getByRole('heading',{name:'Dữ liệu của bạn',exact:true}).waitFor();
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.preset-page')?.scrollTop===0);
+    assert.equal(await p.getByRole('tab',{name:'Cuộc họp',exact:true}).getAttribute('aria-selected'),'true');
+    await p.locator('.preset-row').filter({hasText:'Cuộc họp hiện tại'}).waitFor();
+    await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Phụ đề hiện tại'}).waitFor();
+    assert.equal(await p.locator('.preset-row').filter({hasText:'Cuộc họp hiện tại'}).count(),0);
+    assert.equal(await p.getByRole('heading',{name:'Ngôn ngữ giao diện',exact:true}).count(),0);
+  });
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}])await check(`Sidebar collapse persists and navigation remains usable ${viewport.width}x${viewport.height}`,{profiles:mockProfiles,viewport},async p=>{
+    const side=p.getByRole('complementary');
+    const expanded=await side.boundingBox();
+    await p.screenshot({path:join(output,`sidebar-expanded-${viewport.width}.png`)});
+    const toggle=p.getByRole('button',{name:'Thu gọn thanh bên',exact:true});
+    await toggle.focus();await p.keyboard.press('Enter');
+    await p.waitForFunction(()=>document.querySelector('.sidebar')?.getBoundingClientRect().width<90);
+    assert.equal(await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).getAttribute('aria-expanded'),'false');
+    assert(await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).evaluate(el=>el===document.activeElement));
+    assert((await side.boundingBox()).width<expanded.width/2);
+    for(const name of ['Cuộc họp mới','Chỉ phụ đề','Mẫu cấu hình','Danh sách cuộc họp','Cài đặt']){
+      const button=side.getByRole('button',{name,exact:true});assert(await button.isVisible());assert(await button.getAttribute('title'));
+    }
+    await side.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('heading',{name:'Mẫu cấu hình',exact:true}).waitFor();
+    await p.screenshot({path:join(output,`sidebar-collapsed-${viewport.width}.png`)});
+    assert(await side.evaluate(el=>el.scrollWidth<=el.clientWidth),'Collapsed sidebar has no horizontal overflow');
+    await p.reload();await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).waitFor();
+    await side.getByRole('button',{name:'Danh sách cuộc họp',exact:true}).click();await p.getByRole('dialog',{name:'Cuộc họp của bạn'}).waitFor();
+    await p.keyboard.press('Escape');await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.sidebar')?.getBoundingClientRect().width>200);
+    assert.equal(await p.evaluate(()=>localStorage.getItem('innote.sidebar.collapsed')),'false');
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>['start','stop','start_caption','stop_caption'].includes(c.cmd))));
+  });
+  await check("General settings stay separate from inline caption appearance and preset drafts",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();assert.equal(await p.locator('#caption-settings,#standalone-caption-style').count(),0);
+    const presets=await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1'));
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();const panel=p.locator('#standalone-caption-style');assert(await panel.getByLabel('Cỡ chữ phụ đề').isVisible());assert.equal(await p.locator('.preset-page').count(),0);
+    await panel.getByLabel('Cỡ chữ phụ đề').fill('30');await panel.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');assert.equal(await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1')),presets);
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Cỡ chữ phụ đề').fill('42');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')).fontSize),30,'Template drafts do not edit the live appearance');
+    await p.getByRole('button',{name:'Hủy chỉnh sửa',exact:true}).click();assert.equal(await p.locator('#caption-settings').count(),0);
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByRole('button',{name:'Kiểm tra cập nhật',exact:true}).waitFor();assert(!await p.evaluate(()=>window.qa.calls.some(c=>['start','stop','start_caption','stop_caption'].includes(c.cmd))));
+  });
+  await check("Workflow presets migrate, edit independently, apply meeting models and persist",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+    assert.equal(await p.getByText('Gán cấu hình cho tác vụ',{exact:true}).count(),0);
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Họp tiếng Anh');
+    await p.getByLabel('Ngôn ngữ gốc của mẫu').selectOption('en');
+    await p.getByLabel('Model chép lời local của mẫu').selectOption('moonshine-en');
+    await p.getByLabel('Mức xử lý của mẫu').selectOption('fast');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    const row=p.locator('.preset-row').filter({hasText:'Họp tiếng Anh'});await row.waitFor();
+    const saved=await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1'));
+    await row.getByRole('button',{name:'Sửa',exact:true}).click();await p.getByLabel('Tên mẫu',{exact:true}).fill('Không được lưu');
+    await p.getByRole('button',{name:'Hủy chỉnh sửa',exact:true}).click();assert.equal(await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1')),saved);
+    await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Họp tiếng Anh'}).getByRole('button',{name:'Sử dụng',exact:true}).click();
+    assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),'en');
+    await p.getByLabel('Ngôn ngữ',{exact:true}).selectOption('vi');
+    assert.equal(await p.getByLabel('Mẫu cấu hình cuộc họp').inputValue(),'','Editing a session switches to Custom and clears pending selection');
+    assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isEnabled());
+    assert.equal(await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1')),saved,'Session edits cannot change saved presets');
+    const id=JSON.parse(saved).presets.find(p=>p.name==='Họp tiếng Anh').id;
+    await p.getByLabel('Mẫu cấu hình cuộc họp').selectOption(id);await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
+    assert.equal(options.language,'en');assert.equal(options.model,'moonshine-en');assert.equal(options.speechQuality,'fast');
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    assert(await p.locator('.preset-row').filter({hasText:'Họp tiếng Anh'}).getByRole('button',{name:'Sử dụng',exact:true}).isDisabled());
+    await p.locator('.preset-row').filter({hasText:'Họp tiếng Anh'}).getByRole('button',{name:'Xóa',exact:true}).click();
+    await p.getByRole('button',{name:'Xóa mẫu',exact:true}).click();
+    assert.equal(await p.locator('.preset-row').filter({hasText:'Họp tiếng Anh'}).count(),0);
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='stop'||c.cmd==='delete_ai_profile')));
+  });
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}])await check(`Workflow presets editor layout ${viewport.width}x${viewport.height}`,{profiles:mockProfiles,viewport},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.screenshot({path:join(output,`preset-library-${viewport.width}.png`)});
+    await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Họp có phụ đề tiếng Việt');
+    if(viewport.width===1180){await p.getByLabel('Ngôn ngữ gốc của mẫu').selectOption('auto');await p.getByLabel('Mức xử lý của mẫu').selectOption('accurate');}
+    await p.getByLabel('Dịch sang trong mẫu').check();
+    await p.getByLabel('Phụ đề trực tiếp',{exact:true}).selectOption('prof-soniox');
+    await p.screenshot({path:join(output,`preset-editor-${viewport.width}.png`)});
+    assert(await p.locator('.preset-page').evaluate(el=>el.scrollWidth<=el.clientWidth),'Editor must not overflow horizontally');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Họp có phụ đề tiếng Việt'}).getByRole('button',{name:'Sử dụng',exact:true}).click();
+    assert.equal(await p.getByLabel('Cách chép lời',{exact:true}).inputValue(),'soniox');
+    await p.screenshot({path:join(output,`preset-launch-${viewport.width}.png`)});
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
+    assert.equal(options.provider,'soniox');assert.equal(options.profileId,'prof-soniox');assert.equal(options.translationLanguage,'vi');
+    if(viewport.width===1180){assert.equal(options.language,'multi');assert.equal(options.speechQuality,'accurate');}
+  });
+  await check("Workflow presets can be edited during a meeting without changing its engine",{profiles:mockProfiles,active:true},async p=>{
+    const before=await p.evaluate(()=>structuredClone(window.qa.snapshot));
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Cho lần họp sau');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Cho lần họp sau'}).waitFor();
+    assert.deepEqual(await p.evaluate(()=>window.qa.snapshot),before);
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>['start','stop','start_caption','stop_caption','set_meeting_translation'].includes(c.cmd))));
+    assert(await p.locator('.preset-row').filter({hasText:'Cho lần họp sau'}).getByRole('button',{name:'Sử dụng',exact:true}).isDisabled());
+  });
+  await check("Workflow presets reject deleted profiles without switching providers",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>localStorage.setItem('innote.workflow-presets.v1',JSON.stringify({version:1,presets:[{id:'missing',name:'API đã xóa',mode:'captionsonly',tasks:{caption:{profileId:'deleted-profile',model:'stt-rt-v5',targetLang:'vi',translate:true}},source:'en',quality:'balanced',translate:true,target:'vi'}]})));
+    await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();
+    await p.locator('.preset-row').getByRole('button',{name:'Sử dụng',exact:true}).click();
+    await p.getByText(/Cấu hình API cho .* không còn tồn tại/).waitFor();
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='start'||c.cmd==='start_caption')));
+  });
+  await check("Workflow presets captions keep named provider model and standalone options",{profiles:[...mockProfiles,{id:'prof-groq',name:'Groq Free',provider:'groq',base_url:'',has_key:true,key_tail:'mock',created:'2026-11-03'}]},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+    await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Luyện nghe Groq');
+    await p.getByLabel('Ngôn ngữ gốc của mẫu').selectOption('en');
+    await p.getByLabel('Dịch sang trong mẫu').uncheck();
+    await p.locator('.task-assign-grid').first().locator('select').first().selectOption('prof-groq');
+    await p.getByLabel('Model phụ đề',{exact:true}).selectOption('whisper-large-v3-turbo');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+    await p.locator('.preset-row').filter({hasText:'Luyện nghe Groq'}).getByRole('button',{name:'Sử dụng',exact:true}).click();
+    assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');
+    assert.equal(await p.getByLabel('Model phụ đề',{exact:true}).inputValue(),'whisper-large-v3-turbo');
+    await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();
+    const o=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start_caption').args.options);assert.equal(o.model,'whisper-large-v3-turbo');assert.equal(o.profileId,'prof-groq');assert.equal(o.translate,false);assert.equal(o.sourceLanguage,'en');
+  });
   await check("Recording transcript flows as one paragraph until ending, preserving segment timestamps", {active:true},async p=>{
     await openMeeting(p,'Phiên đang ghi');
     const stored=[{id:'flow-one',start:0,end:2,text:'Xin chào mọi người.',edited:false},{id:'flow-two',start:2,end:4,text:'Ngân sách là 15 triệu.',edited:false}];
@@ -488,7 +778,7 @@ try {
     profiles:mockProfiles,captionStatus:{provider:"groq",state:"active",sending:false,message:"Đang nghe đoạn tiếp theo"}
   },async p=>{
     const status=p.locator('.topbar .local-label');
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     await status.filter({hasText:'Groq'}).waitFor();
     assert(!(await status.innerText()).includes('Xử lý trên máy'));
     await p.reload();await status.filter({hasText:'Groq'}).waitFor();
@@ -508,7 +798,7 @@ try {
   await check("New caption text during startup preserves both the live cue and restored provider", {
     profiles:mockProfiles,delayCaptionSnapshot:1200,captionStatus:{provider:"groq",state:"active",sending:false,message:"Đang nghe"}
   },async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     await p.evaluate(async()=>{const{emit}=await import('/node_modules/@tauri-apps/api/event.js');await emit('caption-text',{text:'New confirmed cue',original:'',final_:true,translating:false});});
     await p.waitForTimeout(1400);
     assert((await p.locator('.topbar .local-label').innerText()).includes('Groq'));
@@ -523,19 +813,19 @@ try {
     await p.getByRole("button",{name:/English/}).click();
     await p.getByRole("button",{name:"New meeting",exact:true}).waitFor();
     assert.equal(await p.evaluate(()=>localStorage.getItem("may.ui_locale")),"en");
-    assert(await p.getByText(/Your meetings/).isVisible());
+    assert(await p.getByRole("button",{name:"Meeting list",exact:true}).isVisible());
     await p.screenshot({path:join(output,"language-english-900x640.png")});
   });
   await check("Settings switches the interface between Korean and Chinese", {viewport:{width:900,height:640}}, async p=>{
     await p.getByRole("button",{name:"Cài đặt",exact:true}).click();
-    const localeSelect = p.locator("select").first();
+    const localeSelect = p.locator(".settings-page select").first();
     await localeSelect.selectOption("ko");
     await p.getByRole("button",{name:"새 회의",exact:true}).waitFor();
-    assert(await p.getByText(/내 회의/).isVisible());
+    assert.equal(await localeSelect.inputValue(),'ko');
     await p.screenshot({path:join(output,"language-korean-900x640.png")});
     await localeSelect.selectOption("zh");
     await p.getByRole("button",{name:"新建会议",exact:true}).waitFor();
-    assert(await p.getByText(/你的会议/).isVisible());
+    assert.equal(await localeSelect.inputValue(),'zh');
     await p.screenshot({path:join(output,"language-chinese-900x640.png")});
   });
   await check("Updater banner offers a blocked-safe update action", {updateAvailable:true, viewport:{width:900,height:640}}, async p=>{
@@ -617,6 +907,7 @@ try {
   });
   await check("Korean Chinese and saved mixed preferences select the matching local model", {preferences:{system:'speaker',microphone:'mic',language:'multi',model:'moonshine-vi',transcribe:true}}, async p=>{
     assert.equal(await p.getByLabel('Ngôn ngữ',{exact:true}).inputValue(),'multi');
+    await p.getByText('Thông tin xử lý âm thanh',{exact:true}).click();
     for(const lang of ['ko','zh']) {await p.getByLabel('Ngôn ngữ',{exact:true}).selectOption(lang);assert.equal(await p.getByLabel('Model',{exact:true}).count(),0);assert((await p.locator('main').innerText()).includes(lang==='ko'?'Chép tiếng Hàn':'Chép tiếng Trung'));}
     await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
     const o=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);assert.equal(o.language,'zh');assert.equal(o.model,'nemotron-3.5-q8');
@@ -877,12 +1168,65 @@ try {
     await p.getByLabel('Cách chép lời',{exact:true}).selectOption('soniox');
     await p.getByLabel('Cấu hình Soniox',{exact:true}).selectOption('prof-soniox');
     assert.equal(await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked(),false);
-    assert.equal(await p.getByLabel('Dịch sang trong cuộc họp').count(),0);
+    assert.equal(await p.getByLabel('Dịch sang trong cuộc họp').count(),1);
+    assert(!await p.getByLabel('Dịch sang trong cuộc họp').isChecked());
     assert.equal(await p.getByLabel('Dự phòng local khi Soniox lỗi').isChecked(),false);
     await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
     const opts=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
     assert.equal(opts.provider,'soniox');assert.equal(opts.translationLanguage,null);assert.equal(opts.localFallback,false);
     assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='start_caption'||c.cmd==='open_caption_window')));
+  });
+  await check("Caption sidebar manages current meeting and opening overlay attaches its existing stream", {profiles:mockProfiles}, async p=>{
+    await p.getByLabel('Dịch sang trong cuộc họp').check();
+    await p.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:'prof-soniox',model:'stt-rt-v5'}));
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).first().click();
+    const panel=p.getByLabel('Phụ đề cuộc họp đang ghi');
+    await panel.waitFor();
+    assert(await p.getByLabel('Dịch sang trong phiên đang ghi').isChecked());
+    assert.equal(await p.getByLabel('Cấu hình AI phụ đề').count(),0,'Do not show unrelated standalone configuration');
+    await p.screenshot({path:join(output,'active-meeting-caption-panel.png')});
+    await p.getByRole('button',{name:'Hiện hộp phụ đề',exact:true}).click();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));
+    const calls=await p.evaluate(()=>window.qa.calls);
+    const options=calls.find(c=>c.cmd==='start_caption').args.options;
+    assert.equal(options.mode,'meeting');assert.equal(options.profileId,'prof-soniox');assert.equal(options.translate,true);
+    assert.equal(calls.filter(c=>c.cmd==='start').length,1);
+    await p.getByRole('button',{name:'Ẩn hộp phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Hiện hộp phụ đề',exact:true}).click();
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start_caption').length),1,'Showing again reuses active stream');
+    await p.getByRole('button',{name:'Về cuộc họp đang ghi',exact:true}).click();
+    await p.locator('.meeting-page').waitFor();
+  });
+  await check("Meeting translation works without initial captions and captions can start later", {profiles:mockProfiles}, async p=>{
+    await p.getByLabel('Dịch sang trong cuộc họp').check();
+    await p.getByLabel('Ngôn ngữ bản dịch',{exact:true}).selectOption('vi');
+    await p.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:'prof-soniox',model:'stt-rt-v5'}));
+    assert(!await p.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').isChecked());
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start'));
+    const opts=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
+    assert.equal(opts.translationLanguage,'vi');assert.equal(opts.captionsEnabled,false);
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='open_caption_window')));
+    await p.getByLabel('Nội dung hiển thị').selectOption('bilingual');
+    await p.evaluate(async()=>{const s=window.qa.snapshot.sessions.find(s=>s.id===window.qa.snapshot.active_id);const {emit}=await import('/node_modules/@tauri-apps/api/event.js');await emit('meeting-translation-preview',{id:s.id,language:'vi',text:'Bản dịch đang chạy.',committed:0})});
+    await p.locator('[data-live-translation]').getByText('Bản dịch đang chạy.',{exact:true}).waitFor();
+    await p.evaluate(async()=>{const s=window.qa.snapshot.sessions.find(s=>s.id===window.qa.snapshot.active_id);s.translations=[{id:'committed',source_id:'source',start:0,end:2,original:'你好',text:'Bản dịch đã chốt.',language:'vi',provider:'soniox'}];window.qa.snapshot.translation_preview={id:s.id,language:'vi',text:'Câu tiếp theo.',committed:1};const {emit}=await import('/node_modules/@tauri-apps/api/event.js');await emit('meeting-translation-preview',window.qa.snapshot.translation_preview);await emit('session-changed',s.id)});
+    await p.waitForFunction(()=>document.querySelector('.saved-translation')?.textContent==='Bản dịch đã chốt. Câu tiếp theo.');
+    await p.getByLabel('Nội dung hiển thị').selectOption('translation');
+    assert.equal((await p.locator('[data-live-translation]').innerText()).trim(),'Câu tiếp theo.');
+    assert.equal(await p.locator('[data-live-caption]').count(),0);
+    assert(await p.getByLabel('Dịch sang khi bật phụ đề').isEnabled());
+    await p.locator('.record-controls').getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));
+    const c=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start_caption').args.options);
+    assert.equal(c.translate,true);assert.equal(c.profileId,'prof-soniox');
+    await p.getByLabel('Dịch sang khi bật phụ đề').uncheck();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='set_meeting_translation'&&c.args.target===null));
+    await p.getByLabel('Dịch sang khi bật phụ đề').check();
+    await p.getByLabel('Ngôn ngữ dịch đích cuộc họp').selectOption('en');
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='set_meeting_translation'&&c.args.target==='en'));
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start_caption').length),1,'Translation changes do not start another capture worker');
   });
   await check("Soniox translation checkbox shares the meeting engine and automatically shows overlay", {profiles:mockProfiles}, async p=>{
     await p.getByLabel('Cách chép lời',{exact:true}).selectOption('soniox');
@@ -909,7 +1253,7 @@ try {
     assert.equal(await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).count(),0);
   });
   await check("Standalone original captions do not translate or hide original behind bilingual setting", {profiles:mockProfiles}, async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     assert(!await p.getByLabel('Dịch sang',{exact:true}).isChecked());
     assert.equal(await p.getByLabel('Ngôn ngữ dịch đích').count(),0);
     await p.getByLabel('Ngôn ngữ gốc').selectOption('en');
@@ -921,24 +1265,24 @@ try {
     assert.equal(await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).count(),0);
   });
   await check("Local Moonshine captions need no profile or API and persist after reload", {profiles:[]},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');await p.getByLabel('Model phụ đề').selectOption('moonshine-vi');
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');await p.getByLabel('Model phụ đề').selectOption('moonshine-vi');
     assert.equal(await p.getByRole('button',{name:'Kiểm tra model',exact:true}).count(),0);
-    await p.reload();await p.getByRole('button',{name:'Phụ đề',exact:true}).click();assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'__local__');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'moonshine-vi');
+    await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'__local__');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'moonshine-vi');
     await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));
     const calls=await p.evaluate(()=>window.qa.calls),o=calls.find(c=>c.cmd==='start_caption').args.options;assert.equal(o.profileId,'__local__');assert.equal(o.model,'moonshine-vi');assert.equal(o.translate,false);assert.equal(o.apiKey,'');assert.equal(o.fallback,null);assert(!calls.some(c=>c.cmd==='test_ai_connection'||c.cmd==='start'));
   });
   await check("Local caption models follow source language and cannot translate",{},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'moonshine-vi');
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'moonshine-vi');
     await p.getByLabel('Ngôn ngữ gốc').selectOption('en');const moon=p.getByLabel('Model phụ đề').locator('option[value="moonshine-vi"]');await p.getByLabel('Model phụ đề').locator('option[value="moonshine-vi"]:disabled').waitFor({state:'attached'});assert((await moon.innerText()).includes('Đã tải'));assert(await moon.evaluate(o=>o.disabled));assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());await p.getByLabel('Model phụ đề').selectOption('nemotron-3.5-q8');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isEnabled());await p.getByLabel('Model phụ đề').scrollIntoViewIfNeeded();await p.screenshot({path:join(output,'local-installed-models-english.png')});
     await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Model phụ đề').locator('option[value="moonshine-vi"]:not(:disabled)').waitFor({state:'attached'});assert(!await moon.evaluate(o=>o.disabled));await p.getByLabel('Model phụ đề').selectOption('moonshine-vi');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isEnabled());
     await p.getByLabel('Dịch sang',{exact:true}).check();assert.equal(await p.getByLabel('Cấu hình AI phụ đề').locator('option[value="__local__"]').count(),0);assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());
   });
   await check("Local caption model must be installed before starting",{missingBundled:true},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());await p.getByText('Thiếu model đi kèm. Hãy cài lại Innote.',{exact:false}).waitFor();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Ngôn ngữ gốc').selectOption('vi');await p.getByLabel('Cấu hình AI phụ đề').selectOption('__local__');assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());await p.getByText('Thiếu model đi kèm. Hãy cài lại Innote.',{exact:false}).waitFor();
   });
   const groqProfile={id:'prof-groq',name:'Groq Free',provider:'groq',base_url:'',has_key:true,key_tail:'mock',created:'2026-11-03'};
   await check("Processing levels preserve Groq model, profile and language across reload",{profiles:[groqProfile]},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     await p.getByLabel('Ngôn ngữ gốc').selectOption('en');await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-groq');
     await p.getByLabel('Model phụ đề').selectOption('whisper-large-v3-turbo');
     for(const label of ['Nhanh','Cân bằng','Chính xác']) {
@@ -946,8 +1290,9 @@ try {
       assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'whisper-large-v3-turbo');assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');
       assert.equal(await p.getByLabel('Ngôn ngữ gốc').inputValue(),'en');
     }
-    await p.reload();await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     assert(await p.getByRole('radio',{name:'Phụ đề · Chính xác',exact:true}).isChecked());
+    await p.getByText('Giải thích mức xử lý',{exact:true}).click();
     assert((await p.getByText(/Giữ nguyên model Whisper:/).innerText()).includes('4 giây'));
     await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();
     await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));
@@ -960,18 +1305,19 @@ try {
     await p.getByLabel('Ngôn ngữ',{exact:true}).selectOption('en');
     await p.getByLabel('Model chép lời local',{exact:true}).selectOption('nemotron-3.5-q8');
     await p.getByRole('radio',{name:'Cuộc họp · Nhanh',exact:true}).check();
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     await p.getByLabel('Ngôn ngữ gốc').selectOption('en');await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-groq');
     assert(await p.getByRole('radio',{name:'Phụ đề · Cân bằng',exact:true}).isChecked());
     await p.getByRole('radio',{name:'Phụ đề · Chính xác',exact:true}).check();
     await p.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();
     assert.equal(await p.getByLabel('Model chép lời local',{exact:true}).inputValue(),'nemotron-3.5-q8');
+    await p.getByLabel('Dịch sang trong cuộc họp').uncheck();
     assert(await p.getByRole('radio',{name:'Cuộc họp · Nhanh',exact:true}).isChecked());
     await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start'));
     const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);assert.equal(options.model,'nemotron-3.5-q8');assert.equal(options.speechQuality,'fast');
   });
   await check("Processing levels do not pretend fixed APIs expose accuracy controls",{profiles:mockProfiles},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByLabel('Dịch sang',{exact:true}).check();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Dịch sang',{exact:true}).check();
     await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-openai');
     assert(await p.getByRole('radio',{name:'Phụ đề · Nhanh',exact:true}).isDisabled());assert(await p.getByRole('radio',{name:'Phụ đề · Chính xác',exact:true}).isDisabled());
     assert(await p.getByRole('radio',{name:'Phụ đề · Cân bằng',exact:true}).isChecked());
@@ -989,19 +1335,18 @@ try {
     await d.getByLabel('Tên cấu hình').fill('groq1');await d.getByLabel('API key',{exact:true}).fill('mock-key');await d.getByRole('button',{name:'Kiểm tra kết nối',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='test_ai_connection'));const input=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='test_ai_connection').args.input);assert.equal(input.model,'');assert.equal(input.baseUrl,'');
   });
   await check("Aliased models distinguish two Groq profiles and caption fallback persists as raw IDs", {profiles:[...mockProfiles,groqProfile,{...groqProfile,id:'prof-groq2',name:'groq2'}]}, async p=>{
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByRole('tab',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Dịch sang cho phụ đề dùng riêng').uncheck();
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();await p.getByLabel('Dịch sang trong mẫu').uncheck();
     await p.locator('label',{hasText:'Phụ đề trực tiếp'}).locator('select').first().selectOption('prof-groq');
     const model=p.getByLabel('Model phụ đề',{exact:true});assert((await model.locator('option').allTextContents()).includes('Groq Free/whisper-large-v3-turbo'));
     const fallback=p.getByLabel('Dự phòng · Phụ đề trực tiếp',{exact:true});const choice={profileId:'prof-groq2',model:'whisper-large-v3'};await fallback.selectOption(JSON.stringify(choice));assert((await fallback.locator('option:checked').innerText()).includes('groq2/whisper-large-v3'));
-    await p.getByLabel('Dịch sang cho phụ đề dùng riêng').check();assert(!(await fallback.locator('option').allTextContents()).some(s=>s.includes('groq2/whisper')));
-    await p.getByLabel('Dịch sang cho phụ đề dùng riêng').uncheck();assert((await fallback.locator('option').allTextContents()).some(s=>s.includes('groq2/whisper')));
-    await p.getByRole('tab',{name:'Trong cuộc họp',exact:true}).click();assert.equal(await p.locator('.task-fallbacks select').count(),4);
-    await p.getByRole('tab',{name:'Chỉ phụ đề',exact:true}).click();assert.equal(await p.locator('.task-fallbacks select').count(),1);
+    await p.getByLabel('Dịch sang trong mẫu').check();assert(!(await fallback.locator('option').allTextContents()).some(s=>s.includes('groq2/whisper')));
+    await p.getByLabel('Dịch sang trong mẫu').uncheck();assert((await fallback.locator('option').allTextContents()).some(s=>s.includes('groq2/whisper')));
+    assert.equal(await p.locator('.task-fallbacks select').count(),1);
     await p.locator('.task-fallbacks').scrollIntoViewIfNeeded();await p.screenshot({path:join(output,'profile-alias-fallback.png')});
-    await p.reload();await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));const options=await p.evaluate(()=>window.qa.caption.options);assert.deepEqual(options.fallback,choice);assert.equal(options.model,'whisper-large-v3-turbo');
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Groq có dự phòng');await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();await p.locator('.preset-row').filter({hasText:'Groq có dự phòng'}).getByRole('button',{name:'Sử dụng',exact:true}).click();await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));const options=await p.evaluate(()=>window.qa.caption.options);assert.deepEqual(options.fallback,choice);assert.equal(options.model,'whisper-large-v3-turbo');
   });
   await check("Groq Whisper is selectable for original captions without translation and keeps model choice", {profiles:[...mockProfiles,groqProfile]}, async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-groq');
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-groq');
     const models=await p.getByLabel('Model phụ đề').locator('option').allTextContents();assert(models.includes('Groq Free/whisper-large-v3')&&models.includes('Groq Free/whisper-large-v3-turbo'));assert(!models.includes('openai/gpt-oss-20b'));
     await p.getByLabel('Model phụ đề').selectOption('whisper-large-v3');await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_caption'));
     const opts=await p.evaluate(()=>window.qa.caption.options);assert.equal(opts.model,'whisper-large-v3');assert.equal(opts.profileId,'prof-groq');assert.equal(opts.translate,false);
@@ -1009,24 +1354,31 @@ try {
     await p.getByLabel('Dịch sang',{exact:true}).check();assert(await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).isDisabled());
   });
   await check("Groq original-caption assignment persists through Settings and restart", {profiles:[...mockProfiles,groqProfile]}, async p=>{
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByRole('tab',{name:'Chỉ phụ đề',exact:true}).click();
-    await p.getByLabel('Dịch sang cho phụ đề dùng riêng').uncheck();
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Dịch sang trong mẫu').uncheck();
     const profile=p.locator('label',{hasText:'Phụ đề trực tiếp'}).locator('select').first();await profile.selectOption('prof-groq');await p.getByLabel('Model phụ đề').selectOption('whisper-large-v3');
-    await p.reload();await p.getByRole('button',{name:'Phụ đề',exact:true}).click();assert(!await p.getByLabel('Dịch sang',{exact:true}).isChecked());assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'whisper-large-v3');
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Groq saved');await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();await p.locator('.preset-row').filter({hasText:'Groq saved'}).getByRole('button',{name:'Sử dụng',exact:true}).click();assert(!await p.getByLabel('Dịch sang',{exact:true}).isChecked());assert.equal(await p.getByLabel('Cấu hình AI phụ đề').inputValue(),'prof-groq');assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'whisper-large-v3');
   });
   await check("Groq text tasks offer GPT OSS and Qwen but never Whisper", {profiles:[...mockProfiles,groqProfile]}, async p=>{
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();const summary=p.locator('label',{hasText:'Tóm tắt'}).locator('select').first();await summary.selectOption('prof-groq');
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();const summary=p.locator('label',{hasText:'Tóm tắt'}).locator('select').first();await summary.selectOption('prof-groq');
     const values=await p.getByLabel('Tóm tắt · Model',{exact:true}).locator('option').evaluateAll(options=>options.map(o=>o.value));for(const m of ['openai/gpt-oss-20b','openai/gpt-oss-120b','qwen/qwen3.8-27b'])assert(values.includes(m));assert(!values.includes('whisper-large-v3'));
   });
-  await check("Caption appearance is only in shared Settings and reachable from caption page", {profiles:mockProfiles}, async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
-    await p.getByRole('button',{name:'Cài đặt chữ và hộp phụ đề',exact:true}).click();
-    await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).click();
-    await p.getByLabel('Cỡ chữ phụ đề').fill('34');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');
-    await p.getByLabel('Trong suốt',{exact:true}).check();
-    await p.reload();await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).click();
-    assert.equal(await p.getByLabel('Cỡ chữ phụ đề').inputValue(),'34');assert(await p.getByLabel('Trong suốt',{exact:true}).isChecked());
-  });
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
+    await check(`Inline caption appearance applies presets and edits only the session ${viewport.width}`,{viewport,profiles:mockProfiles},async p=>{
+      const presetsBefore=await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1'));
+      await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();const panel=p.locator('#standalone-caption-style');
+      assert(await panel.getByLabel('Cỡ chữ phụ đề').isVisible(),'Appearance opens in the caption page by default');assert.equal(await p.locator('.preset-page').count(),0);
+      await panel.getByLabel('Cỡ chữ phụ đề').fill('34');await panel.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');await panel.getByLabel('Song ngữ',{exact:true}).check();
+      assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')).fontSize),34);assert.equal(await p.evaluate(()=>localStorage.getItem('innote.workflow-presets.v1')),presetsBefore,'Editing session appearance cannot mutate a saved template');
+      await p.evaluate(()=>{const key='innote.workflow-presets.v1',root=JSON.parse(localStorage.getItem(key)),base=root.presets.find(x=>x.mode==='captionsonly');root.presets.push({...base,id:'inline-style',name:'Phụ đề chữ xanh',source:'en',translate:false,tasks:{caption:{profileId:'prof-soniox',model:'stt-rt-v5',targetLang:'vi',translate:false}},captionStyle:{fontSize:40,align:'left',color:'#112233',backgroundColor:'#334455',showOriginal:true,transparent:false}});localStorage.setItem(key,JSON.stringify(root));});await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
+      assert.equal(await panel.locator('summary').count(),0,'No disclosure to hide the appearance fields');assert.equal(await p.getByText('Thu từ loa/tai nghe',{exact:true}).count(),0);await p.getByLabel('Mẫu cấu hình phụ đề').selectOption('inline-style');await p.getByRole('button',{name:'Áp mẫu',exact:true}).click();
+      await p.waitForFunction(()=>document.querySelector('#standalone-caption-style [aria-label="Cỡ chữ phụ đề"]')?.value==='40');assert(await panel.getByLabel('Cỡ chữ phụ đề').isVisible(),'Applying a template keeps appearance visible');assert.equal(await panel.getByLabel('Căn chữ phụ đề').inputValue(),'left');assert.equal(await panel.getByLabel('Màu chữ phụ đề').inputValue(),'#112233');assert.equal(await panel.getByLabel('Màu nền hộp phụ đề').inputValue(),'#334455');assert(await panel.getByLabel('Song ngữ',{exact:true}).isChecked());assert(!await panel.getByLabel('Trong suốt',{exact:true}).isChecked());
+      await panel.scrollIntoViewIfNeeded();assert(await p.locator('.caption-page').evaluate(el=>el.scrollWidth<=el.clientWidth));assert.equal(await panel.locator('.caption-customize-fields').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),2);await p.locator('.toast').waitFor({state:'hidden'});await p.screenshot({path:join(output,`inline-caption-style-${viewport.width}.png`)});
+      await panel.getByLabel('Cỡ chữ phụ đề').fill('30');await panel.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');assert.equal(await p.getByLabel('Mẫu cấu hình phụ đề').inputValue(),'');assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(x=>x.id==='inline-style').captionStyle.fontSize),40);
+      await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-soniox');await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await p.getByRole('button',{name:'Dừng phụ đề',exact:true}).waitFor();await panel.getByLabel('Căn chữ phụ đề').selectOption('center');assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='start_caption').length),1);assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='stop_caption')),'Live appearance edits do not restart the audio engine');assert.equal(await p.locator('.preset-page').count(),0);await p.getByRole('button',{name:'Dừng phụ đề',exact:true}).click();
+      await p.reload();await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();assert.equal(await panel.getByLabel('Cỡ chữ phụ đề').inputValue(),'30');assert.equal(await panel.getByLabel('Căn chữ phụ đề').inputValue(),'center');
+    });
+  }
   await check("Saved original and translated text can be viewed, copied and exported independently", {profiles:mockProfiles,bilingual:true}, async p=>{
     await openMeeting(p,'Cuộc họp Alpha');
     await p.getByLabel('Nội dung hiển thị').selectOption('bilingual');
@@ -1168,7 +1520,7 @@ try {
     "Failed model download can be retried and releases progress",
     { missingModels: true, failDownload: true },
     async (p) => {
-      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
+      await p.getByRole("button", { name: "Mẫu cấu hình", exact: true }).click();
       await p
         .getByRole("button", { name: "Tải model", exact: true })
         .first()
@@ -1366,11 +1718,8 @@ try {
       );
       assert.equal(opts.provider, "soniox");
       assert(!JSON.stringify(opts).includes("fake-ui-secret"));
-      assert(
-        await p
-          .getByText("Soniox · dịch vụ ngoài", { exact: true })
-          .isVisible(),
-      );
+      await p.evaluate(async()=>{const {emit}=await import('/node_modules/@tauri-apps/api/event.js');await emit('caption-status',{state:'listening',provider:'soniox',sending:true,message:'Đang gửi âm thanh lên Soniox'});});
+      await p.locator(".local-label").filter({hasText:"Soniox"}).waitFor();
     },
   );
   await check(
@@ -1395,24 +1744,14 @@ try {
     await p.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();
     assert.equal(await p.getByLabel('Cách chép lời').inputValue(),'local');
   });
-  await check("Caption presentation controls live inside Innote", {profiles:mockProfiles}, async(p)=>{
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
-    await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).click();
-    const bilingual=p.getByRole('checkbox',{name:'Song ngữ',exact:true});
-    assert.equal(await bilingual.isChecked(),false);
-    await bilingual.check();
-    await p.getByLabel('Cỡ chữ phụ đề').fill('32');
-    await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');
-    await p.getByLabel('Căn chữ phụ đề').selectOption('left');
-    const style=await p.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')));
-    assert.equal(style.showOriginal,true);assert.equal(style.fontSize,32);assert.equal(style.align,'left');
-    await p.reload();
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
-    await p.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).click();
-    assert(await p.getByRole('checkbox',{name:'Song ngữ',exact:true}).isChecked());
+  await check("Caption presentation controls edit and persist a named template",{profiles:mockProfiles},async p=>{
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+    await p.getByLabel('Tên mẫu',{exact:true}).fill('Chữ song ngữ');await p.getByLabel('Song ngữ',{exact:true}).check();await p.getByLabel('Cỡ chữ phụ đề').fill('32');await p.getByLabel('Cỡ chữ phụ đề').dispatchEvent('input');await p.getByLabel('Căn chữ phụ đề').selectOption('left');
+    await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();await p.reload();await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.locator('.preset-row').filter({hasText:'Chữ song ngữ'}).getByRole('button',{name:'Sửa',exact:true}).click();
+    assert.equal(await p.getByLabel('Cỡ chữ phụ đề').inputValue(),'32');assert(await p.getByLabel('Song ngữ',{exact:true}).isChecked());assert.equal(await p.getByLabel('Căn chữ phụ đề').inputValue(),'left');
   });
   await check("Settings offers bundled Moonshine and only downloads optional Nemotron",{missingModels:true},async p=>{
-    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+    await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
     assert.equal(await p.locator('.model-row').filter({hasText:/PhoWhisper/}).count(),0);
     for(const name of ['Moonshine · Tiếng Việt · Có sẵn','Moonshine · English · Có sẵn']) {
       const row=p.locator('.model-row').filter({hasText:name});
@@ -1436,7 +1775,7 @@ try {
     assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='download_model')));
   });
   await check("Old local caption preferences migrate without changing historical transcripts",{preferences:{system:'speaker',language:'vi',model:'phowhisper-small'},standalone:{profileId:'__local__',model:'phowhisper-small',translate:false,sourceLang:'vi'},profiles:[]},async p=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     assert.equal(await p.getByLabel('Model phụ đề').inputValue(),'moonshine-vi');
     assert.equal(await p.getByLabel('Model phụ đề').locator('option[value="phowhisper-small"]').count(),0);
     const saved=await p.evaluate(()=>JSON.parse(localStorage.getItem('may.caption.standalone')));
@@ -1690,8 +2029,6 @@ await check(
   await check("Adding Soniox updates every eligible selector immediately; deleting removes it without reload",
     { profiles: [mockProfiles[1]] }, async (p) => {
       await p.getByRole("button", {name:"Cài đặt",exact:true}).click();
-      const caption = p.locator("label", {hasText:"Phụ đề trực tiếp"}).locator("select").first();
-      assert.equal(await caption.locator("option").count(),2);
       await p.getByRole("button", {name:"Thêm cấu hình",exact:true}).click();
       const d=p.getByRole("dialog",{name:"Thêm cấu hình"});
       await d.getByLabel("Tên cấu hình").fill("Soniox added during this session");
@@ -1701,16 +2038,19 @@ await check(
       const save=d.getByRole("button",{name:"Thêm cấu hình",exact:true});
       await p.waitForFunction(()=>!document.querySelector(".profile-fields")?.disabled);
       await save.click();
+      await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+      const caption=p.getByLabel('Phụ đề trực tiếp',{exact:true});
       await caption.locator('option[value="prof-new"]').waitFor({state:"attached"});
       await caption.selectOption("prof-new");
       assert.equal(await p.getByLabel("Model phụ đề").inputValue(),"stt-rt-v5");
       const transcription=p.locator("label",{hasText:"Chép lời (transcription)"}).locator("select").first();
       assert.equal(await transcription.locator('option[value="prof-new"]').count(),1);
+      await p.getByRole("button",{name:"Cài đặt",exact:true}).click();
       const card=p.locator(".ai-profile-card").filter({hasText:"Soniox added during this session"});
       // Select by the visible profile row, independently of row CSS naming.
       const row=p.getByText("Soniox added during this session",{exact:true}).locator("..").locator("..");
       await row.getByRole("button",{name:"Xóa",exact:true}).click();
-      await p.waitForFunction(()=>!document.querySelector('.task-assign-grid select option[value="prof-new"]'));
+      await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
       assert.equal(await transcription.locator('option[value="prof-new"]').count(),0);
     });
 
@@ -1773,21 +2113,15 @@ await check(
     "Task assignment persists separately for meeting and caption-only modes",
     { viewport: { width: 1180, height: 800 }, profiles: mockProfiles },
     async (p) => {
-      await p.getByRole("button", { name: "Cài đặt", exact: true }).click();
-      await p.getByText("Gán cấu hình cho tác vụ", { exact: true }).waitFor();
-      const labels = ["Chép lời (transcription)", "Phụ đề trực tiếp"];
-      const selects = labels.map((label) =>
-        p.locator("label", { hasText: label }).locator("select").first(),
-      );
-      await selects[0].selectOption("__local__");
-      await selects[1].selectOption("prof-soniox");
-      const stored = await p.evaluate(() =>
-        JSON.parse(localStorage.getItem("may.task_assign.meeting") ?? "{}"),
-      );
-      assert.equal(stored.transcription.profileId, "__local__");
-      assert.equal(stored.caption.profileId, "prof-soniox");
-      await p.getByRole("tab", { name: "Chỉ phụ đề" }).click();
-      await p.getByRole("tab", { name: "Trong cuộc họp" }).click();
+      await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
+      await p.getByRole('button',{name:'Tạo mẫu',exact:true}).click();
+      await p.getByLabel('Tên mẫu',{exact:true}).fill('Mẫu họp');
+      await p.locator('label',{hasText:'Chép lời (transcription)'}).locator('select').first().selectOption('__local__');
+      await p.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
+      await p.getByRole('tab',{name:'Phụ đề',exact:true}).click();
+      assert.equal(await p.locator('.preset-row').filter({hasText:'Mẫu họp'}).count(),0);
+      await p.getByRole('tab',{name:'Cuộc họp',exact:true}).click();
+      await p.locator('.preset-row').filter({hasText:'Mẫu họp'}).waitFor();
       await p.screenshot({ path: join(output, "task-assign-1180x800.png") });
     },
   );
@@ -1796,7 +2130,7 @@ await check(
     "Caption-only page starts and stops a standalone caption session",
     { viewport: { width: 1180, height: 800 }, profiles: mockProfiles },
     async (p) => {
-      await p.getByRole("button", { name: "Phụ đề", exact: true }).click();
+      await p.getByRole("button", { name: "Chỉ phụ đề", exact: true }).click();
       await p.getByLabel("Cấu hình AI phụ đề").selectOption("prof-soniox");
       await p.getByLabel("Model phụ đề").selectOption("stt-rt-v5");
       await p.getByRole("button", { name: "Bắt đầu phụ đề", exact: true }).click();
@@ -1817,7 +2151,7 @@ await check(
   );
 
   await check("Caption page only offers dedicated realtime models and tests model access", { profiles: mockProfiles }, async (p) => {
-    await p.getByRole("button", { name:"Phụ đề", exact:true }).click();
+    await p.getByRole("button", { name:"Chỉ phụ đề", exact:true }).click();
     await p.getByLabel("Dịch sang",{exact:true}).check();
     for (const [id, model] of [["prof-soniox","stt-rt-v5"],["prof-openai","gpt-realtime-translate"],["prof-gemini","gemini-3.5-live-translate-preview"]]) {
       await p.getByLabel("Cấu hình AI phụ đề").selectOption(id);
@@ -1827,14 +2161,14 @@ await check(
     }
     await p.getByLabel("Ngôn ngữ dịch đích").selectOption("en");
     await p.reload();
-    await p.getByRole("button", { name:"Phụ đề", exact:true }).click();
+    await p.getByRole("button", { name:"Chỉ phụ đề", exact:true }).click();
     assert.equal(await p.getByLabel("Cấu hình AI phụ đề").inputValue(),"prof-gemini");
     assert.equal(await p.getByLabel("Model phụ đề").inputValue(),"gemini-3.5-live-translate-preview");
     assert.equal(await p.getByLabel("Ngôn ngữ dịch đích").inputValue(),"en");
   });
 
   await check("Caption visibility starts off, previews without upload, auto-shows and hides independently", {profiles:mockProfiles}, async(p)=>{
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     const show=p.getByRole('button',{name:'Hiện hộp phụ đề',exact:true});
     assert.equal(await show.getAttribute('aria-pressed'),'false');
     await show.click();
@@ -1857,7 +2191,7 @@ await check(
 
   for (const viewport of [{ width: 900, height: 640 }, { width: 1180, height: 800 }]) {
     await check(`Caption form spacing and running controls ${viewport.width}x${viewport.height}`, { viewport, profiles: mockProfiles }, async (p) => {
-      await p.getByRole("button", { name: "Phụ đề", exact: true }).click();
+      await p.getByRole("button", { name: "Chỉ phụ đề", exact: true }).click();
       assert(await p.getByLabel("Model phụ đề").isDisabled(), "No profile means no model to select");
       const layout = await p.locator(".caption-mode-row label").evaluateAll(labels => labels.map(label => {
         const range = document.createRange(); range.selectNodeContents(label.firstChild);
@@ -1879,7 +2213,7 @@ await check(
   }
 
   await check("Stopping captions waits for the backend worker before offering restart", { profiles: mockProfiles, delayCaptionStop: true }, async (p) => {
-    await p.getByRole('button',{name:'Phụ đề',exact:true}).click();
+    await p.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
     await p.getByLabel('Cấu hình AI phụ đề').selectOption('prof-soniox');
     await p.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();
     await p.getByRole('button',{name:'Dừng phụ đề',exact:true}).click();

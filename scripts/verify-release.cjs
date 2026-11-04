@@ -2,7 +2,7 @@
 // installed clients. Never reads the private signing key or its password.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {createPublicKey,createHash,verify}=require('node:crypto');
-const version=process.argv[2]||'0.8.5',dir=path.resolve(process.argv[3]||'release');
+const version=process.argv[2]||JSON.parse(fs.readFileSync('package.json','utf8')).version,dir=path.resolve(process.argv[3]||'release');
 const config=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 const manifest=JSON.parse(fs.readFileSync(path.join(dir,'latest.json'),'utf8'));
 const file=path.join(dir,`Innote-Setup-${version}.exe`),bytes=fs.readFileSync(file);

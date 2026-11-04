@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(process.env.PLAYWRIGHT_MODULE).href:'playwright');
 const browser=await chromium.launch({channel:'chrome',headless:true}),results=[];
+const version=JSON.parse(readFileSync('package.json','utf8')).version;
 const key='innote.release-notice.v1',out='test-results/release-notice';mkdirSync(out,{recursive:true});
 async function check(name,options,run){
  const context=await browser.newContext({viewport:options.viewport??{width:900,height:640}});
@@ -16,7 +17,7 @@ const absent=async p=>assert.equal(await p.locator('dialog[open]').count(),0);
 try{
  await check('Fresh installation does not announce an upgrade',{},async p=>{await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);});
  await check('Legacy upgrade: X dismisses once and survives reload',{query:'existing=1'},async p=>{
-  await p.getByRole('dialog').waitFor();await p.screenshot({path:out+'/whats-new-900x640.png'});
+  await p.getByRole('dialog').waitFor();assert.equal(await p.locator('.release-version').innerText(),'v'+version);await p.screenshot({path:out+'/whats-new-900x640.png'});
   await p.getByRole('button',{name:'Đóng thông báo cập nhật',exact:true}).click();await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);
  });
  await check('Upgrade contains keyboard focus and Escape remembers dismissal',{viewport:{width:1180,height:800},state:{version:'0.8.4',pending:null}},async p=>{
@@ -25,11 +26,11 @@ try{
   await p.keyboard.press('Escape');await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);
  });
  await check('Busy mode defers without consuming pending notes',{query:'ready=0',state:{version:'0.8.4',pending:null}},async p=>{
-  await absent(p);assert.equal(await p.evaluate(key=>JSON.parse(localStorage.getItem(key)).pending,key),'0.8.5');
+  await absent(p);assert.equal(await p.evaluate(key=>JSON.parse(localStorage.getItem(key)).pending,key),version);
   await p.goto('http://127.0.0.1:1420/scripts/fixtures/release-notice.html?ready=1');await p.getByRole('dialog').waitFor();
   await p.getByRole('button',{name:'Đã hiểu',exact:true}).click();await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);
  });
- await check('Downgrade does not show old release notes',{state:{version:'0.8.6',pending:null}},absent);
+ await check('Downgrade does not show old release notes',{state:{version:'99.0.0',pending:null}},absent);
  await check('Development preview does not change real upgrade history',{query:'version=0.8.4&existing=1'},async p=>{
   await absent(p);const before=await p.evaluate(key=>localStorage.getItem(key),key);
   await p.evaluate(()=>window.dispatchEvent(new Event('innote:preview-whats-new')));await p.getByRole('dialog').waitFor();

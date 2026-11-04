@@ -65,6 +65,8 @@ const part1 = {
   modelMissingBundled: "내장 모델이 없습니다. Innote를 다시 설치하세요.",
   modelMigrated: "PhoWhisper가 내장 Moonshine으로 대체되었습니다. 기존 로컬 선택은 업데이트되며 저장된 전사는 유지됩니다.",
   processingLevel: "처리 수준",
+  processingHelp: "처리 수준 안내",
+  readyTranslationModel: "번역할 Soniox 모델 선택",
   processingFast: "빠르게",
   processingBalanced: "균형",
   processingAccurate: "정확도 우선",

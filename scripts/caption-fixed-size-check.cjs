@@ -19,7 +19,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
    else{
     for(const bilingual of [false,true])for(const length of [40,2000,10000]){
      await main.evaluate(async({bilingual,length})=>{const{emit}=await import('/node_modules/@tauri-apps/api/event.js');const raw=JSON.parse(localStorage.getItem('innote.caption.style')||'{}');localStorage.setItem('innote.caption.style',JSON.stringify({...raw,showOriginal:bilingual}));await emit('caption-style',{});await emit('caption-text',{text:('Câu phụ đề rất dài 12345 中文 English. ').repeat(length).slice(0,length),original:bilingual?'Original sentence with many words. '.repeat(length).slice(0,length):'',final_:true,translating:bilingual});},{bilingual,length});
-     await overlay.waitForFunction(length=>document.querySelector('.caption-text')?.textContent?.length===length,length);await overlay.waitForTimeout(100);samples.push({...await measure(),bilingual});
+     await overlay.waitForFunction(length=>{const text=document.querySelector('.caption-lines .caption-text')?.textContent??'';return text.length>0&&text.length<=length},length);await overlay.waitForTimeout(100);samples.push({...await measure(),bilingual});
     }
    }
    for(const s of samples){assert.equal(s.width,before.width);assert.equal(s.height,before.height);assert(s.root[0]<=s.viewport[0]&&s.root[1]<=s.viewport[1]);}

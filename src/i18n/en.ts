@@ -65,6 +65,8 @@ const part1 = {
   modelMissingBundled: "Bundled model missing. Reinstall Innote.",
   modelMigrated: "PhoWhisper was replaced by bundled Moonshine. Previous local selections were updated; saved transcripts are unchanged.",
   processingLevel: "Processing level",
+  processingHelp: "About processing levels",
+  readyTranslationModel: "Choose a Soniox model to translate",
   processingFast: "Fast",
   processingBalanced: "Balanced",
   processingAccurate: "Accurate",

@@ -106,7 +106,6 @@ impl May {
     fn caption_stop_now(&self) {
         if let Some(run) = self.current() {
             run.speech.enabled.store(false, Ordering::Release);
-            run.speech.set_target(None);
         }
         if let Some(stop) = self.caption_stop.lock().unwrap().as_ref() {
             stop.store(true, Ordering::Release);
@@ -422,7 +421,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         .store(options.transcribe, Ordering::Release);
     run.speech.set_target(options.translation_language.clone());
     run.speech.enabled.store(
-        options.captions_enabled || options.translation_language.is_some(),
+        options.captions_enabled,
         Ordering::Release,
     );
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1011,6 +1010,7 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
         session_logic::reconcile_visible_state(s, active_id.as_deref());
     }
     Ok(Snapshot {
+        translation_preview: may.current().and_then(|r| r.speech.preview()),
         sessions,
         devices: may.devices.lock().unwrap().clone(),
         models: models::list(&may.root),
@@ -1757,6 +1757,19 @@ async fn start_caption(
     Ok(())
 }
 #[tauri::command]
+fn set_meeting_translation(may: State<May>, target: Option<String>) -> std::result::Result<(), String> {
+    let run = may.current().ok_or("Không có cuộc họp đang ghi")?;
+    if !run.speech.active.load(Ordering::Acquire) || run.capture_done.load(Ordering::Acquire) {
+        return Err("Dịch cuộc họp cần luồng Soniox đang hoạt động. Hãy chọn Soniox khi tạo cuộc họp.".into());
+    }
+    if target.as_deref().is_some_and(|t| !["vi", "en", "ko", "zh", "ja"].contains(&t)) {
+        return Err("Ngôn ngữ dịch không hợp lệ".into());
+    }
+    may.edit(&run.id, |s| { if let Some(info) = &mut s.speech { info.translation_language = target.clone(); } }).map_err(err)?;
+    run.speech.set_target(target);
+    Ok(())
+}
+#[tauri::command]
 fn stop_caption(app: tauri::AppHandle, may: State<May>) -> std::result::Result<(), String> {
     let shared = may
         .current()
@@ -1768,7 +1781,7 @@ fn stop_caption(app: tauri::AppHandle, may: State<May>) -> std::result::Result<(
             "soniox",
             "idle",
             false,
-            "Đã tắt dịch; Soniox vẫn tiếp tục chép lời cuộc họp.",
+            "Đã tắt hiển thị phụ đề; bản chép và bản dịch đã chọn vẫn tiếp tục được lưu.",
         );
     }
     Ok(())
@@ -2797,6 +2810,7 @@ fn main() {
             test_ai_connection,
             start_caption,
             stop_caption,
+            set_meeting_translation,
             caption_running,
             caption_snapshot,
             open_caption_window,

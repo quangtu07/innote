@@ -101,6 +101,8 @@ pub struct ModelInfo {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub translation_preview: Option<crate::meeting_soniox::TranslationPreview>,
     pub sessions: Vec<Session>,
     pub devices: Vec<Device>,
     pub models: Vec<ModelInfo>,

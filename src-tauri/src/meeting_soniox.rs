@@ -26,8 +26,19 @@ pub(crate) struct Control {
     pub transcribing: AtomicBool,
     target: Mutex<Option<String>>,
     generation: AtomicU64,
+    preview: Mutex<Option<TranslationPreview>>,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct TranslationPreview {
+    pub id: String,
+    pub language: String,
+    pub text: String,
+    pub committed: usize,
 }
 impl Control {
+    pub fn preview(&self) -> Option<TranslationPreview> {
+        self.preview.lock().unwrap().clone()
+    }
     pub fn target(&self) -> Option<String> {
         self.target.lock().unwrap().clone()
     }
@@ -35,6 +46,7 @@ impl Control {
         let mut old = self.target.lock().unwrap();
         if *old != target {
             *old = target;
+            *self.preview.lock().unwrap() = None;
             self.generation.fetch_add(1, Ordering::Release);
         }
     }
@@ -232,8 +244,16 @@ impl Parser {
                         self.start = start;
                     }
                     self.end = self.end.max(end);
+                    // `none` means untranslated, not necessarily target-language
+                    // speech. Only copy a complete, identified target-language span.
+                    let same = token["translation_status"] == "none"
+                        && target.is_some_and(|lang| token["language"] == lang);
+                    self.same_language = if self.original.trim().is_empty() {
+                        same
+                    } else {
+                        self.same_language && (word.trim().is_empty() || same)
+                    };
                     self.original.push_str(word);
-                    self.same_language |= token["translation_status"] == "none";
                 } else {
                     interim.push_str(word);
                 }
@@ -267,8 +287,13 @@ fn commit(
     render: bool,
     language: Option<&str>,
 ) -> Result<()> {
+    let mut committed = if let Some(preview) = run.speech.preview().filter(|p| Some(p.language.as_str()) == language) {
+        preview.committed
+    } else {
+        crate::storage::load(&may.root, &run.id)?.translations.iter().filter(|t| Some(t.language.as_str()) == language).count()
+    };
     if !batch.originals.is_empty() || !batch.translations.is_empty() {
-        may.edit(&run.id, |s| {
+        let saved = may.edit(&run.id, |s| {
             for segment in &batch.originals {
                 if !s.segments.iter().any(|x| x.id == segment.id) {
                     s.segments.push(segment.clone());
@@ -281,7 +306,16 @@ fn commit(
                 }
             }
         })?;
+        committed = saved.translations.iter().filter(|t| Some(t.language.as_str()) == language).count();
         let _ = app.emit("session-changed", run.id.clone());
+    }
+    if run.speech.target().as_deref() == language {
+        let preview = language.map(|language| TranslationPreview {
+            id: run.id.clone(), language: language.into(),
+            text: batch.live_translation.clone(), committed,
+        });
+        *run.speech.preview.lock().unwrap() = preview.clone();
+        let _ = app.emit("meeting-translation-preview", preview);
     }
     let _ = app.emit("live-transcript", json!({"id":run.id,"update":{"text":batch.partial,"start":0.,"end":batch.end+0.001,"final_text":false,"words":[]}}));
     if render {
@@ -379,7 +413,7 @@ pub(crate) fn run_from(
             let quality = crate::storage::load(&may.root,&run.id)?.speech_quality;
             let config=configuration(language,target.as_deref(),quality);
             tokio::time::timeout(Duration::from_secs(5),socket.send(Message::Text(config.to_string()))).await.context("Gửi cấu hình Soniox quá lâu")??;
-            may.edit(&run.id, |s| { if let Some(info)=s.speech.as_mut(){info.connections+=1;info.translation_language=target.clone();} })?;
+            may.edit(&run.id, |s| { if let Some(info)=s.speech.as_mut(){info.connections+=1;info.translation_language=run.speech.target();} })?;
             let mut timeline = Timeline::default(); let mut parser = Parser::default();
             let mut ticker=tokio::time::interval(Duration::from_millis(50)); ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut finishing: Option<Instant> = None; let mut keepalive=Instant::now(); let mut announced=false; let mut pause_finalized=false; let mut switch_requested:Option<Instant>=None;
@@ -592,11 +626,35 @@ mod tests {
         assert_eq!(c.target(), None);
     }
     #[test]
+    fn untranslated_foreign_tokens_are_not_saved_as_target_language() {
+        let mut timeline = Timeline::default();
+        timeline.append(0, 32000);
+        let mut parser = Parser::default();
+        let source = parser.push(&json!({"tokens":[
+            {"text":"你好世界。","language":"zh","translation_status":"none","is_final":true,"start_ms":0,"end_ms":1000},
+            {"text":"<end>","is_final":true}
+        ]}), &timeline, Some("vi")).unwrap();
+        assert_eq!(source.originals.len(), 1);
+        assert!(source.translations.is_empty());
+        let preview = parser.push(&json!({"tokens":[
+            {"text":"Xin chào","language":"vi","translation_status":"translation","is_final":false}
+        ]}), &timeline, Some("vi")).unwrap();
+        assert_eq!(preview.live_translation, "Xin chào");
+        assert!(preview.translations.is_empty());
+        let final_batch = parser.push(&json!({"tokens":[
+            {"text":"Xin chào thế giới.","language":"vi","translation_status":"translation","is_final":true},
+            {"text":"<end>","is_final":true}
+        ]}), &timeline, Some("vi")).unwrap();
+        assert_eq!(final_batch.translations[0].text, "Xin chào thế giới.");
+        assert_eq!(final_batch.translations[0].source_id, source.originals[0].id);
+        assert!(final_batch.live_translation.is_empty());
+    }
+    #[test]
     fn already_target_language_and_multiple_endpoints_are_not_lost() {
         let mut t = Timeline::default();
         t.append(0, 32000);
         let mut p = Parser::default();
-        let batch=p.push(&json!({"tokens":[{"text":"Một.","is_final":true,"translation_status":"none","start_ms":0,"end_ms":300},{"text":"<end>","is_final":true,"translation_status":"none"},{"text":"Hai.","is_final":true,"translation_status":"none","start_ms":500,"end_ms":800},{"text":"<fin>","is_final":true,"translation_status":"none"}],"finished":true}),&t,Some("vi")).unwrap();
+        let batch=p.push(&json!({"tokens":[{"text":"Một.","language":"vi","is_final":true,"translation_status":"none","start_ms":0,"end_ms":300},{"text":"<end>","is_final":true,"translation_status":"none"},{"text":"Hai.","language":"vi","is_final":true,"translation_status":"none","start_ms":500,"end_ms":800},{"text":"<fin>","is_final":true,"translation_status":"none"}],"finished":true}),&t,Some("vi")).unwrap();
         assert_eq!(batch.originals.len(), 2);
         assert_eq!(batch.translations.len(), 2);
         assert_eq!(batch.translations[1].text, "Hai.");

@@ -17,7 +17,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert(before.models.some(m=>m.id==='moonshine-en'&&m.installed));
   assert(!before.models.some(m=>m.id==='phowhisper-small'));
   const releaseNotice=page.getByRole('dialog',{name:'Có gì mới trong Innote?',exact:true});
-  await releaseNotice.waitFor();assert((await releaseNotice.innerText()).includes(process.env.RELEASE_VERSION||'v0.8.6'));
+  await releaseNotice.waitFor();assert((await releaseNotice.innerText()).includes(process.env.RELEASE_VERSION||'v'+JSON.parse(fs.readFileSync('package.json','utf8')).version));
   await releaseNotice.getByRole('button',{name:'Đóng thông báo cập nhật',exact:true}).click();
   await page.reload();await page.waitForTimeout(500);
   assert.equal(await page.locator('dialog.whats-new[open]').count(),0,'Dismissal must persist in the actual production WebView');

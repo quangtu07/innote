@@ -5,6 +5,7 @@
   import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
   import { invoke } from "@tauri-apps/api/core";
   import { CaptionPresentation } from "./lib/caption-presentation";
+  import { CaptionPager, fitCaptionPage } from "./lib/caption-pages";
 
   interface CaptionTextEvent {
     text: string;
@@ -33,9 +34,18 @@
   let text = "";
   let translatedLine: HTMLDivElement;
   let originalLine: HTMLDivElement;
+  let captionLines: HTMLDivElement;
+  let textProbe: HTMLDivElement;
+  let originalProbe: HTMLDivElement;
+  let pager = new CaptionPager();
+  let pageTimer: ReturnType<typeof setTimeout> | undefined;
+  let layoutRevision=0;
+  let hasOriginal=false;
   let isTranslating=false;
   const presentation = new CaptionPresentation();
   let disposed = false;
+  let textRevision=0;
+  let statusRevision=0;
   async function updateCaption(payload: CaptionTextEvent) {
     presentation.push({...payload,original:payload.original??""});
     await applyPresentation();
@@ -43,12 +53,30 @@
   async function applyPresentation(force=false) {
     const cue=presentation.view(style.showOriginal);
     const nextMode=presentation.isTranslating();
-    if(!force&&cue.text===text&&cue.original===original&&nextMode===isTranslating)return;
     isTranslating=nextMode;
-    text=cue.text;original=cue.original;
+    hasOriginal=style.showOriginal&&!!cue.original;
+    pager.set(cue.text,style.showOriginal?cue.original:"");
+    await renderPage();
+  }
+  async function renderPage() {
+    const revision=++layoutRevision;
+    clearTimeout(pageTimer);
     await tick();
-    if (translatedLine) translatedLine.scrollTop = translatedLine.scrollHeight;
-    if (originalLine) originalLine.scrollTop = originalLine.scrollHeight;
+    if(disposed||revision!==layoutRevision||!captionLines||!textProbe||!originalProbe)return;
+    const height=captionLines.clientHeight,width=captionLines.clientWidth;
+    for(const probe of [textProbe,originalProbe])probe.style.width=`${width}px`;
+    const originalLineHeight=parseFloat(getComputedStyle(originalProbe).lineHeight);
+    const mainLineHeight=parseFloat(getComputedStyle(textProbe).lineHeight);
+    const originalHeight=hasOriginal && height>=originalLineHeight+mainLineHeight+12
+      ? Math.max(originalLineHeight+2,Math.min(height*.38,originalLineHeight*2+2)) : 0;
+    const targetHeight=Math.max(0,height-originalHeight-(originalHeight?8:0)-2);
+    const fit=(probe:HTMLDivElement,budget:number)=>(value:string,start:number)=>fitCaptionPage(value,start,part=>{
+      probe.textContent=part;
+      return probe.getBoundingClientRect().height<=budget;
+    });
+    const page=pager.layout(fit(textProbe,targetHeight),originalHeight?fit(originalProbe,originalHeight-2):(value)=>({text:"",end:value.length}));
+    text=page.text;original=page.original;
+    if(page.delay!==null)pageTimer=setTimeout(()=>{pager.advance();void renderPage();},page.delay);
   }
   function syncStyle(){style=readCaptionStyle();void applyPresentation(true);}
   let original = "";
@@ -159,28 +187,33 @@
         .catch(() => {});
     track(
       listen<CaptionTextEvent>("caption-text", ({ payload }) => {
+        textRevision++;
         void updateCaption(payload);
       }),
     );
     track(
       listen<CaptionStatusEvent>("caption-status", ({ payload }) => {
+        statusRevision++;
         status = payload;
-        if (["idle","error","connecting"].includes(payload.state)) { presentation.clear();isTranslating=false;text = ""; original = ""; }
+        if (["idle","error","connecting"].includes(payload.state)) { clearTimeout(pageTimer);pager=new CaptionPager();presentation.clear();isTranslating=false;text = ""; original = ""; }
       }),
     );
-    track(listen<boolean>("caption-mode",({payload})=>{presentation.setMode(payload);void applyPresentation();}));
+    track(listen<boolean>("caption-mode",({payload})=>{textRevision++;presentation.setMode(payload);void applyPresentation();}));
     track(listen("caption-style", syncStyle));
     const syncStorage = (event: StorageEvent) => {
       if (event.key === CAPTION_STYLE_KEY) syncStyle();
     };
     window.addEventListener("storage", syncStorage);
+    const relayout=()=>void renderPage();
+    window.addEventListener("resize",relayout);
+    const initialTextRevision=textRevision,initialStatusRevision=statusRevision;
     void invoke<{ status: CaptionStatusEvent; caption: CaptionTextEvent; translating?:boolean; paired?:CaptionTextEvent|null }>(
       "caption_snapshot",
     )
       .then((s) => {
         if (!disposed) {
-          status = s.status;
-          if (s.status.sending || s.status.state === "stopping" || s.status.state === "active") {presentation.restore(s);void applyPresentation();}
+          if(statusRevision===initialStatusRevision)status = s.status;
+          if (textRevision===initialTextRevision && statusRevision===initialStatusRevision && (s.status.sending || s.status.state === "stopping" || s.status.state === "active")) {presentation.restore(s);void applyPresentation();}
         }
       })
       .catch(() => {});
@@ -216,37 +249,42 @@
         };
         saveBounds();
         requestAnimationFrame(() => {
-          if (translatedLine) translatedLine.scrollTop = translatedLine.scrollHeight;
-          if (originalLine) originalLine.scrollTop = originalLine.scrollHeight;
+          void renderPage();
         });
       }),
     );
     return () => {
       disposed = true;
+      clearTimeout(pageTimer);
       window.removeEventListener("storage", syncStorage);
+      window.removeEventListener("resize",relayout);
       unlisteners.forEach((fn) => fn());
     };
   });
 
 </script>
 <svelte:head><title>Innote — Phụ đề</title></svelte:head>
-<div class="caption-root" data-passthrough={passthrough} style={`--font-size:${style.fontSize}px; --text-color:${style.color}; text-align:${style.align}; background-color:${style.transparent ? "transparent" : style.backgroundColor};`} role="presentation" onpointerdown={(e) => startGesture(e, "move")}>
-  <div class="caption-lines">
+<div class="caption-root" class:bilingual={hasOriginal} data-passthrough={passthrough} style={`--font-size:${style.fontSize}px; --text-color:${style.color}; text-align:${style.align}; background-color:${style.transparent ? "transparent" : style.backgroundColor};`} role="presentation" onpointerdown={(e) => startGesture(e, "move")}>
+  <div class="caption-lines" bind:this={captionLines}>
     {#if style.showOriginal && original.trim()}<div class="caption-original" bind:this={originalLine}>{original}</div>{/if}
     {#if text}<div class="caption-text" bind:this={translatedLine}>{text}</div>{/if}
     {#if !text && !original && style.showOriginal && isTranslating}<div class="caption-placeholder">Đang chờ cặp bản gốc và bản dịch…</div>
     {:else if !text && !original && !status.sending}<div class="caption-placeholder">Kéo dòng chữ này để đặt vị trí phụ đề</div>{/if}
   </div>
+  <div class="caption-probe-target caption-probe" aria-hidden="true" bind:this={textProbe}></div>
+  <div class="caption-probe-original caption-probe" aria-hidden="true" bind:this={originalProbe}></div>
   {#each ["NorthWest", "NorthEast", "SouthWest", "SouthEast"] as direction}
       <span class="resize" class:west={direction.includes("West")} class:north={direction.includes("North")} role="presentation" onpointerdown={(e) => { e.stopPropagation(); startGesture(e,direction); }}></span>
   {/each}
 </div>
 <style>
   .caption-root { width: 100vw; height: 100vh; padding: 12px 20px; border-radius: 12px; cursor: grab; touch-action: none; box-sizing: border-box; overflow: hidden; user-select: none; --display-font-size: min(var(--font-size), max(12px, calc((100vh - 20px) / 2.5))); }
+  .caption-root.bilingual { --display-font-size: min(var(--font-size), max(12px, calc((100vh - 32px) / 3.3))); }
   .caption-lines { height: 100%; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; pointer-events: none; overflow: hidden; }
   .caption-root:active { cursor: grabbing; }
-  .caption-text, .caption-placeholder { min-height: 0; color: var(--text-color); font-size: var(--display-font-size); line-height: 1.45; font-weight: 600; overflow: auto; overflow-wrap: anywhere; text-shadow: -1px -1px 1px #101c17, 1px -1px 1px #101c17, -1px 1px 1px #101c17, 1px 1px 1px #101c17, 0 2px 4px #101c17; scrollbar-width: none; }
-  .caption-original { min-height: 0; max-height: 30%; flex-shrink: 0; font-size: max(12px, calc(var(--display-font-size) * .75)); line-height: 1.4; color: var(--text-color); overflow: auto; scrollbar-width: none; overflow-wrap: anywhere; text-shadow: 0 1px 2px #101c17, 1px 0 2px #101c17, -1px 0 2px #101c17; }
+  .caption-text, .caption-placeholder, .caption-probe-target { min-height: 0; flex-shrink: 0; color: var(--text-color); font-size: var(--display-font-size); line-height: 1.45; font-weight: 600; overflow: hidden; overflow-wrap: anywhere; text-shadow: -1px -1px 1px #101c17, 1px -1px 1px #101c17, -1px 1px 1px #101c17, 1px 1px 1px #101c17, 0 2px 4px #101c17; scrollbar-width: none; }
+  .caption-original, .caption-probe-original { min-height: 0; flex-shrink: 0; font-size: max(12px, calc(var(--display-font-size) * .75)); line-height: 1.4; color: var(--text-color); overflow: hidden; scrollbar-width: none; overflow-wrap: anywhere; text-shadow: 0 1px 2px #101c17, 1px 0 2px #101c17, -1px 0 2px #101c17; }
+  .caption-probe { position: fixed; left: -20000px; top: 0; height: auto; max-height: none; visibility: hidden; pointer-events: none; }
   .resize { position: absolute; width: 20px; height: 20px; z-index: 1; right: 0; bottom: 0; touch-action: none; cursor: nwse-resize; }
   .resize.west { left: 0; right: auto; cursor: nesw-resize; }
   .resize.north { top: 0; bottom: auto; cursor: nesw-resize; }

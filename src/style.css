@@ -2721,13 +2721,14 @@ button.caption-on {
 .meeting-caption-setup .checkbox, .meeting-caption-controls .checkbox { margin-left: 0; }
 .caption-intent-target { display: flex; flex-direction: column; gap: 8px; min-width: 200px; color: var(--muted); font-size: 13px; }
 .caption-intent-target select { width: 100%; height: 44px; }
-.caption-settings-link { margin: 20px 0 28px; }
 .meeting-caption-setup { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 24px; }
 .meeting-shared-model { display: grid; gap: 12px; margin-top: 24px; padding-bottom: 16px; max-width: 800px; }
 .meeting-shared-model .ai-field { gap: 12px; }
 .meeting-shared-model p { margin: 0; }
 .meeting-shared-model small { color: var(--muted); line-height: 1.65; }
 .meeting-caption-options, .meeting-caption-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; }
+.active-meeting-caption .meeting-caption-options { margin-top: 24px; }
+.active-meeting-caption .meeting-caption-options > .checkbox { margin-left: 0; }
 .meeting-caption-controls { padding: 16px 0 24px; }
 .meeting-caption-controls > label:not(.checkbox) { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }
 .meeting-caption-controls select { min-width: 150px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
@@ -2746,3 +2747,164 @@ button.caption-on {
 .translation-track .saved-translation { color: #172d29; line-height: 1.8; overflow-wrap: anywhere; }
 @media(max-width:1050px) { .bilingual-transcript { grid-template-columns: minmax(0,1fr); } }
 .caption-preview { max-height: 180px; overflow: auto; overflow-wrap: anywhere; }
+.app-shell > .sidebar { width:244px; padding:20px 16px 16px; gap:6px; overflow-y:auto; overflow-x:hidden; transition:width 180ms ease-out; }
+.sidebar-header { display:flex; align-items:center; gap:8px; margin-bottom:24px; }
+.sidebar-header .brand { min-width:0; flex:1; margin:0; font-size:20px; }
+.sidebar-header .brand-mark { flex-shrink:0; }
+.sidebar-header .brand-sub { font-size:10px; line-height:1.6; }
+.sidebar-toggle { display:grid; place-items:center; flex-shrink:0; width:32px; height:36px; color:#385647; background:transparent; border-radius:8px; }
+.sidebar-toggle:hover { background:#dfeae2; }
+.sidebar .new-button { flex-shrink:0; min-height:44px; margin-bottom:12px; }
+.sidebar .sidebar-nav-button,.sidebar .meetings-button { min-height:44px; margin:0; padding:12px; border-radius:9px; background:transparent; gap:12px; }
+.sidebar .meetings-button { margin-top:4px; }
+.sidebar .sidebar-nav-button.chosen,.sidebar .meetings-button.chosen,.sidebar .sidebar-nav-button:hover,.sidebar .meetings-button:hover,.sidebar .feedback-link:hover { background:#dfeae2; }
+.sidebar .meetings-button strong { font-size:13px; font-weight:500; }
+.sidebar .meetings-button small { display:none; }
+.sidebar svg { flex-shrink:0; }
+.sidebar .sidebar-author-group { padding-top:24px; margin-bottom:8px; }
+.sidebar .feedback-link { justify-content:flex-start; background:transparent; border:0; border-radius:9px; padding:12px; min-height:44px; font-size:12px; font-weight:500; }
+.sidebar .author-card { border:1px solid #dbe7de; background:#f8fbf9; box-shadow:none; padding:14px 12px; border-radius:12px; }
+.sidebar .author-name { min-height:24px; font-size:12px; }
+.sidebar .author-role { margin-top:6px; line-height:1.6; }
+.sidebar .author-links { margin-top:12px; gap:10px; }
+.sidebar .sidebar-bottom { padding-top:8px; }
+.sidebar .sidebar-bottom > span { padding:12px 12px 0; font-size:10px; }
+.app-shell > .sidebar.collapsed { width:76px; padding:20px 12px 16px; }
+.sidebar.collapsed .sidebar-header { flex-direction:column; gap:12px; margin-bottom:20px; }
+.sidebar.collapsed .brand { flex:initial; }
+.sidebar.collapsed .brand-copy,.sidebar.collapsed .nav-label,.sidebar.collapsed .meetings-count,.sidebar.collapsed .meetings-button > span,.sidebar.collapsed .feedback-link span,.sidebar.collapsed .author-card,.sidebar.collapsed .sidebar-bottom > span { display:none; }
+.sidebar.collapsed .new-button,.sidebar.collapsed .sidebar-nav-button,.sidebar.collapsed .meetings-button,.sidebar.collapsed .sidebar-bottom button,.sidebar.collapsed .feedback-link { width:48px; height:44px; padding:0; justify-content:center; }
+.sidebar.collapsed .sidebar-author-group { width:48px; }
+@media(prefers-reduced-motion:reduce) { .app-shell > .sidebar { transition:none; } }
+.preset-page { max-width: 1120px; margin:0 auto; }
+.preset-page h1 { display:flex; align-items:center; gap:12px; }
+.preset-library-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:32px 0 16px; }
+.preset-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px 0; border-bottom:1px solid var(--line,#d9e5df); }
+.preset-row h3 { margin:0 0 8px; font-size:16px; }
+.preset-row p { margin:0; color:var(--muted); line-height:1.7; overflow-wrap:anywhere; }
+.preset-row > div:first-child { min-width:0; }
+.preset-row-actions { display:flex; gap:14px; align-items:center; flex-shrink:0; }
+.preset-editor-header { margin:32px 0 24px; }
+.preset-editor-header p { color:var(--muted); line-height:1.7; }
+.preset-basics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.preset-basics .checkbox,.preset-translate { margin-left:0; }
+.preset-translate { margin:24px 0; }
+.preset-save { display:flex; gap:12px; padding:24px 0; }
+.preset-page #caption-settings { margin-top:40px; padding-top:28px; border-top:1px solid var(--line); }
+.preset-page #caption-settings h2 { display:flex; gap:10px; align-items:center; }
+.preset-app-settings { margin:24px 0; }
+.preset-app-settings > summary { font-weight:600; cursor:pointer; color:var(--ink); padding:16px 0; }
+.preset-app-settings[open] > summary { margin-bottom:20px; }
+.preset-launch { display:flex; gap:20px; align-items:end; flex-wrap:wrap; margin-bottom:24px; padding:24px; background:#fff; border:1px solid #d9e5df; border-radius:14px; }
+.preset-launch .ai-field { min-width:240px; flex:1; }
+.preset-launch p { flex:1; font-size:12px; line-height:1.7; color:var(--muted); margin:0; }
+.session-caption-style { margin:0 0 24px; padding:20px 24px; border:1px solid #d9e5df; border-radius:14px; background:#fff; }
+.session-caption-style h3 { margin:0 0 12px; font-size:14px; }
+.session-caption-style .quality-hint { margin:0; }
+.meeting-caption-appearance { margin-top:24px; padding-top:24px; border-top:1px solid var(--line); }
+.meeting-caption-appearance h3 { margin:0 0 12px; font-size:14px; }
+@media(max-width:1050px) { .preset-row { align-items:start; flex-direction:column; gap:16px; } .preset-basics { grid-template-columns:1fr; } .preset-launch { align-items:start; } }
+
+/* Launch workflows: two-column forms with secondary guidance on demand. */
+.meeting-page.preparing { padding:20px 28px 24px; scroll-padding-top:100px; }
+.preparing > .meeting-header {
+  position:sticky; top:-20px; z-index:3; align-items:center;
+  margin:0 -4px 16px; padding:16px 4px 12px;
+  background:#f7f9f8; border-bottom:1px solid var(--line);
+}
+.preparing > .transcript-heading, .preparing > .workspace { display:none; }
+.preparing .setup-panel { padding:16px 20px; margin-bottom:0; }
+.preparing .setup-heading { margin-bottom:4px; }
+.preparing .source-row { padding:8px 0; gap:12px; }
+.preparing .source-footer { margin:4px 0 12px; align-items:flex-start; justify-content:flex-end; }
+.preparing .source-footer > button { flex-shrink:0; }
+.preparing .preferences { padding:12px 0; gap:16px; flex-wrap:wrap; }
+.preparing .preferences .fixed-model { display:none; } /* The model selector directly below carries this value. */
+.preparing .provider-choice { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 16px; margin:0; }
+.preparing .provider-primary { display:flex; flex-direction:column; gap:8px; min-width:0; font-size:12px; color:var(--muted); }
+.preparing .provider-choice > .ai-field { grid-column:auto; margin:0; display:flex; gap:8px; }
+.preparing .provider-choice > .quality-hint { margin:0; grid-column:1/-1; }
+.preparing .provider-choice > .checkbox { grid-column:1/-1; margin:0; min-height:32px; }
+.preparing .provider-choice select { font-size:13px; height:40px; min-height:40px; padding:8px 10px; }
+.preparing .meeting-caption-setup { margin-top:16px; padding-top:16px; }
+.preparing .meeting-caption-setup > h2 { margin-bottom:12px; }
+.meeting-caption-switches { display:flex; flex-wrap:wrap; align-items:center; gap:8px 24px; }
+.meeting-caption-switches > .checkbox { min-height:40px; }
+.preparing .meeting-caption-options { gap:12px; }
+.preparing .meeting-caption-options .ai-field { flex-direction:row; align-items:center; gap:10px; }
+.preparing .meeting-caption-options select { width:150px; height:38px; min-height:38px; }
+.preparing .meeting-caption-setup > .quality-hint { margin:4px 0 12px; }
+.preparing .meeting-shared-model { max-width:none; margin-top:12px; gap:8px; padding:0; }
+.preparing .meeting-shared-model .ai-field { gap:8px; }
+.preparing .meeting-shared-model select { min-height:40px; height:40px; }
+.preparing .meeting-shared-model .test-error { font-size:12px; line-height:1.6; }
+.preparing .meeting-caption-appearance { margin-top:16px; padding-top:12px; }
+.preparing .meeting-caption-appearance h3 { font-size:12px; margin:0 0 6px; color:var(--muted); }
+.preparing .caption-style-summary { margin:0 0 8px; font-size:12px; }
+.preparing .caption-customize { border:0; padding-top:0; margin:8px 0 0; }
+.preparing .caption-customize > summary { font-size:12px; min-height:28px; }
+.preparing .caption-customize-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.workflow-help { color:var(--muted); font-size:12px; line-height:1.6; }
+.workflow-help > summary { cursor:pointer; padding:5px 0; color:var(--green); width:fit-content; }
+.workflow-help p { max-width:72ch; margin:8px 0; line-height:1.65; }
+.engine-guide { margin-top:12px; }
+.caption-page { max-width:1100px; padding:24px 28px; }
+.caption-page h1 { font-size:24px; margin-bottom:6px; }
+.caption-page > .subtitle { font-size:13px; margin:0 0 16px; }
+:is(.preparing,.caption-page) .preset-launch {
+  display:grid; grid-template-columns:minmax(0,1fr) auto auto;
+  gap:8px 12px; align-items:end; padding:14px 16px; margin-bottom:16px; border-radius:12px;
+}
+:is(.preparing,.caption-page) .preset-launch .ai-field { min-width:0; gap:6px; font-size:12px; }
+:is(.preparing,.caption-page) .preset-launch select { min-height:38px; height:38px; }
+:is(.preparing,.caption-page) .preset-launch > button { min-height:38px; padding:0 14px; }
+:is(.preparing,.caption-page) .preset-launch p { grid-column:1/-1; order:4; line-height:1.5; }
+.caption-page .caption-setup { padding:16px 20px; margin:0; }
+.caption-page .caption-intent { padding-bottom:12px; margin-bottom:16px; }
+.caption-page .caption-intent p { font-size:12px; line-height:1.6; margin-top:6px; }
+.caption-page .caption-intent-choice { justify-content:flex-start; gap:24px; }
+.caption-page .caption-intent-target { flex-direction:row; align-items:center; gap:12px; font-size:12px; }
+.caption-page .caption-intent-target select { width:150px; height:40px; }
+.caption-page .caption-mode-row { gap:16px; margin-bottom:16px; }
+.caption-page .caption-mode-row > label { font-size:12px; gap:8px; }
+.caption-page .caption-mode-row select { height:40px; font-size:13px; }
+.caption-page .caption-actions { gap:10px; padding-top:14px; margin-top:12px; }
+.caption-page .caption-actions button { font-size:12px; padding:0 14px; }
+@media(max-width:1000px) {
+  .meeting-page.preparing,.caption-page { padding-left:20px; padding-right:20px; }
+  .preparing .setup-panel,.caption-page .caption-setup { padding:16px; }
+  .preparing .source-row .level { width:36px; }
+  .preparing .source-footer { flex-wrap:wrap; gap:4px; }
+  .meeting-caption-switches { column-gap:16px; }
+}
+@media(max-width:760px) {
+  .preparing .provider-choice,.caption-page .caption-mode-row { grid-template-columns:minmax(0,1fr); }
+  :is(.preparing,.caption-page) .preset-launch { grid-template-columns:minmax(0,1fr) auto; }
+  :is(.preparing,.caption-page) .preset-launch > .text-button { grid-column:2; padding:0; }
+  :is(.preparing,.caption-page) .preset-launch p { grid-column:1; grid-row:2; }
+  .preparing .source-row { flex-wrap:wrap; }
+  .preparing .source-row label { flex-basis:calc(100% - 60px); }
+  .preparing .source-row .source-test { margin-left:49px; }
+}
+/* The preset selector is a toolbar, not another setup card. */
+:is(.preparing,.caption-page) .preset-launch { border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:0 0 16px; }
+.preparing .meeting-header { padding-top:8px; padding-bottom:8px; }
+.caption-page .caption-actions { position:sticky; bottom:-24px; z-index:2; background:var(--paper); padding-bottom:14px; }
+.caption-page .caption-actions > .primary { order:-1; }
+.preparing .meeting-caption-switches .checkbox { font-size:12px; }
+.preparing .meeting-caption-setup .workflow-help { margin-top:4px; }
+@media(max-width:1000px) { .caption-page .caption-actions { bottom:-24px; } }
+.preparing .setup-recovery { padding:0; min-height:20px; font-size:12px; text-align:left; }
+.preparing .meeting-caption-setup { scroll-margin-top:100px; }
+.caption-page { scroll-padding-bottom:100px; }
+.meeting-page .caption-customize-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+
+.caption-inline-style { margin:20px 0 16px; padding-top:16px; border-top:1px solid var(--line); scroll-margin-top:16px; }
+.caption-inline-style h2 { display:flex; align-items:center; gap:8px; font-size:14px; margin:0 0 8px; }
+.caption-inline-style > .quality-hint { margin:0 0 8px; }
+.caption-inline-style .caption-style-summary { margin:8px 0 12px; font-size:12px; }
+.caption-inline-style .caption-customize { margin:0; padding-top:0; border:0; }
+.caption-inline-style .caption-customize > p { font-size:12px; margin:12px 0; }
+.caption-inline-style .caption-customize-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.caption-inline-style .caption-background-fields { margin-top:16px; gap:20px; }
+.caption-inline-style .caption-position-actions { margin-top:16px; }

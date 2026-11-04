@@ -10,7 +10,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
  const saved=await page.evaluate(()=>localStorage.getItem('innote.caption.style'));
  const out=path.resolve('test-results/caption-settings');fs.mkdirSync(out,{recursive:true});
  try{
-  await page.getByRole('button',{name:'Cài đặt',exact:true}).click();
+  await page.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
   const section=page.locator('#caption-settings');await section.scrollIntoViewIfNeeded();
   await section.getByText('Tùy chỉnh chữ phụ đề',{exact:true}).click();
   await section.getByRole('button',{name:'Hiện hộp phụ đề',exact:true}).click();

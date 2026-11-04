@@ -63,6 +63,8 @@ const part1 = {
   modelMissingBundled: "内置模型缺失，请重新安装 Innote。",
   modelMigrated: "PhoWhisper 已由内置 Moonshine 替代。旧本地选项已更新，已保存的转写保持不变。",
   processingLevel: "处理级别",
+  processingHelp: "处理级别说明",
+  readyTranslationModel: "选择 Soniox 模型以启用翻译",
   processingFast: "快速",
   processingBalanced: "均衡",
   processingAccurate: "准确优先",

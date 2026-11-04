@@ -55,6 +55,7 @@ export interface Model {
   installed: boolean;
 }
 export interface Snapshot {
+  translation_preview?: { id: string; language: string; text: string; committed: number } | null;
   sessions: Meeting[];
   devices: Device[];
   models: Model[];
