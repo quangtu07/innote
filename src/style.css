@@ -1046,7 +1046,7 @@ h2 {
   padding-bottom: 4px;
 }
 .smooth-segment {
-  border-left: 3px solid #bfe3cd;
+  border-left: 0;
 }
 .smooth-segment .timestamp {
   color: #2f6e4c;
@@ -1223,6 +1223,20 @@ h2 {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
+}
+.summary-options-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+.action-options > summary {
+  color: #176b57;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.action-options .summary-field {
+  margin-top: 14px;
 }
 
 .model-picker-dialog {
@@ -2125,6 +2139,18 @@ progress::-webkit-progress-value {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+.confirm-dialog > .summary-form {
+  gap: 18px;
+  align-items: stretch;
+}
+.confirm-dialog.correction-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.correction-dialog .correction-meta {
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 @media (max-width: 1050px) {
   .sidebar {

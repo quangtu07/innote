@@ -8,7 +8,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
  const wait=async(fn,ms=30000)=>{const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await main.waitForTimeout(100);}throw Error('Realtime benchmark timed out');};
  const initial=await api('snapshot');assert(!initial.active_id&&!await api('caption_running'),'Do not interrupt a user session');
  const provider=process.env.BENCH_PROVIDER||'soniox',profile=provider==='local'?{id:'__local__'}:(await api('list_ai_profiles')).find(p=>p.provider===provider);assert(profile);
- const model=process.env.BENCH_MODEL||(provider==='groq'?'whisper-large-v3-turbo':provider==='local'?'nemotron-3.5-q8':'stt-rt-v5');
+ const model=process.env.BENCH_MODEL||(provider==='groq'?'whisper-large-v3-turbo':provider==='local'?'nemotron-3.5-q8':'stt-rt-v6');
  if(provider==='local')assert(initial.models.some(m=>m.id===model&&m.installed));
  const visible=await api('caption_window_visible'),saved=await main.evaluate(()=>localStorage.getItem('innote.caption.style'));
  const timing=JSON.parse(fs.readFileSync('test-results/fixtures/realtime/reference-timing.json','utf8'));

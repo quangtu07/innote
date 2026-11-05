@@ -24,7 +24,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').uncheck();
     await page.getByLabel('Dịch sang trong cuộc họp').check();
     await page.getByLabel('Ngôn ngữ bản dịch',{exact:true}).selectOption('vi');
-    await page.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:profile.id,model:'stt-rt-v5'}));
+    await page.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:profile.id,model:'stt-rt-v6'}));
     await page.screenshot({path:path.join(output,'setup-independent-translation.png')});
     await page.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
     await wait(async()=>!!(await api('snapshot')).active_id);

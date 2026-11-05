@@ -30,7 +30,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert(profile,'The user-authorized saved Soniox profile is required');
     await main.getByRole('button',{name:'Dịch phụ đề',exact:true}).click();
     await main.getByLabel('Cấu hình AI dịch').selectOption(profile.id);
-    await main.getByLabel('Model phụ đề').selectOption('stt-rt-v5');
+    await main.getByLabel('Model phụ đề').selectOption('stt-rt-v6');
     await main.getByLabel('Thiết bị loa/tai nghe').selectOption(state.devices.find(d=>d.kind==='system'&&d.default).id);
     await main.getByRole('button',{name:'Bắt đầu dịch',exact:true}).click();
     await hide().waitFor();

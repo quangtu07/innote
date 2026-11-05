@@ -26,6 +26,16 @@ pub struct SmoothedTranscript {
     pub created: String,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct CorrectedTranscript {
+    pub text: String,
+    pub segments: Vec<Segment>,
+    pub provider: String,
+    pub profile_id: String,
+    pub model: String,
+    pub created: String,
+    pub audio_sha256: String,
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SummarizedTranscript {
     pub text: String,
     pub provider: String,
@@ -84,6 +94,8 @@ pub struct Session {
     /// AI-smoothed copy. The original `segments` are never replaced.
     #[serde(default)]
     pub smoothed: Option<SmoothedTranscript>,
+    #[serde(default)]
+    pub corrected: Option<CorrectedTranscript>,
     /// AI summary, stored separately from the transcript.
     #[serde(default)]
     pub summary: Option<SummarizedTranscript>,
@@ -101,6 +113,8 @@ pub struct ModelInfo {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub corrections: Vec<crate::correction::Progress>,
     #[serde(default)]
     pub translation_preview: Option<crate::meeting_soniox::TranslationPreview>,
     pub sessions: Vec<Session>,

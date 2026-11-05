@@ -3,6 +3,7 @@ mod audio;
 mod caption;
 mod caption_window;
 mod config;
+mod correction;
 mod engine;
 mod fallback;
 mod groq;
@@ -11,15 +12,16 @@ mod live;
 mod llm;
 mod local_caption;
 mod local_stream_caption;
+mod meeting_groq;
 mod meeting_soniox;
 mod models;
 mod moonshine;
-mod speech_quality;
 mod mp3;
 mod nemo;
 mod secure;
 mod session_logic;
 mod soniox;
+mod speech_quality;
 mod storage;
 mod types;
 
@@ -49,6 +51,7 @@ struct May {
     caption_stop: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     caption_done: Arc<AtomicBool>,
     verified_ai: Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+    corrections: Arc<Mutex<std::collections::HashMap<String, Arc<correction::Control>>>>,
 }
 struct Run {
     id: String,
@@ -120,6 +123,33 @@ impl May {
             .find(|p| p.id == id)
             .cloned()
             .context("Không tìm thấy cấu hình AI đã chọn")
+    }
+    fn correction_profile(&self, id: &str) -> Result<config::AiProfile> {
+        if id == "__local__" {
+            return Ok(config::AiProfile {
+                id: id.into(),
+                name: "Local trên máy".into(),
+                provider: "local".into(),
+                base_url: String::new(),
+                key: String::new(),
+                created: String::new(),
+                import_tag: String::new(),
+            });
+        }
+        self.profile(id)
+    }
+    fn correction_model(
+        &self,
+        profile: &config::AiProfile,
+        model: &str,
+        language: &str,
+    ) -> Result<Option<PathBuf>> {
+        if profile.provider != "local" {
+            return Ok(None);
+        }
+        local_caption::language(model, Some(language))?;
+        anyhow::ensure!(models::list(&self.root).iter().any(|m|m.id==model&&m.installed),"Model hiệu chỉnh local chưa được tải hoặc thiếu thành phần; chọn model đã có trong Mẫu cấu hình");
+        Ok(Some(models::path(&self.root, model)?))
     }
     /// A selected task profile owns provider, endpoint and credential together.
     fn task_config(
@@ -276,7 +306,7 @@ fn remote_then_local<T>(
 
 fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Result<Session> {
     anyhow::ensure!(
-        ["local", "soniox"].contains(&options.provider.as_str()),
+        ["local", "soniox", "groq"].contains(&options.provider.as_str()),
         "Cách chép lời không hợp lệ"
     );
     let key = if options.transcribe && options.provider == "soniox" {
@@ -298,22 +328,51 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         !options.captions_enabled || options.transcribe,
         "Hãy bật chép lời trước khi bật phụ đề cuộc họp"
     );
+    let groq_profile = if options.transcribe && options.provider == "groq" {
+        let profile = may.profile(
+            options
+                .profile_id
+                .as_deref()
+                .context("Hãy chọn cấu hình Groq đã lưu")?,
+        )?;
+        anyhow::ensure!(
+            profile.provider == "groq" && !profile.key.trim().is_empty(),
+            "Cấu hình Groq chưa có key hợp lệ"
+        );
+        anyhow::ensure!(
+            !options.local_fallback,
+            "Dự phòng local hiện áp dụng cho Soniox; Groq dùng cấu hình API dự phòng đã chọn"
+        );
+        Some(profile)
+    } else {
+        None
+    };
     let remote = key.is_some();
+    let any_remote = remote || groq_profile.is_some();
     let transcription_backup = if let Some(choice) = options.transcription_fallback.as_ref() {
         anyhow::ensure!(
-            remote && options.transcribe,
-            "Dự phòng cấu hình chép lời hiện cần Soniox làm engine chính"
+            any_remote && options.transcribe,
+            "Dự phòng chép lời cần cấu hình cloud chính"
         );
         let profile = may.profile(&choice.profile_id)?;
         anyhow::ensure!(
-            profile.provider == "soniox" && choice.model == "stt-rt-v5",
-            "Dự phòng chép lời phải dùng cấu hình Soniox và stt-rt-v5"
+            profile.provider == options.provider
+                && !profile.key.trim().is_empty()
+                && (profile.provider == "soniox" && choice.model == crate::soniox::RT_MODEL
+                    || profile.provider == "groq" && groq::is_speech_model(&choice.model)),
+            "Dự phòng chép lời cần model phù hợp và cùng nhà cung cấp với model chính"
         );
+        let primary_model = if remote {
+            crate::soniox::RT_MODEL
+        } else {
+            options.model.as_str()
+        };
         anyhow::ensure!(
-            options.profile_id.as_deref() != Some(profile.id.as_str()),
-            "Cấu hình Soniox dự phòng phải khác cấu hình chính"
+            options.profile_id.as_deref() != Some(profile.id.as_str())
+                || choice.model != primary_model,
+            "Dự phòng phải khác model hoặc cấu hình chính"
         );
-        Some(profile)
+        Some((profile, choice.model.clone()))
     } else {
         None
     };
@@ -348,7 +407,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         );
     }
     models::validate_mode(&options.language, &options.model, &options.provider)?;
-    if options.transcribe && (!remote || options.local_fallback) {
+    if options.transcribe && (!any_remote || options.local_fallback) {
         anyhow::ensure!(
             models::list(&may.root)
                 .iter()
@@ -382,7 +441,12 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         status: "recording".into(),
         language: options.language.clone(),
         model: options.model.clone(),
-        provider: if remote { "soniox" } else { "local" }.into(),
+        provider: if any_remote {
+            options.provider.as_str()
+        } else {
+            "local"
+        }
+        .into(),
         processed: 0.,
         segments: vec![],
         live: vec![],
@@ -394,10 +458,15 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
             vec![]
         },
         smoothed: None,
+        corrected: None,
         summary: None,
         translations: vec![],
-        speech: remote.then(|| SpeechInfo {
-            model: "stt-rt-v5".into(),
+        speech: any_remote.then(|| SpeechInfo {
+            model: if remote {
+                crate::soniox::RT_MODEL.into()
+            } else {
+                options.model.clone()
+            },
             profile_id: resolved_profile,
             translation_language: options.translation_language.clone(),
             ..SpeechInfo::default()
@@ -415,15 +484,14 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         failure: Mutex::new(None),
         speech: meeting_soniox::Control::default(),
     });
-    run.speech.active.store(remote, Ordering::Release);
+    run.speech.active.store(any_remote, Ordering::Release);
     run.speech
         .transcribing
         .store(options.transcribe, Ordering::Release);
     run.speech.set_target(options.translation_language.clone());
-    run.speech.enabled.store(
-        options.captions_enabled,
-        Ordering::Release,
-    );
+    run.speech
+        .enabled
+        .store(options.captions_enabled, Ordering::Release);
     let (tx, rx) = std::sync::mpsc::channel();
     let mut handles = vec![];
     for (kind, device) in [
@@ -492,7 +560,66 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         let live_dir = dir.clone();
         let language = options.language.clone();
         Some(std::thread::spawn(move || {
-            let outcome = if remote {
+            let outcome = if let Some(profile) = groq_profile {
+                let model = options.model.clone();
+                let mut result = meeting_groq::run_from(
+                    &live_may, &live_run, &live_app, &live_dir, &profile, &model, &language, 0,
+                );
+                if result.as_ref().is_err_and(fallback::eligible)
+                    && !live_run.stop.load(Ordering::Acquire)
+                    && !live_run.cancel.load(Ordering::Acquire)
+                {
+                    if let Some((backup, backup_model)) = transcription_backup {
+                        let saved=live_may.edit(&live_run.id,|s|{
+                            s.model=backup_model.clone();if let Some(info)=s.speech.as_mut(){info.profile_id=Some(backup.id.clone());info.model=backup_model.clone();}
+                            s.warnings.push(format!("Chép lời đã chuyển sang {}/{} theo dự phòng đã chọn; bản thu và chữ đã có vẫn được giữ.",backup.name,backup_model));
+                        });
+                        result = match saved {
+                            Ok(session) => {
+                                let _ = live_app.emit("session-changed", live_run.id.clone());
+                                if live_run.speech.enabled.load(Ordering::Acquire) {
+                                    caption::emit_status(
+                                        &live_app,
+                                        "groq",
+                                        "fallback",
+                                        false,
+                                        &format!(
+                                            "Đang chuyển sang {}/{} theo dự phòng đã chọn.",
+                                            backup.name, backup_model
+                                        ),
+                                    );
+                                }
+                                meeting_groq::run_from(
+                                    &live_may,
+                                    &live_run,
+                                    &live_app,
+                                    &live_dir,
+                                    &backup,
+                                    &backup_model,
+                                    &language,
+                                    (session.processed * 16000.) as usize,
+                                )
+                            }
+                            Err(e) => Err(e),
+                        };
+                    }
+                }
+                live_run.speech.active.store(false, Ordering::Release);
+                if live_run.speech.enabled.swap(false, Ordering::AcqRel) {
+                    caption::emit_status(
+                        &live_app,
+                        "groq",
+                        if result.is_err() { "error" } else { "idle" },
+                        false,
+                        if result.is_err() {
+                            "Chép lời Groq đã ngắt; xem lỗi cuộc họp. Bản thu và chữ đã có vẫn được giữ."
+                        } else {
+                            "Đã dừng chép lời và phụ đề Groq."
+                        },
+                    );
+                }
+                result
+            } else if remote {
                 let mut result = meeting_soniox::run(
                     &live_may,
                     &live_run,
@@ -505,18 +632,18 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                     && !live_run.stop.load(Ordering::Acquire)
                     && !live_run.cancel.load(Ordering::Acquire)
                 {
-                    if let Some(backup) = transcription_backup {
+                    if let Some((backup, _)) = transcription_backup {
                         let saved=live_may.edit(&live_run.id,|s|{
                             if let Some(info)=s.speech.as_mut(){info.profile_id=Some(backup.id.clone());}
-                            s.warnings.push(format!("Chép lời đã chuyển sang {}/stt-rt-v5 theo cấu hình dự phòng. Âm thanh tiếp tục được thu; phần chưa chốt có thể được gửi lại để phục hồi.",backup.name));
+                            s.warnings.push(format!("Chép lời đã chuyển sang {}/stt-rt-v6 theo cấu hình dự phòng. Âm thanh tiếp tục được thu; phần chưa chốt có thể được gửi lại để phục hồi.",backup.name));
                         });
                         result = match saved {
                             Ok(session) => {
                                 if live_run.speech.enabled.load(Ordering::Acquire) {
-                                    caption::emit_status(&live_app,"soniox","fallback",false,&format!("Đang chuyển chép lời/phụ đề sang {}/stt-rt-v5; nguồn thu vẫn chạy.",backup.name));
+                                    caption::emit_status(&live_app,"soniox","fallback",false,&format!("Đang chuyển chép lời/phụ đề sang {}/stt-rt-v6; nguồn thu vẫn chạy.",backup.name));
                                 }
                                 let _ = live_app.emit("session-changed", live_run.id.clone());
-                                let _=live_app.emit("ai-fallback",serde_json::json!({"task":"caption","from":"Soniox chính/stt-rt-v5","to":format!("{}/stt-rt-v5",backup.name)}));
+                                let _=live_app.emit("ai-fallback",serde_json::json!({"task":"caption","from":"Soniox chính/stt-rt-v6","to":format!("{}/stt-rt-v6",backup.name)}));
                                 meeting_soniox::run_from(
                                     &live_may,
                                     &live_run,
@@ -575,7 +702,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                 stream_preview(&live_may, &live_run, &live_app, &live_dir, &language)
             };
             live_run.speech.transcribing.store(false, Ordering::Release);
-            if !remote && live_run.speech.enabled.swap(false, Ordering::AcqRel) {
+            if !any_remote && live_run.speech.enabled.swap(false, Ordering::AcqRel) {
                 caption::emit_status(
                     &live_app,
                     "local",
@@ -1010,6 +1137,13 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
         session_logic::reconcile_visible_state(s, active_id.as_deref());
     }
     Ok(Snapshot {
+        corrections: may
+            .corrections
+            .lock()
+            .unwrap()
+            .values()
+            .map(|job| job.progress.lock().unwrap().clone())
+            .collect(),
         translation_preview: may.current().and_then(|r| r.speech.preview()),
         sessions,
         devices: may.devices.lock().unwrap().clone(),
@@ -1115,7 +1249,13 @@ async fn summarize_transcript(
             !["recording", "paused", "processing"].contains(&session.status.as_str()),
             "Hãy đợi bản chép lời hoàn tất trước khi tóm tắt"
         );
-        let (transcript, source_name) = if source == "smoothed" {
+        let (transcript, source_name) = if source == "corrected" {
+            let corrected = session
+                .corrected
+                .as_ref()
+                .context("Chưa có bản hiệu chỉnh để tóm tắt")?;
+            (corrected.text.clone(), "corrected".to_string())
+        } else if source == "smoothed" {
             match session.smoothed.as_ref() {
                 Some(smoothed) => (smoothed.text.clone(), "smoothed".to_string()),
                 None => anyhow::bail!("Chưa có bản làm mịn để tóm tắt"),
@@ -1132,8 +1272,8 @@ async fn summarize_transcript(
             (text, "original".to_string())
         };
         let mut hasher: u64 = 0;
-        for byte in transcript.bytes() {
-            hasher = hasher.wrapping_mul(31).wrapping_add(byte as u64);
+        for unit in transcript.encode_utf16() {
+            hasher = hasher.wrapping_mul(31).wrapping_add(unit as u64);
         }
         let source_hash = format!("{}", hasher & 0xffffffff);
         let (provider, base_url, api_key) =
@@ -1221,98 +1361,117 @@ fn delete_summary(may: State<May>, id: String) -> std::result::Result<Session, S
     may.edit(&id, |s| s.summary = None).map_err(err)
 }
 #[tauri::command]
-async fn smooth_transcript(
+async fn correct_transcript(
     may: State<'_, May>,
+    app: tauri::AppHandle,
     id: String,
-    provider: String,
+    profile_id: String,
     model: String,
-    base_url: String,
-    prompt: String,
-    key: Option<String>,
-    profile_id: Option<String>,
     fallback: Option<config::ModelChoice>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
-        let session = storage::load(&m.root, &id)?;
-        anyhow::ensure!(
-            !["recording", "paused", "processing"].contains(&session.status.as_str()),
-            "Hãy đợi bản chép lời hoàn tất trước khi làm mịn"
+    let session = storage::load(&m.root, &id).map_err(err)?;
+    if ["recording", "paused", "processing"].contains(&session.status.as_str()) {
+        return Err(
+            "Hãy kết thúc cuộc họp và đợi file ghi âm hoàn tất trước khi hiệu chỉnh".into(),
         );
-        let original = session
-            .segments
-            .iter()
-            .map(|segment| segment.text.trim())
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        anyhow::ensure!(!original.is_empty(), "Chưa có bản chép lời để làm mịn");
-        let (provider, base_url, api_key) =
-            m.task_config(&provider, &base_url, key, profile_id.as_deref())?;
-        anyhow::ensure!(!api_key.trim().is_empty(), "Cần nhập API key");
-        let alternative = if let Some(choice) = fallback {
-            anyhow::ensure!(
-                profile_id.as_deref() != Some(choice.profile_id.as_str()) || model != choice.model,
-                "Model dự phòng phải khác model chính"
-            );
-            let profile = m.profile(&choice.profile_id)?;
-            anyhow::ensure!(
-                ["groq", "openai", "gemini", "deepseek", "openai-compatible"]
-                    .contains(&profile.provider.as_str())
-                    && !groq::is_speech_model(&choice.model),
-                "Model dự phòng không phù hợp tác vụ văn bản"
-            );
-            Some((profile, choice.model))
-        } else {
-            None
-        };
-
-        let (source_text, task_prompt) = (&original, &prompt);
-        let (smoothed, switched) = fallback::once(
-            || llm::smooth(&provider, &model, &base_url, &api_key, &original, &prompt),
-            alternative.as_ref().map(|(p, m)| {
-                move || {
-                    llm::smooth(
-                        &p.provider,
-                        m,
-                        &p.base_url,
-                        &p.key,
-                        source_text,
-                        task_prompt,
-                    )
-                }
-            }),
-        )?;
-        let (provider, model, notice) = if switched {
-            let (p, m) = alternative.unwrap();
-            (
-                p.provider,
-                m.clone(),
-                Some(format!(
-                    "Biên tập đã chuyển sang {}/{m} theo cấu hình dự phòng.",
-                    p.name
-                )),
-            )
-        } else {
-            (provider, model, None)
-        };
-        m.edit(&id, |s| {
-            if let Some(notice) = notice {
-                s.warnings.push(notice);
+    }
+    let profile = m.correction_profile(&profile_id).map_err(err)?;
+    if !correction::supported(&profile.provider, &model) {
+        return Err(
+            "Chọn model nhận âm thanh cho Hiệu chỉnh; model chat không nghe lại bản thu được"
+                .into(),
+        );
+    }
+    let alternative = if let Some(choice) = fallback {
+        let p = m.correction_profile(&choice.profile_id).map_err(err)?;
+        if !correction::supported(&p.provider, &choice.model)
+            || (choice.profile_id == profile_id && choice.model == model)
+        {
+            return Err("Model hiệu chỉnh dự phòng không phù hợp hoặc trùng model chính".into());
+        }
+        Some((p, choice.model))
+    } else {
+        None
+    };
+    let model_path = m
+        .correction_model(&profile, &model, &session.language)
+        .map_err(err)?;
+    if let Some((p, model)) = &alternative {
+        m.correction_model(p, model, &session.language)
+            .map_err(err)?;
+    }
+    let control = Arc::new(correction::Control::new(
+        id.clone(),
+        session.duration,
+        model.clone(),
+    ));
+    {
+        let mut jobs = m.corrections.lock().unwrap();
+        if !jobs.is_empty() {
+            return Err("Đang có bản thu được hiệu chỉnh; hãy chờ hoặc hủy công việc đó".into());
+        }
+        jobs.insert(id.clone(), control.clone());
+    }
+    let operation = async {
+        let path = storage::session_dir(&m.root, &id)?.join("recording.wav");
+        let first = correction::transcribe(
+            &profile,
+            &model,
+            &session.language,
+            &path,
+            &control,
+            model_path.as_deref(),
+        )
+        .await;
+        let corrected = match first {
+            Err(error)
+                if fallback::eligible(&error)
+                    && !control.cancel.load(Ordering::Acquire)
+                    && alternative.is_some() =>
+            {
+                let (p, model) = alternative.as_ref().unwrap();
+                control.update(
+                    "Đang chuyển sang model hiệu chỉnh dự phòng đã chọn",
+                    0.,
+                    model,
+                );
+                correction::transcribe(
+                    p,
+                    model,
+                    &session.language,
+                    &path,
+                    &control,
+                    m.correction_model(p, model, &session.language)?.as_deref(),
+                )
+                .await?
             }
-
-            s.smoothed = Some(SmoothedTranscript {
-                text: smoothed,
-                provider,
-                model,
-                prompt,
-                created: chrono::Utc::now().to_rfc3339(),
-            });
-        })
-    })
-    .await
-    .map_err(err)?
-    .map_err(err)
+            result => result?,
+        };
+        let _lock = m.writing.lock().unwrap();
+        anyhow::ensure!(
+            !control.cancel.load(Ordering::Acquire),
+            "Đã hủy hiệu chỉnh; bản hiệu chỉnh trước được giữ nguyên"
+        );
+        let mut latest = storage::load(&m.root, &id)?;
+        latest.corrected = Some(corrected);
+        storage::save(&m.root, &latest)?;
+        Ok::<Session, anyhow::Error>(latest)
+    }
+    .await;
+    m.corrections.lock().unwrap().remove(&id);
+    let _ = app.emit("session-changed", id);
+    operation.map_err(err)
+}
+#[tauri::command]
+fn cancel_correction(may: State<May>, id: String) -> std::result::Result<(), String> {
+    if let Some(job) = may.corrections.lock().unwrap().get(&id) {
+        job.cancel.store(true, Ordering::Release);
+        let mut p = job.progress.lock().unwrap();
+        p.cancelling = true;
+        p.stage = "Đang hủy hiệu chỉnh".into();
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn test_soniox_connection(
@@ -1528,6 +1687,11 @@ async fn test_ai_connection(
     // Hard overall deadline so the connection test can never hang the UI.
     let outcome = async {
         if provider_check == "soniox" {
+            anyhow::ensure!(
+                model.is_empty() || model == soniox::RT_MODEL,
+                "Model Soniox trực tiếp hiện dùng {}; model async chỉ xử lý file âm thanh",
+                soniox::RT_MODEL
+            );
             // Soniox is a WebSocket API: run it directly on the async runtime,
             // exactly like the legacy "Kiểm tra Soniox" button that works.
             tokio::time::timeout(
@@ -1608,6 +1772,55 @@ async fn start_caption(
     if m.caption_running() {
         return Err("Đang có một phiên phụ đề chạy. Hãy dừng trước.".into());
     }
+    if options.mode == "meeting" {
+        let active = m.current().ok_or("Không có cuộc họp đang chạy")?;
+        let session = storage::load(&m.root, &active.id).map_err(err)?;
+        if session.provider == "groq" {
+            if options.translate {
+                return Err(
+                    "Groq Whisper trong cuộc họp chỉ chép lời gốc; hãy bỏ tích Dịch sang".into(),
+                );
+            }
+            if !active.speech.active.load(Ordering::Acquire)
+                || !active.speech.transcribing.load(Ordering::Acquire)
+                || active.capture_done.load(Ordering::Acquire)
+            {
+                return Err("Engine Groq đã dừng; xem lỗi cuộc họp".into());
+            }
+            let info = session
+                .speech
+                .as_ref()
+                .ok_or("Thiếu model Groq đang chạy")?;
+            if options.profile_id.as_deref() != info.profile_id.as_deref()
+                || options.model != info.model
+            {
+                return Err(
+                    "Hãy dùng cùng cấu hình/model Groq đang chép lời để tránh gửi audio hai lần"
+                        .into(),
+                );
+            }
+            active.speech.enabled.store(true, Ordering::Release);
+            caption::set_translation_mode(&app, false);
+            caption::emit_status(
+                &app,
+                "groq",
+                "active",
+                false,
+                "Phụ đề dùng bản chép Groq của cuộc họp; không gửi audio lần hai.",
+            );
+            if let Some(segment) = session.segments.last() {
+                caption::emit_text(
+                    &app,
+                    caption::CaptionText {
+                        text: segment.text.clone(),
+                        original: String::new(),
+                        final_: true,
+                    },
+                );
+            }
+            return Ok(());
+        }
+    }
     if options.mode == "meeting" && !options.translate {
         let active = m.current().ok_or("Không có cuộc họp đang chạy")?;
         if !active.speech.active.load(Ordering::Acquire) {
@@ -1643,7 +1856,11 @@ async fn start_caption(
         let info = models::list(&m.root)
             .into_iter()
             .find(|model| model.id == opts.model && model.installed)
-            .ok_or(if opts.model.starts_with("moonshine-") { "Thiếu model Moonshine đi kèm; hãy cài lại Innote" } else { "Model local chưa được tải đầy đủ; mở Cài đặt để tải model trước" })?;
+            .ok_or(if opts.model.starts_with("moonshine-") {
+                "Thiếu model Moonshine đi kèm; hãy cài lại Innote"
+            } else {
+                "Model local chưa được tải đầy đủ; mở Cài đặt để tải model trước"
+            })?;
         opts.local_model = Some(models::path(&m.root, &info.id).map_err(err)?);
         let devices = m.devices.lock().unwrap();
         let device = devices
@@ -1743,7 +1960,9 @@ async fn start_caption(
         next.display_model = format!("{}/{}", backup.name, next.model);
         next.fallback = None;
         next.alternative = None;
-        if !speech_quality::SpeechQuality::supported(&next.provider) { next.speech_quality = Default::default(); }
+        if !speech_quality::SpeechQuality::supported(&next.provider) {
+            next.speech_quality = Default::default();
+        }
         caption::validate_options(&next).map_err(err)?;
         opts.alternative = Some(Box::new(next));
     }
@@ -1757,15 +1976,32 @@ async fn start_caption(
     Ok(())
 }
 #[tauri::command]
-fn set_meeting_translation(may: State<May>, target: Option<String>) -> std::result::Result<(), String> {
+fn set_meeting_translation(
+    may: State<May>,
+    target: Option<String>,
+) -> std::result::Result<(), String> {
     let run = may.current().ok_or("Không có cuộc họp đang ghi")?;
-    if !run.speech.active.load(Ordering::Acquire) || run.capture_done.load(Ordering::Acquire) {
-        return Err("Dịch cuộc họp cần luồng Soniox đang hoạt động. Hãy chọn Soniox khi tạo cuộc họp.".into());
+    if storage::load(&may.root, &run.id).map_err(err)?.provider != "soniox" {
+        return Err("Dịch cuộc họp hiện cần Soniox; Groq Whisper chỉ chép lời gốc".into());
     }
-    if target.as_deref().is_some_and(|t| !["vi", "en", "ko", "zh", "ja"].contains(&t)) {
+    if !run.speech.active.load(Ordering::Acquire) || run.capture_done.load(Ordering::Acquire) {
+        return Err(
+            "Dịch cuộc họp cần luồng Soniox đang hoạt động. Hãy chọn Soniox khi tạo cuộc họp."
+                .into(),
+        );
+    }
+    if target
+        .as_deref()
+        .is_some_and(|t| !["vi", "en", "ko", "zh", "ja"].contains(&t))
+    {
         return Err("Ngôn ngữ dịch không hợp lệ".into());
     }
-    may.edit(&run.id, |s| { if let Some(info) = &mut s.speech { info.translation_language = target.clone(); } }).map_err(err)?;
+    may.edit(&run.id, |s| {
+        if let Some(info) = &mut s.speech {
+            info.translation_language = target.clone();
+        }
+    })
+    .map_err(err)?;
     run.speech.set_target(target);
     Ok(())
 }
@@ -1774,11 +2010,16 @@ fn stop_caption(app: tauri::AppHandle, may: State<May>) -> std::result::Result<(
     let shared = may
         .current()
         .is_some_and(|r| r.speech.enabled.load(Ordering::Acquire));
+    let provider = may
+        .current()
+        .and_then(|r| storage::load(&may.root, &r.id).ok())
+        .map(|s| s.provider)
+        .unwrap_or_else(|| "soniox".into());
     may.caption_stop_now();
     if shared {
         caption::emit_status(
             &app,
-            "soniox",
+            &provider,
             "idle",
             false,
             "Đã tắt hiển thị phụ đề; bản chép và bản dịch đã chọn vẫn tiếp tục được lưu.",
@@ -2066,6 +2307,10 @@ fn open_folder(may: State<May>) -> std::result::Result<(), String> {
 }
 #[tauri::command]
 fn delete_session(may: State<May>, id: String) -> std::result::Result<(), String> {
+    let corrections = may.corrections.lock().unwrap();
+    if corrections.contains_key(&id) {
+        return Err("Hãy hủy hoặc chờ hiệu chỉnh xong trước khi xóa cuộc họp".into());
+    }
     let active = may.active.lock().unwrap();
     if active.as_ref().map(|r| r.id == id).unwrap_or(false) {
         return Err("Không thể xóa phiên đang chạy".into());
@@ -2341,7 +2586,21 @@ mod controller_tests {
             caption_stop: Arc::new(Mutex::new(None)),
             caption_done: Arc::new(AtomicBool::new(true)),
             verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            corrections: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+    #[test]
+    fn local_correction_needs_no_key_but_requires_installed_matching_model() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let m = may(dir);
+        let local = m.correction_profile("__local__").unwrap();
+        assert_eq!(local.provider, "local");
+        assert!(local.key.is_empty());
+        assert!(m.profiles.lock().unwrap().is_empty());
+        assert!(m.correction_profile("unknown-profile").is_err());
+        assert!(m.correction_model(&local, "moonshine-en", "vi").is_err());
+        assert!(m.correction_model(&local, models::NEMO_ID, "ja").is_err());
+        assert!(m.correction_model(&local, models::NEMO_ID, "en").is_err());
     }
     #[test]
     fn profiles_require_fresh_matching_verification_and_survive_restart() {
@@ -2471,6 +2730,7 @@ mod controller_tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            corrected: None,
             summary: None,
             translations: vec![],
             speech: None,
@@ -2552,8 +2812,13 @@ fn main() {
     ) {
         // Set before loading the native library or starting any child threads.
         // Avoid a BLAS thread pool competing with capture, Zoom and Whisper.
-        let selected_nemo = args.get(5).is_some_and(|p|std::path::Path::new(p).extension().is_some_and(|s|s=="gguf"))
-            || args.get(2).is_some_and(|language|["multi","ko","zh"].contains(&language.as_str()));
+        let selected_nemo = args.get(5).is_some_and(|p| {
+            std::path::Path::new(p)
+                .extension()
+                .is_some_and(|s| s == "gguf")
+        }) || args
+            .get(2)
+            .is_some_and(|language| ["multi", "ko", "zh"].contains(&language.as_str()));
         if !selected_nemo {
             std::env::set_var("OPENBLAS_NUM_THREADS", "1");
             std::env::set_var("OMP_NUM_THREADS", "1");
@@ -2580,10 +2845,20 @@ fn main() {
         return;
     }
     if args.get(1).map(String::as_str) == Some("--caption-stream-worker") {
-        let result = speech_quality::SpeechQuality::parse(args.get(4).map(String::as_str)).and_then(|quality| local_stream_caption::worker(
-            std::path::Path::new(args.get(2).map(String::as_str).unwrap_or("")),
-            args.get(3).map(String::as_str).unwrap_or("multi"), quality,
-        ));
+        if args.get(5).map(String::as_str) == Some("file-correction") {
+            if let Err(error) = correction::limit_local_cpu() {
+                println!("{}", serde_json::json!({"error":error.to_string()}));
+                return;
+            }
+        }
+        let result = speech_quality::SpeechQuality::parse(args.get(4).map(String::as_str))
+            .and_then(|quality| {
+                local_stream_caption::worker(
+                    std::path::Path::new(args.get(2).map(String::as_str).unwrap_or("")),
+                    args.get(3).map(String::as_str).unwrap_or("multi"),
+                    quality,
+                )
+            });
         if let Err(error) = result {
             println!("{}", serde_json::json!({"error":format!("{error:#}")}));
             std::process::exit(1);
@@ -2657,7 +2932,7 @@ fn main() {
             }
             anyhow::ensure!(duration > 0., "Không tìm thấy PCM để chép tiếp");
             let mut s = Session {
-            speech_quality: Default::default(),
+                speech_quality: Default::default(),
                 id: "resume-test".into(),
                 title: "resume-test".into(),
                 created: String::new(),
@@ -2676,6 +2951,7 @@ fn main() {
                 error: None,
                 warnings: vec![],
                 smoothed: None,
+                corrected: None,
                 summary: None,
                 translations: vec![],
                 speech: None,
@@ -2780,6 +3056,7 @@ fn main() {
         caption_stop: Arc::new(Mutex::new(None)),
         caption_done: Arc::new(AtomicBool::new(true)),
         verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        corrections: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
     // Restore previously saved API keys so in-app updates / restarts do not
     // require the user to re-enter or reconnect them.
@@ -2817,7 +3094,8 @@ fn main() {
             caption_window_visible,
             hide_caption_window,
             close_caption_window,
-            smooth_transcript,
+            correct_transcript,
+            cancel_correction,
             summarize_transcript,
             delete_summary,
             refresh_devices,

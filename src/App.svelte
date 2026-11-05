@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { version as appVersion } from "../package.json";
+  import { SONIOX_RT_MODEL, sonioxV6Preferences } from "./lib/soniox-model";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
   import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -46,7 +47,7 @@
     PanelLeftOpen,
   } from "@lucide/svelte";
   import type { Snapshot, Meeting } from "./types";
-  import {PRESETS_KEY,parsePresets,serializePresets,copyPreset,writePresetPreferences,type WorkflowPreset,type PresetMode,type TaskAssignments} from "./lib/workflow-presets";
+  import {PRESETS_KEY,parsePresets,serializePresets,copyPreset,realtimeAssignments,writePresetPreferences,type ModelChoice,type WorkflowPreset,type PresetMode,type TaskAssignments} from "./lib/workflow-presets";
   import {
     locales,
     localeNames,
@@ -204,30 +205,48 @@
   let confSaveOk = false;
   let confGeneration = 0;
   let assignmentsReady = false;
-  let summaryModel = "gpt-4o-mini";
+  let summaryModel = "";
+  let summaryFallback:ModelChoice|undefined;
+  let summaryError="";
   const realtimeModels: Record<string, string[]> = {
-    soniox: ["stt-rt-v5"],
+    soniox: [SONIOX_RT_MODEL],
     openai: ["gpt-realtime-translate"],
     gemini: ["gemini-3.5-live-translate-preview"],
   };
   function captionModels(id: string, profiles: AiProfileSummary[], translate = true, source = "auto") {
     if(id === "__local__")return translate ? [] : source === "vi" ? ["moonshine-vi",multilingualModel] : source === "en" ? ["moonshine-en",multilingualModel] : ["multi","ko","zh"].includes(source) ? [multilingualModel] : ["","auto"].includes(source) ? ["moonshine-vi","moonshine-en",multilingualModel] : [];
     const provider=profileOf(id,profiles)?.provider??"";
-    if(!translate)return provider === "groq" ? ["whisper-large-v3-turbo","whisper-large-v3"] : provider === "soniox" ? ["stt-rt-v5"] : [];
+    if(!translate)return provider === "groq" ? ["whisper-large-v3-turbo","whisper-large-v3"] : provider === "soniox" ? [SONIOX_RT_MODEL] : [];
     return realtimeModels[provider] ?? [];
   }
-  function fallbackChoices(task:keyof TaskAssign, profiles:AiProfileSummary[], assignment:TaskAssign|undefined, mode:string, translate:boolean) {
-    return profiles.flatMap(p=>{
-      const models=task === "transcription" ? (p.provider === "soniox" ? ["stt-rt-v5"] : []) : task === "caption" ? (mode === "meeting" && p.provider !== "soniox" ? [] : captionModels(p.id,profiles,translate)) : chatProviders.includes(p.provider as any) ? textModels(p.id,profiles) : [];
+  const groqSpeechModels=["whisper-large-v3-turbo","whisper-large-v3"];
+  function meetingSpeechModels(id:string,profiles:AiProfileSummary[]){const p=profileOf(id,profiles)?.provider;return p==="groq"?groqSpeechModels:p==="soniox"?[SONIOX_RT_MODEL]:[];}
+  function selectableCaptionModels(id:string,profiles:AiProfileSummary[],translate:boolean,source="auto"){return profileOf(id,profiles)?.provider==="groq"?groqSpeechModels:captionModels(id,profiles,translate,source);}
+  function speechProfiles(profiles:AiProfileSummary[]){return profiles.filter(p=>["groq","soniox"].includes(p.provider));}
+  function correctionModels(id:string,profiles:AiProfileSummary[],source=meeting?.language??language){if(id==="__local__")return compatibleLocalModels(source==="auto"?"multi":source).filter(id=>data.models.some(m=>m.id===id&&m.installed));const provider=profileOf(id,profiles)?.provider;return provider==="groq"?groqSpeechModels:provider==="soniox"?["stt-async-v6"]:[];}
+  function correctionProfiles(profiles:AiProfileSummary[]){return profiles.filter(p=>p.has_key&&correctionModels(p.id,profiles).length);}
+  function defaultCorrectionModel(source:string){return source === "vi" ? "moonshine-vi" : source === "en" ? "moonshine-en" : ["multi","auto","ko","zh"].includes(source) ? multilingualModel : "";}
+  let correctionProfileId="",correctionModel="";
+  let correctionPendingId="",correctionError="";
+  let correctionFallback:ModelChoice|undefined;
+  $: correctionJob=data.corrections?.find(j=>j.id===meeting?.id);
+  $: correctionRunning=!!correctionJob || (!!meeting&&correctionPendingId===meeting.id);
+  $: canCorrect=!!meeting&&!['recording','paused','processing'].includes(meeting.status)&&!!audioUrl;
+  function fallbackChoices(task:keyof TaskAssign, profiles:AiProfileSummary[], assignment:TaskAssign|undefined, mode:string, translate:boolean,source?:string) {
+    const choices=profiles.filter(p=>p.has_key).flatMap(p=>{
+      const primaryProvider=profileOf(assignment?.[task]?.profileId,profiles)?.provider;
+      const models=task === "correction" ? correctionModels(p.id,profiles,source) : task === "transcription" || task === "caption" && mode === "meeting" ? (p.provider===primaryProvider?meetingSpeechModels(p.id,profiles):[]) : task === "caption" ? captionModels(p.id,profiles,translate) : chatProviders.includes(p.provider as any) ? textModels(p.id,profiles) : [];
       return models.map(model=>({profileId:p.id,model}));
-    }).filter(choice=>choice.profileId!==assignment?.[task]?.profileId || choice.model!==assignment?.[task]?.model);
+    });
+    if(task === "correction")choices.push(...correctionModels("__local__",profiles,source).map(model=>({profileId:"__local__",model})));
+    return choices.filter(choice=>choice.profileId!==assignment?.[task]?.profileId || choice.model!==assignment?.[task]?.model);
   }
-  function taskLabel(task:keyof TaskAssign){return task === "transcription" ? tr.taskTranscription : task === "caption" ? tr.taskCaption : task === "smooth" ? tr.taskSmooth : tr.taskSummary;}
+  function taskLabel(task:keyof TaskAssign){return task === "transcription" ? tr.taskTranscription : task === "caption" ? tr.taskCaption : task === "correction" ? "Hiệu chỉnh từ bản thu" : tr.taskSummary;}
   function chooseFallback(task:keyof TaskAssign,value:string){
     const primary=taskAssigns[taskMode]?.[task];if(!primary)return;
     setAssignment(task,{...primary,fallback:value ? JSON.parse(value) : undefined});
   }
-  function textModels(id: string, profiles: AiProfileSummary[]) {
+  function textModels(id: string, profiles: AiProfileSummary[],_source?:string) {
     const provider = profileOf(id, profiles)?.provider ?? smoothProvider;
     return provider === "groq" ? ["openai/gpt-oss-20b","openai/gpt-oss-120b","qwen/qwen3.8-27b"] : provider === "gemini"
       ? ["gemini-2.5-flash", "gemini-2.5-pro"]
@@ -277,16 +296,34 @@
   function applyCaptionPreview(){const cue=captionPresentation.view(captionBilingual);captionText=cue.text;captionOriginal=captionBilingual?cue.original:"";}
   let captionFallbackMessage = "";
   let transcriptionProfileId = "";
-  $: meetingSharedChoice = provider === "soniox" && transcriptionProfileId
-    ? JSON.stringify({profileId:transcriptionProfileId,model:"stt-rt-v5"})
+  let transcriptionModel="whisper-large-v3-turbo";
+  let profilesReady=false,meetingChoiceHydrated=false;
+  let rememberedMeetingChoice:ModelChoice|undefined;
+  $: currentMeetingModel=provider === "local" ? effectiveModel : provider === "groq" ? transcriptionModel : SONIOX_RT_MODEL;
+  $: if(assignmentsReady&&profilesReady&&!meetingChoiceHydrated){
+    const choice=rememberedMeetingChoice??taskAssigns.meeting?.transcription;
+    const p=profileOf(choice?.profileId,aiProfiles);
+    if(choice?.profileId==="__local__"){provider="local";transcriptionProfileId="";}
+    else if(p&&["groq","soniox"].includes(p.provider)&&meetingSpeechModels(p.id,aiProfiles).includes(choice?.model??"")){provider=p.provider;transcriptionProfileId=p.id;transcriptionModel=choice!.model;}
+    meetingChoiceHydrated=true;
+  }
+  function changeMeetingProvider(value:string){
+    provider=value;
+    if(value==="local"){transcriptionProfileId="";return;}
+    const profiles=speechProfiles(aiProfiles).filter(p=>p.provider===value);
+    if(!profiles.some(p=>p.id===transcriptionProfileId))transcriptionProfileId=profiles.length===1?profiles[0].id:"";
+    if(value==="groq"&&!groqSpeechModels.includes(transcriptionModel))transcriptionModel=groqSpeechModels[0];
+    if(value==="groq"&&localFallback){localFallback=false;notify("Groq dùng API dự phòng chọn trong mẫu; dự phòng local hiện chỉ áp dụng cho Soniox.");}
+  }
+  $: meetingSharedChoice = provider !== "local" && transcriptionProfileId
+    ? JSON.stringify({profileId:transcriptionProfileId,model:currentMeetingModel})
     : provider === "local" && !meetingTranslate ? JSON.stringify({profileId:"__local__",model:effectiveModel}) : "";
   function chooseMeetingSharedModel(value:string) {
-    if(!value)return;
-    const choice=JSON.parse(value) as ModelChoice;
+    let choice:ModelChoice;try{choice=JSON.parse(value);}catch{return;}
     if(choice.profileId === "__local__" && !meetingTranslate){chooseLocalMeetingModel(choice.model);provider="local";transcriptionProfileId="";return;}
     const profile=profileOf(choice.profileId,aiProfiles);
-    if(profile?.provider !== "soniox" || choice.model !== "stt-rt-v5") {error="Model này chưa hỗ trợ chép lời và dịch phụ đề dùng chung trong cuộc họp.";return;}
-    provider="soniox";transcriptionProfileId=profile.id;error="";
+    if(!profile||!meetingSpeechModels(profile.id,aiProfiles).includes(choice.model)){error="Model chưa hỗ trợ chép lời cuộc họp.";return;}
+    changeMeetingProvider(profile.provider);transcriptionProfileId=profile.id;transcriptionModel=choice.model;error="";
   }
   let smoothProfileId = "";
   let summaryProfileId = "";
@@ -307,14 +344,14 @@
   let smoothBaseUrl = "";
   let smoothKey = "";
   let smoothPrompt = "";
-  let smoothOpen = false;
-  let smoothDialog: HTMLDialogElement;
-  let transcriptView: "original" | "smoothed" = "original";
+  let correctionOpen = false;
+  let correctionDialog: HTMLDialogElement;
+  let transcriptView: "original" | "corrected" = "original";
   let smoothModels: string[] = [];
   let llmConnectionSignature = "";
   type SummaryStyle = "overview" | "decisions" | "full";
   let summaryStyle: SummaryStyle = "overview";
-  let summarySource: "original" | "smoothed" = "original";
+  let summarySource: "original" | "corrected" = "original";
   let summaryPrompt = "";
   let summaryOpen = false;
   let summaryDialog: HTMLDialogElement;
@@ -359,9 +396,9 @@
     tick().then(() => {
       if (summaryDialog && !summaryDialog.open) summaryDialog.showModal();
     });
-  $: if (smoothOpen)
+  $: if (correctionOpen)
     tick().then(() => {
-      if (smoothDialog && !smoothDialog.open) smoothDialog.showModal();
+      if (correctionDialog && !correctionDialog.open) correctionDialog.showModal();
     });
   $: if (modelPickerOpen)
     tick().then(() => {
@@ -395,9 +432,9 @@
   let lastCount = 0;
   const desktop = "__TAURI_INTERNALS__" in window;
   $: meeting = data.sessions.find((s) => s.id === selected);
-  $: canSmooth =
+  $: canSummarize =
     !!meeting &&
-    meeting.segments.length > 0 &&
+    (meeting.segments.length > 0 || !!meeting.corrected) &&
     !["recording", "paused", "processing"].includes(meeting.status);
   $: llmConfigSignature = JSON.stringify([
     summaryOpen ? summaryProfileId : smoothProfileId,
@@ -406,7 +443,8 @@
     smoothBaseUrl,
     aiProfiles.map((p) => [p.id, p.provider, p.base_url, p.key_tail]),
   ]);
-  $: llmConnected = llmConfigSignature === llmConnectionSignature || (!!profileOf(summaryOpen ? summaryProfileId : smoothProfileId,aiProfiles) && !!(summaryOpen ? taskAssigns.meeting?.summary?.fallback : taskAssigns.meeting?.smooth?.fallback));
+  $: llmConnected = llmConfigSignature === llmConnectionSignature;
+  $: summaryReady=!!profileOf(summaryProfileId,aiProfiles)?.has_key && chatProfiles(aiProfiles).some(p=>p.id===summaryProfileId) && !!summaryModel.trim();
   $: filteredModels = smoothModels.filter((m) =>
     m.toLowerCase().includes(modelPickerSearch.trim().toLowerCase()),
   );
@@ -420,66 +458,19 @@
   $: summaryCurrentHash = (() => {
     if (!meeting || !meeting.summary) return "";
     const source =
-      meeting.summary.source === "smoothed"
-        ? (meeting.smoothed?.text ?? "")
+      meeting.summary.source === "corrected"
+        ? (meeting.corrected?.text ?? "")
+        : meeting.summary.source === "smoothed" ? (meeting.smoothed?.text ?? "")
         : meeting.segments.map((s) => s.text).join("\n");
     return summaryHash(source);
   })();
   $: summaryStale =
     !!meeting?.summary?.source_hash &&
     summaryCurrentHash !== meeting.summary.source_hash;
-  $: smoothSegments = (() => {
-    if (!meeting?.smoothed?.text || meeting.segments.length === 0) return [];
-    const source = meeting.segments;
-    const smoothed = meeting.smoothed.text.trim();
-    if (!smoothed) return [];
-    const totalWords = Math.max(
-      1,
-      source.reduce(
-        (sum, s) =>
-          sum + (s.text.trim().split(/\s+/).filter(Boolean).length || 1),
-        0,
-      ),
-    );
-    const smoothWords = smoothed.split(/\s+/).filter(Boolean);
-    const totalSmoothWords = Math.max(1, smoothWords.length);
-    const result: { id: string; start: number; end: number; text: string }[] =
-      [];
-    let cursor = 0;
-    let smoothStart = 0;
-    source.forEach((s, index) => {
-      const words = Math.max(
-        1,
-        Math.round(
-          ((s.text.trim().split(/\s+/).filter(Boolean).length || 1) /
-            totalWords) *
-            totalSmoothWords,
-        ),
-      );
-      const part = smoothWords
-        .slice(smoothStart, smoothStart + words)
-        .join(" ");
-      smoothStart += words;
-      const nextStart = cursor + Math.max(0, s.end - s.start);
-      if (part.trim())
-        result.push({
-          id: `smooth-${index}`,
-          start: s.start,
-          end: Math.max(s.start, nextStart),
-          text: part.trim(),
-        });
-      cursor = nextStart;
-    });
-    const remaining = smoothWords.slice(smoothStart).join(" ");
-    if (remaining.trim() && result.length && result[result.length - 1]) {
-      result[result.length - 1].text =
-        `${result[result.length - 1].text} ${remaining.trim()}`.trim();
-    }
-    return result;
-  })();
+  $: correctedSegments = meeting?.corrected?.segments ?? [];
   $: exportingVersion =
-    transcriptView === "smoothed" && meeting?.smoothed
-      ? "smoothed"
+    transcriptView === "corrected" && meeting?.corrected
+      ? "corrected"
       : translationView === "original" ? "original" : `${translationView}:${visibleTranslationLanguage}`;
   function parseSummarySections(text: string) {
     const lines = text.split("\n");
@@ -552,7 +543,7 @@
   }
   $: multilingual = ["multi", "ko", "zh"].includes(language);
   $: effectiveModel = compatibleLocalModels(language).includes(localMeetingModels[language]) ? localMeetingModels[language] : multilingual ? multilingualModel : language === "en" ? "moonshine-en" : model;
-  $: meetingLevelKey=qualityKey("meeting",provider==="local"?"__local__":transcriptionProfileId,provider==="local"?effectiveModel:"stt-rt-v5",language,meetingTranslate);
+  $: meetingLevelKey=qualityKey("meeting",provider==="local"?"__local__":transcriptionProfileId,currentMeetingModel,language,meetingTranslate);
   $: meetingSpeechQuality=processingLevels[meetingLevelKey]??"balanced";
   $: captionQualityProvider=captionProfileId==="__local__"?"local":profileOf(captionProfileId,aiProfiles)?.provider??"";
   $: captionLevelKey=qualityKey("captionsonly",captionProfileId,captionModel,captionSourceLang,captionTranslate);
@@ -665,11 +656,11 @@
     );
   $: continuousTranscript = !!meeting && ["recording", "paused"].includes(meeting.status);
   $: flowingFinalText = segments.map(s=>s.text).join(" ");
-  $: if (sourcesInitialized) {
+  $: if (sourcesInitialized && meetingChoiceHydrated) {
     try {
       localStorage.setItem(
         "may.preferences",
-        JSON.stringify({ system, microphone, language, model, transcribe, meetingCaptions, meetingTranslate, meetingTargetLang, localFallback }),
+        JSON.stringify({ system, microphone, language, model, transcribe, meetingCaptions, meetingTranslate, meetingTargetLang, localFallback, speechSelection:{profileId:provider==="local"?"__local__":transcriptionProfileId,model:currentMeetingModel} }),
       );
     } catch {
       /* Storage may be unavailable; session data still lives in SQLite. */
@@ -869,7 +860,7 @@
     audioUrl = "";
     editing = "";
     searchText = "";
-    smoothOpen = false;
+    correctionOpen = false;
     smoothPrompt = "";
     meetingsOpen = false;
     renamingId = "";
@@ -912,9 +903,10 @@
     testQuiet = false;
     error = "";
     const preferred = taskAssigns.meeting?.transcription?.profileId ?? "";
-    provider = preferred && preferred !== "__local__" ? "soniox" : "local";
+    provider = preferred && preferred !== "__local__" ? profileOf(preferred,aiProfiles)?.provider??"local" : "local";
+    transcriptionModel=taskAssigns.meeting?.transcription?.model??"whisper-large-v3-turbo";
     transcriptionProfileId = preferred === "__local__" ? "" : preferred;
-    smoothOpen = false;
+    correctionOpen = false;
     smoothPrompt = "";
     transcriptView = "original";
     meetingsOpen = false;
@@ -934,16 +926,16 @@
           system: system || null,
           microphone: microphone || null,
           language,
-          model: effectiveModel,
+          model: provider === "groq" ? transcriptionModel : effectiveModel,
           speechQuality: meetingSpeechQuality,
           transcribe,
           provider,
           translationLanguage: transcribe && provider === "soniox" && meetingTranslate ? meetingTargetLang : null,
           captionsEnabled: transcribe && meetingCaptions && (provider === "soniox" || !meetingTranslate),
           localFallback: provider === "soniox" && localFallback,
-          transcriptionFallback: provider === "soniox" ? taskAssigns.meeting?.transcription?.fallback ?? null : null,
+          transcriptionFallback: provider !== "local" ? taskAssigns.meeting?.transcription?.fallback ?? null : null,
           profileId:
-            provider === "soniox" ? transcriptionProfileId || null : null,
+            provider !== "local" ? transcriptionProfileId || null : null,
         },
       });
       selected = s.id;
@@ -1060,119 +1052,47 @@
       notify(fill(tr.aiModelsFetched, { count: models.length }));
     });
   }
-  async function smoothTranscript() {
-    if (!meeting || !canSmooth) return;
-    if (!llmConnected) {
-      error = tr.aiConnectFirst;
-      return;
-    }
-    const id = meeting.id;
-    const profile = profileOf(smoothProfileId, aiProfiles);
-    await action(async () => {
-      if (!taskAssigns.meeting?.smooth?.fallback) {
-      if (profile) {
-        await invoke("test_ai_connection", {
-          input: {
-            provider: profile.provider,
-            apiKey: null,
-            baseUrl: profile.base_url,
-            model: smoothModel,
-            profileId: profile.id,
-          },
-        });
-      } else {
-        await invoke("test_llm_connection", {
-          provider: smoothProvider,
-          model: smoothModel,
-          baseUrl: smoothBaseUrl,
-          key: smoothKey.trim() || null,
-        });
-      }
-      }
-      llmConnectionSignature = llmConfigSignature;
-      const updated = await invoke<Meeting>("smooth_transcript", {
-        id,
-        provider: profile?.provider ?? smoothProvider,
-        model: smoothModel,
-        baseUrl: profile?.base_url ?? smoothBaseUrl,
-        prompt: smoothPrompt,
-        key: !profile ? smoothKey.trim() || null : null,
-        profileId: profile?.id ?? null,
-        fallback: taskAssigns.meeting?.smooth?.fallback ?? null,
-      });
-      if (id === meeting?.id) {
-        data = {
-          ...data,
-          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
-        };
-        smoothOpen = false;
-        smoothPrompt = "";
-        transcriptView = "smoothed";
-        notify(tr.notifySmoothed);
-      }
-    });
-  }
-  async function copySmoothed() {
+  async function correctTranscript() {
+    if(!meeting||!canCorrect||correctionRunning)return;
+    const id=meeting.id;
+    if(!correctionModels(correctionProfileId,aiProfiles).includes(correctionModel)){correctionError="Hãy chọn cấu hình và model nhận âm thanh để hiệu chỉnh.";return;}
+    correctionPendingId=id;correctionError="";
     try {
-      await navigator.clipboard.writeText(meeting?.smoothed?.text ?? "");
+      const updated=await invoke<Meeting>("correct_transcript",{id,profileId:correctionProfileId,model:correctionModel,fallback:correctionFallback??null});
+      data={...data,sessions:data.sessions.map(s=>s.id===id?updated:s)};
+      if(selected===id){correctionOpen=false;transcriptView="corrected";transcriptTab="transcript";translationView="original";}
+      notify("Đã tạo bản hiệu chỉnh từ file ghi âm. Bản gốc được giữ nguyên.");
+    } catch(e) {correctionError=String(e);if(!correctionOpen)notify(correctionError);}
+    finally {correctionPendingId="";await refresh();}
+  }
+  async function cancelCorrection(){if(meeting)await invoke("cancel_correction",{id:meeting.id});await refresh();}
+  async function copyCorrected() {
+    try {
+      await navigator.clipboard.writeText(meeting?.corrected?.text ?? "");
       notify(tr.smoothCopied);
     } catch (e) {
       error = String(e);
     }
   }
   async function createSummary() {
-    if (!meeting || !canSmooth) return;
-    if (!llmConnected) {
-      error = tr.aiConnectFirst;
-      return;
-    }
-    const id = meeting.id;
+    if (!meeting || !canSummarize || busy) return;
+    summaryError="";
     const profile = profileOf(summaryProfileId, aiProfiles);
-    await action(async () => {
-      if (!taskAssigns.meeting?.summary?.fallback) {
-      if (profile) {
-        await invoke("test_ai_connection", {
-          input: {
-            provider: profile.provider,
-            apiKey: null,
-            baseUrl: profile.base_url,
-            model: summaryModel,
-            profileId: profile.id,
-          },
-        });
-      } else {
-        await invoke("test_llm_connection", {
-          provider: smoothProvider,
-          model: summaryModel,
-          baseUrl: smoothBaseUrl,
-          key: smoothKey.trim() || null,
-        });
-      }
-      }
-      llmConnectionSignature = llmConfigSignature;
+    if(!summaryReady || !profile){summaryError="Hãy chọn cấu hình AI và model tóm tắt.";return;}
+    const id=meeting.id;
+    pendingActions++;
+    try {
       const updated = await invoke<Meeting>("summarize_transcript", {
-        id,
-        provider: profile?.provider ?? smoothProvider,
-        model: summaryModel,
-        baseUrl: profile?.base_url ?? smoothBaseUrl,
-        prompt: summaryPrompt,
-        style: summaryStyle,
-        source: summarySource,
-        key: !profile ? smoothKey.trim() || null : null,
-        profileId: profile?.id ?? null,
-        fallback: taskAssigns.meeting?.summary?.fallback ?? null,
+        id, provider:profile.provider,model:summaryModel.trim(),baseUrl:profile.base_url,
+        prompt:summaryPrompt,style:summaryStyle,source:summarySource,key:null,
+        profileId:profile.id,fallback:summaryFallback??null,
       });
-      if (id === meeting?.id) {
-        data = {
-          ...data,
-          sessions: data.sessions.map((s) => (s.id === id ? updated : s)),
-        };
-        transcriptTab = "summary";
-        summaryOpen = false;
-        summaryPrompt = "";
-        notify(tr.notifySummaryCreated);
+      if(id===meeting?.id){
+        data={...data,sessions:data.sessions.map(s=>s.id===id?updated:s)};
+        transcriptTab="summary";summaryOpen=false;summaryPrompt="";notify(tr.notifySummaryCreated);
       }
-    });
+    } catch(e){summaryError=String(e);}
+    finally{pendingActions--;}
   }
   async function deleteSummary() {
     if (!meeting?.summary) return;
@@ -1222,7 +1142,7 @@
     if (!meeting) return;
     const original=meeting.segments.map(s=>s.text.trim()).filter(Boolean).join("\n");
     const translated=savedTranslations.map(s=>s.text.trim()).filter(Boolean).join("\n");
-    const text=translationView==="translation"?translated:translationView==="bilingual"?`BẢN GỐC\n${original}\n\nBẢN DỊCH (${visibleTranslationLanguage})\n${translated}`:original;
+    const text=transcriptView==="corrected"&&meeting.corrected ? meeting.corrected.text : translationView==="translation"?translated:translationView==="bilingual"?`BẢN GỐC\n${original}\n\nBẢN DỊCH (${visibleTranslationLanguage})\n${translated}`:original;
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -1453,6 +1373,15 @@
     }
   }
   onMount(() => {
+    try {
+      const upgrade=sonioxV6Preferences(localStorage);
+      if(Object.keys(upgrade).length){
+        writePresetPreferences(localStorage,upgrade);
+        notify("Đã nâng cấu hình và mẫu Soniox lên stt-rt-v6. Bản chép đã lưu và API key được giữ nguyên.");
+      }
+    } catch {
+      error="Chưa lưu được cấu hình Soniox v6 trên máy. Hãy kiểm tra dung lượng/quyền lưu rồi mở lại Innote; cấu hình cũ được giữ lại.";
+    }
     processingLevels=parseProcessingLevels(localStorage.getItem(SPEECH_LEVELS_KEY));
     try {
       const saved=JSON.parse(localStorage.getItem("may.meeting.local-models")??"{}");
@@ -1472,7 +1401,7 @@
         transcribe =
           typeof stored.transcribe === "boolean" ? stored.transcribe : true;
         meetingCaptions=stored.meetingCaptions!==false;meetingTranslate=stored.meetingTranslate!==false;
-        meetingTargetLang=["vi","en","ko","zh","ja"].includes(stored.meetingTargetLang)?stored.meetingTargetLang:"vi";localFallback=stored.localFallback===true;
+        meetingTargetLang=["vi","en","ko","zh","ja"].includes(stored.meetingTargetLang)?stored.meetingTargetLang:"vi";localFallback=stored.localFallback===true;rememberedMeetingChoice=stored.speechSelection;
         sourcesInitialized = true;
       }
     } catch {
@@ -1647,6 +1576,7 @@
   async function refreshProfiles() {
     try {
       aiProfiles = await invoke<AiProfileSummary[]>("list_ai_profiles");
+      profilesReady=true;
     } catch (e) {
       error = String(e);
     }
@@ -1804,11 +1734,7 @@
       );
       if (m) {
         taskAssigns = { ...taskAssigns, meeting: m as TaskAssign };
-        const preferred = m.transcription?.profileId ?? "";
-        if (preferred) {
-          provider = preferred === "__local__" ? "local" : "soniox";
-          transcriptionProfileId = preferred === "__local__" ? "" : preferred;
-        }
+
       }
     } catch {
       /* ignore */
@@ -2099,16 +2025,16 @@
   let presetCaptionStyle:CaptionStyle=readCaptionStyle();
   let presetAssignments:Record<string,TaskAssign>={};
   function capturePreset(mode:PresetMode):WorkflowPreset {
-    const tasks=copyPreset(taskAssigns[mode]??{});
+    const tasks=realtimeAssignments(taskAssigns[mode]??{});
     if(mode==="meeting"){
-      tasks.transcription={...tasks.transcription,profileId:provider==="local"?"__local__":transcriptionProfileId,model:provider==="local"?effectiveModel:"stt-rt-v5"};
+      tasks.transcription={...tasks.transcription,profileId:provider==="local"?"__local__":transcriptionProfileId,model:currentMeetingModel};
       if(meetingCaptions||meetingTranslate)tasks.caption={...tasks.caption,...tasks.transcription,targetLang:meetingTargetLang,translate:meetingTranslate};
     }else tasks.caption={...tasks.caption,profileId:captionProfileId,model:captionModel,targetLang:captionTargetLang,translate:captionTranslate};
     return {id:crypto.randomUUID(),name:mode==="meeting"?"Cuộc họp hiện tại":"Phụ đề hiện tại",mode,tasks,source:mode==="meeting"?language:captionSourceLang,quality:mode==="meeting"?meetingSpeechQuality:captionSpeechQuality,captions:mode==="meeting"&&meetingCaptions,translate:mode==="meeting"?meetingTranslate:captionTranslate,target:mode==="meeting"?meetingTargetLang:captionTargetLang,transcribe:mode==="meeting"?transcribe:true,localFallback:mode==="meeting"&&localFallback,captionStyle:copyPreset(readCaptionStyle())};
   }
   function persistPresets(next:WorkflowPreset[]){try{localStorage.setItem(PRESETS_KEY,serializePresets(next));workflowPresets=next;return true;}catch{presetError="Không lưu được mẫu trên máy. Hãy kiểm tra dung lượng hoặc quyền lưu dữ liệu.";return false;}}
   function editPreset(p?:WorkflowPreset){
-    const draft=copyPreset(p??capturePreset(taskMode));presetEditingId=p?.id??"";presetName=p?.name??"";presetSource=draft.source;presetQuality=draft.quality;presetCaptionStyle=copyPreset(draft.captionStyle??readCaptionStyle());presetTranslate=draft.translate;presetCaptions=draft.captions;presetLocalFallback=draft.localFallback;presetAssignments={[taskMode]:draft.tasks};presetError="";presetEditing=true;
+    const draft=copyPreset(p??capturePreset(taskMode));presetEditingId=p?.id??"";presetName=p?.name??"";presetSource=draft.source;presetQuality=draft.quality;presetCaptionStyle=copyPreset(draft.captionStyle??readCaptionStyle());presetTranslate=draft.translate;presetCaptions=draft.captions;presetLocalFallback=draft.localFallback;presetAssignments={[taskMode]:realtimeAssignments(draft.tasks)};presetError="";presetEditing=true;
   }
   function setPresetAssignment(task:keyof TaskAssign,value:any){
     const next={...presetAssignments[taskMode]};
@@ -2124,17 +2050,19 @@
     if(!p.name.trim())return "Hãy đặt tên cho mẫu.";
     if(!(p.mode==="meeting"?["vi","en","ko","zh","multi","auto"]:["vi","en","ko","zh","ja","auto"]).includes(p.source))return "Ngôn ngữ gốc của mẫu chưa được hỗ trợ trong chế độ này.";
     if(p.translate&&!["vi","en","ko","zh","ja"].includes(p.target))return "Ngôn ngữ đích của mẫu không hợp lệ.";
+    const primary=p.mode==="meeting"?p.tasks.transcription:p.tasks.caption;
+    if(p.translate&&profileOf(primary?.profileId,aiProfiles)?.provider==="groq")return "Groq Whisper chỉ dùng chép lời gốc trong Innote; hãy bỏ tích Dịch sang.";
+    if(p.mode==="meeting"&&p.localFallback&&profileOf(primary?.profileId,aiProfiles)?.provider==="groq")return "Groq dùng cấu hình API dự phòng; bỏ tùy chọn dự phòng local dành cho Soniox.";
     if(p.mode==="meeting"&&(p.captions||p.translate)&&p.tasks.caption?.profileId&&(p.tasks.caption.profileId!==p.tasks.transcription?.profileId||p.tasks.caption.model!==p.tasks.transcription?.model))return "Mẫu cuộc họp phải dùng cùng cấu hình/model cho chép lời và phụ đề.";
-    for(const [task,c] of Object.entries(p.tasks)){
+    for(const [task,c] of Object.entries(realtimeAssignments(p.tasks))){
       if(!c?.profileId)continue;
       if(c.profileId!=="__local__"&&!profileOf(c.profileId,aiProfiles))return `Cấu hình API cho ${taskLabel(task as keyof TaskAssign)} không còn tồn tại. Hãy chọn lại.`;
       if(c.profileId!=="__local__"&&!profileOf(c.profileId,aiProfiles)?.has_key)return "Cấu hình API chưa có key. Hãy kiểm tra và lưu key trong Cài đặt.";
       if(!c.model)return "Hãy chọn model cụ thể cho tác vụ đã bật.";
-      if(c.fallback&&!profileOf(c.fallback.profileId,aiProfiles)?.has_key)return "Cấu hình dự phòng không còn tồn tại. Hãy chọn lại.";
-      if(c.fallback&&!fallbackChoices(task as keyof TaskAssign,aiProfiles,p.tasks,p.mode,p.translate).some(x=>x.profileId===c.fallback!.profileId&&x.model===c.fallback!.model))return "Model dự phòng không phù hợp tác vụ hoặc trùng model chính. Hãy chọn lại.";
-      if(task === "transcription" && c.profileId!=="__local__" && (profileOf(c.profileId,aiProfiles)?.provider!=="soniox" || c.model!=="stt-rt-v5"))return "Model chép lời cuộc họp không được hỗ trợ. Hãy chọn local hoặc Soniox.";
+      if(c.fallback&&c.fallback.profileId!=="__local__"&&!profileOf(c.fallback.profileId,aiProfiles)?.has_key)return "Cấu hình dự phòng không còn tồn tại. Hãy chọn lại.";
+      if(c.fallback&&!fallbackChoices(task as keyof TaskAssign,aiProfiles,p.tasks,p.mode,p.translate,p.source).some(x=>x.profileId===c.fallback!.profileId&&x.model===c.fallback!.model))return "Model dự phòng không phù hợp tác vụ hoặc trùng model chính. Hãy chọn lại.";
+      if(task === "transcription" && c.profileId!=="__local__" && !meetingSpeechModels(c.profileId,aiProfiles).includes(c.model))return "Model chép lời cuộc họp không được hỗ trợ. Hãy chọn Local, Soniox hoặc Groq Whisper.";
       if(task === "caption" && (p.mode === "captionsonly" || p.captions || p.translate) && !captionModels(c.profileId,aiProfiles,p.translate,p.source).includes(c.model))return "Model phụ đề không phù hợp chế độ/ngôn ngữ đã chọn.";
-      if(["smooth","summary"].includes(task)&&!chatProviders.includes(profileOf(c.profileId,aiProfiles)?.provider as any))return "Tác vụ biên tập/tóm tắt cần model văn bản của nhà cung cấp phù hợp.";
     }
     const c=p.mode==="meeting"?p.tasks.transcription:p.tasks.caption;
     if(!c?.profileId||!c.model)return "Hãy chọn cấu hình và model chép lời/phụ đề.";
@@ -2144,7 +2072,7 @@
     return "";
   }
   function savePreset(){
-    const tasks=copyPreset(presetAssignments[taskMode]??{});
+    const tasks=realtimeAssignments(presetAssignments[taskMode]??{});
     if(taskMode==="meeting"&&(presetCaptions||presetTranslate)&&tasks.caption?.profileId){tasks.transcription={profileId:tasks.caption.profileId,model:tasks.caption.model,fallback:tasks.caption.fallback??tasks.transcription?.fallback};}
     if(tasks.caption)tasks.caption={...tasks.caption,translate:presetTranslate};
     const draft:WorkflowPreset={id:presetEditingId||crypto.randomUUID(),name:presetName.trim(),mode:taskMode,tasks,source:presetSource,quality:presetQuality,captions:presetCaptions,translate:presetTranslate,target:tasks.caption?.targetLang??"vi",transcribe:true,localFallback:presetLocalFallback,captionStyle:copyPreset(presetCaptionStyle)};
@@ -2161,17 +2089,17 @@
     const source=mode==="meeting"&&p.source==="auto"?"multi":p.source;
     const levels={...processingLevels,[qualityKey(mode,c.profileId,c.model,source,p.translate)]:p.quality};
     const localModels=mode==="meeting"&&c.profileId==="__local__"?{...localMeetingModels,[source]:c.model}:localMeetingModels;
-    const entries:Record<string,string>={[`may.task_assign.${mode}`]:JSON.stringify(p.tasks),[SPEECH_LEVELS_KEY]:JSON.stringify(levels)};
+    const entries:Record<string,string>={[`may.task_assign.${mode}`]:JSON.stringify(realtimeAssignments(p.tasks)),[SPEECH_LEVELS_KEY]:JSON.stringify(levels)};
     if(p.captionStyle)entries[CAPTION_STYLE_KEY]=JSON.stringify(p.captionStyle);
     if(mode==="meeting"){
       entries["may.meeting.local-models"]=JSON.stringify(localModels);
-      entries["may.preferences"]=JSON.stringify({system,microphone,language:source,model,transcribe:p.transcribe,meetingCaptions:p.captions,meetingTranslate:p.translate,meetingTargetLang:p.target,localFallback:p.localFallback});
+      entries["may.preferences"]=JSON.stringify({system,microphone,language:source,model,transcribe:p.transcribe,meetingCaptions:p.captions,meetingTranslate:p.translate,meetingTargetLang:p.target,localFallback:p.localFallback,speechSelection:{profileId:c.profileId,model:c.model}});
     }else entries["may.caption.standalone"]=JSON.stringify({profileId:c.profileId,model:c.model,targetLang:p.target,translate:p.translate,sourceLang:source,device:captionDevice});
     try{writePresetPreferences(localStorage,entries);}catch{error="Không lưu được cấu hình mẫu trên máy. Chưa áp mẫu; hãy kiểm tra dung lượng hoặc quyền lưu dữ liệu.";return;}
-    taskAssigns={...taskAssigns,[mode]:copyPreset(p.tasks)};processingLevels=levels;
+    taskAssigns={...taskAssigns,[mode]:realtimeAssignments(p.tasks)};processingLevels=levels;
     if(mode==="meeting"){
       localMeetingModels=localModels;language=source;transcribe=p.transcribe;meetingCaptions=p.captions;meetingTranslate=p.translate;meetingTargetLang=p.target;localFallback=p.localFallback;
-      provider=c.profileId==="__local__"?"local":"soniox";transcriptionProfileId=provider==="local"?"":c.profileId;
+      provider=c.profileId==="__local__"?"local":profileOf(c.profileId,aiProfiles)!.provider;transcriptionProfileId=provider==="local"?"":c.profileId;transcriptionModel=c.model;
     }else{captionProfileId=c.profileId;captionModel=c.model;captionSourceLang=source;captionTranslate=p.translate;captionTargetLang=p.target;}
     if(p.captionStyle)void emit("caption-style",p.captionStyle).catch(()=>{});
     selectedPresets={...selectedPresets,[mode]:id};pendingPresets={...pendingPresets,[mode]:id};error="";return true;
@@ -2224,7 +2152,7 @@
   </div>
 {:else}
   <div class="app-shell" lang={localeTags[uiLocale ?? "vi"]}>
-    <WhatsNewDialog version={appVersion} locale={uiLocale ?? "vi"} existingInstall={hadPreviousInstallation} ready={desktop && captionStateReady && !!data.data_dir && !data.active_id && !captionRunning && !testing && !confOpen && !meetingsOpen && !summaryOpen && !smoothOpen && !modelPickerOpen && !deleteOpen && !stopOpen && updatePhase !== "downloading" && updatePhase !== "installing"}/>
+    <WhatsNewDialog version={appVersion} locale={uiLocale ?? "vi"} existingInstall={hadPreviousInstallation} ready={desktop && captionStateReady && !!data.data_dir && !data.active_id && !captionRunning && !testing && !confOpen && !meetingsOpen && !summaryOpen && !correctionOpen && !modelPickerOpen && !deleteOpen && !stopOpen && updatePhase !== "downloading" && updatePhase !== "installing"}/>
     <aside class="sidebar" class:collapsed={sidebarCollapsed} id="sidebar-navigation" aria-label={tr.navAria}>
       <div class="sidebar-header">
       <button
@@ -2355,6 +2283,7 @@
             : captionRunning && captionProvider === "local"
               ? tr.processingLocal
               : captionRunning ? tr.captionActive
+              : meeting?.provider === "groq" ? "Groq · dịch vụ ngoài"
               : meeting?.provider === "soniox"
             ? tr.sonioxExternal
             : meeting?.provider === "mixed"
@@ -2436,10 +2365,13 @@
             <div class="soniox-heading">
               <div>
                 <h2>Model và tác vụ</h2>
-                <p>Chọn cấu hình API đã lưu và model cho từng tác vụ. Khi dịch trong cuộc họp, Soniox dùng chung chép lời và phụ đề.</p>
+                <p>Chọn model chép lời và phụ đề khi đang ghi. Hiệu chỉnh và tóm tắt được chọn riêng sau cuộc họp.</p>
               </div>
             </div>
             <label class="checkbox preset-translate"><input type="checkbox" aria-label="Dịch sang trong mẫu" bind:checked={presetTranslate}/> Dịch sang</label>
+            {#if profileOf((taskMode === "meeting" ? presetAssignments.meeting?.transcription : presetAssignments.captionsonly?.caption)?.profileId,aiProfiles)?.provider === "groq"}
+              <p class="quality-hint" role="status">Groq Whisper chép lời đa ngôn ngữ theo đoạn và tạo phụ đề lời gốc. Chọn model văn bản Groq khi bấm Tóm tắt sau cuộc họp.{#if presetTranslate} <button class="text-button" onclick={()=>presetTranslate=false}>Chỉ chép lời gốc</button>{/if}</p>
+            {/if}
             <div class="task-assign-grid">
               {#if taskMode === "meeting"}
               <label class="ai-field"
@@ -2453,12 +2385,12 @@
                       setPresetAssignment("transcription", {
                         ...presetAssignments[taskMode]?.transcription,
                         profileId: value,
-                        model: value === "__local__" ? (compatibleLocalModels(presetSource==="auto"?"multi":presetSource)[0] ?? "moonshine-vi") : "stt-rt-v5",
+                        model: value === "__local__" ? (compatibleLocalModels(presetSource==="auto"?"multi":presetSource)[0] ?? "moonshine-vi") : meetingSpeechModels(value,aiProfiles)[0],
                       });
                   }}
                   ><option value="">{tr.taskNone}</option><option
                     value="__local__">{tr.providerLocal}</option
-                  >{#each sonioxProfiles(aiProfiles) as p}<option value={p.id}
+                  >{#each speechProfiles(aiProfiles) as p}<option value={p.id}
                       >{p.name}</option
                     >{/each}</select
                 ></label
@@ -2475,14 +2407,14 @@
                       setPresetAssignment("caption", {
                         ...presetAssignments[taskMode]?.caption,
                         profileId: value,
-                        model: captionModels(value, aiProfiles, presetTranslate, presetSource)[0] ?? "",
+                        model: selectableCaptionModels(value, aiProfiles, presetTranslate, presetSource)[0] ?? "",
                         translate: presetTranslate,
                         targetLang:
                           presetAssignments[taskMode]?.caption?.targetLang ?? "vi",
                       });
                   }}
                   ><option value="">{tr.taskNone}</option
-                  >{#if !presetTranslate}<option value="__local__">Local trên máy · không cần API</option>{/if}{#each captionableProfiles(aiProfiles).filter(p=>(taskMode !== "meeting" || p.provider === "soniox") && captionModels(p.id,aiProfiles,presetTranslate,presetSource).length>0) as p}<option
+                  >{#if !presetTranslate}<option value="__local__">Local trên máy · không cần API</option>{/if}{#each captionableProfiles(aiProfiles).filter(p=>(taskMode !== "meeting" || ["soniox","groq"].includes(p.provider)) && selectableCaptionModels(p.id,aiProfiles,presetTranslate,presetSource).length>0) as p}<option
                       value={p.id}>{p.name} · {p.provider}</option
                     >{/each}</select
                 ></label
@@ -2507,56 +2439,17 @@
                   ><option value="ja">日本語</option></select
                 ></label
               >
-              {#if taskMode === "meeting"}
-              <label class="ai-field"
-                >{tr.taskSmooth}<select aria-label={tr.taskSmooth}
-                  value={presetAssignments[taskMode]?.smooth?.profileId ?? ""}
-                  disabled={busy}
-                  onchange={(e) => {
-                    const value = e.currentTarget.value;
-                    if (!value) setPresetAssignment("smooth", undefined);
-                    else
-                      setPresetAssignment("smooth", {
-                        ...presetAssignments[taskMode]?.smooth,
-                        profileId: value,
-                        model: textModels(value, aiProfiles)[0] ?? "",
-                      });
-                  }}
-                  ><option value="">{tr.taskNone}</option
-                  >{#each chatProfiles(aiProfiles) as p}<option value={p.id}
-                      >{p.name} · {p.provider}</option
-                    >{/each}</select
-                ></label
-              >
-              <label class="ai-field"
-                >{tr.taskSummary}<select aria-label={tr.taskSummary}
-                  value={presetAssignments[taskMode]?.summary?.profileId ?? ""}
-                  disabled={busy}
-                  onchange={(e) => {
-                    const value = e.currentTarget.value;
-                    if (!value) setPresetAssignment("summary", undefined);
-                    else
-                      setPresetAssignment("summary", {
-                        ...presetAssignments[taskMode]?.summary,
-                        profileId: value,
-                        model: textModels(value, aiProfiles)[0] ?? "",
-                      });
-                  }}
-                  ><option value="">{tr.taskNone}</option
-                  >{#each chatProfiles(aiProfiles) as p}<option value={p.id}
-                      >{p.name} · {p.provider}</option
-                    >{/each}</select
-                ></label
-              >
-              {/if}
             </div>
             <div class="task-assign-grid task-model-grid">
+              {#if taskMode === "meeting" && profileOf(presetAssignments.meeting?.transcription?.profileId,aiProfiles)?.provider === "groq"}
+                <label class="ai-field">Chép lời · Model<select aria-label="Chép lời · Model" value={presetAssignments.meeting?.transcription?.model} onchange={e=>setPresetAssignment("transcription",{...presetAssignments.meeting!.transcription!,model:e.currentTarget.value})}>{#each groqSpeechModels as m}<option value={m}>{modelLabel(presetAssignments.meeting?.transcription?.profileId,m)}</option>{/each}</select></label>
+              {/if}
               {#if presetAssignments[taskMode]?.caption?.profileId}
                 <label class="ai-field"
                   >{tr.captionModel}<select
                     aria-label={tr.captionModel}
                     value={presetAssignments[taskMode]?.caption?.model ||
-                      captionModels(
+                      selectableCaptionModels(
                         presetAssignments[taskMode]?.caption?.profileId ?? "",
                         aiProfiles,
                         presetTranslate, presetSource,
@@ -2567,37 +2460,23 @@
                         model: e.currentTarget.value,
                       })}
                   >
-                    {#each captionModels(presetAssignments[taskMode]?.caption?.profileId ?? "", aiProfiles, presetTranslate,presetSource) as m}<option
+                    {#each selectableCaptionModels(presetAssignments[taskMode]?.caption?.profileId ?? "", aiProfiles, presetTranslate,presetSource) as m}<option
                         value={m}>{modelLabel(presetAssignments[taskMode]?.caption?.profileId,m)}</option
                       >{/each}
                   </select></label
                 >
               {/if}
-              {#each (taskMode === "meeting" ? ["smooth", "summary"] : []) as task}
-                {@const key = task as "smooth" | "summary"}
-                {#if presetAssignments[taskMode]?.[key]?.profileId}
-                  <label class="ai-field"
-                    >{key === "smooth" ? tr.taskSmooth : tr.taskSummary} · {tr.aiModel}
-                    {#if textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles).length}
-                      <select aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model`} value={presetAssignments[taskMode]?.[key]?.model??""} onchange={e=>setPresetAssignment(key,{...presetAssignments[taskMode]?.[key]!,model:e.currentTarget.value})}>
-                        <option value="">Chọn model…</option>
-                        {#if presetAssignments[taskMode]?.[key]?.model && !textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles).includes(presetAssignments[taskMode]?.[key]?.model??"")}<option value={presetAssignments[taskMode]?.[key]?.model}>{modelLabel(presetAssignments[taskMode]?.[key]?.profileId,presetAssignments[taskMode]?.[key]?.model??"")} · đã lưu</option>{/if}
-                        {#each textModels(presetAssignments[taskMode]?.[key]?.profileId??"",aiProfiles) as m}<option value={m}>{modelLabel(presetAssignments[taskMode]?.[key]?.profileId,m)}{m === "qwen/qwen3.8-27b" ? " · Preview" : ""}</option>{/each}
-                      </select>
-                    {:else}<input aria-label={`${key === "smooth" ? tr.taskSmooth : tr.taskSummary} · Model ID`} value={presetAssignments[taskMode]?.[key]?.model??""} onchange={e=>setPresetAssignment(key,{...presetAssignments[taskMode]?.[key]!,model:e.currentTarget.value})} />{/if}
-                  </label>
-                {/if}
-              {/each}
+
             </div>
             <div class="task-fallbacks">
               <h3>Dự phòng khi model lỗi hoặc hết hạn mức</h3>
               <p>Chỉ chuyển một lần sang model bạn chọn; không tự tìm nhà cung cấp khác. Cấu hình dự phòng có thể gửi dữ liệu sang nhà cung cấp khác và áp dụng hạn mức/chi phí của tài khoản đó. Lựa chọn được chốt khi bắt đầu phiên.</p>
               <div class="task-assign-grid">
-                {#each (taskMode === "meeting" ? ["transcription","caption","smooth","summary"] as const : ["caption"] as const) as task (task)}
+                {#each (taskMode === "meeting" ? ["transcription","caption"] as const : ["caption"] as const) as task (task)}
                   <label class="ai-field">Dự phòng · {taskLabel(task)}
                     <select aria-label={`Dự phòng · ${taskLabel(task)}`} value={presetAssignments[taskMode]?.[task]?.fallback ? JSON.stringify(presetAssignments[taskMode]?.[task]?.fallback) : ""} disabled={busy || !presetAssignments[taskMode]?.[task]?.profileId || presetAssignments[taskMode]?.[task]?.profileId === "__local__"} onchange={e=>choosePresetFallback(task,e.currentTarget.value)}>
                       <option value="">Không dùng dự phòng</option>
-                      {#each fallbackChoices(task,aiProfiles,presetAssignments[taskMode],taskMode,presetTranslate) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
+                      {#each fallbackChoices(task,aiProfiles,presetAssignments[taskMode],taskMode,presetTranslate,presetSource) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
                     </select>
                   </label>
                 {/each}
@@ -2770,7 +2649,7 @@
             <h2>{active.title}</h2>
             <p class="quality-hint">{active.speech && !active.speech.local_fallback ? modelLabel(active.speech.profile_id ?? undefined,active.speech.model) : `Local/${active.model}`} · {active.status === "paused" ? "Cuộc họp đang tạm dừng" : "Cuộc họp đang ghi"}. Bản chép và bản dịch được lưu trong cuộc họp.</p>
             <div class="meeting-caption-options">
-              <label class="checkbox"><input type="checkbox" aria-label="Dịch sang trong phiên đang ghi" checked={meetingTranslate} disabled={busy || !active.speech || active.speech.local_fallback} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} /> Dịch sang</label>
+              <label class="checkbox"><input type="checkbox" aria-label="Dịch sang trong phiên đang ghi" checked={meetingTranslate} disabled={busy || !active.speech || active.speech.local_fallback || active.provider === "groq"} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} /> Dịch sang</label>
               {#if meetingTranslate}<label class="ai-field">Ngôn ngữ bản dịch<select aria-label="Ngôn ngữ bản dịch phiên đang ghi" value={meetingTargetLang} disabled={busy} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(true,input.value).finally(()=>input.value=meetingTargetLang);}}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
             </div>
             <div class="caption-actions">
@@ -2809,12 +2688,12 @@
                   onchange={(e) => {
                     captionProfileId = e.currentTarget.value;
                     captionModel =
-                      captionModels(captionProfileId, aiProfiles, captionTranslate,captionSourceLang)[0] ?? "";
+                      selectableCaptionModels(captionProfileId, aiProfiles, captionTranslate,captionSourceLang)[0] ?? "";
                   }}
                 >
                   <option value="">{tr.captionChooseProfile}</option>
                   {#if !captionTranslate}<option value="__local__">Local trên máy · không cần API</option>{/if}
-                  {#each captionableProfiles(aiProfiles).filter(p=>captionModels(p.id,aiProfiles,captionTranslate).length>0) as p}<option
+                  {#each captionableProfiles(aiProfiles).filter(p=>selectableCaptionModels(p.id,aiProfiles,captionTranslate,captionSourceLang).length>0) as p}<option
                       value={p.id}>{p.name} · {p.provider}</option
                     >{/each}</select
                 ></label
@@ -2824,18 +2703,19 @@
                   bind:value={captionModel}
                   aria-label={tr.captionModel}
                   disabled={busy || captionRunning || captionTesting || !captionProfileId}
-                  ><option value="" disabled>{tr.taskNone}</option>{#each captionProfileId === "__local__" && !captionTranslate ? ["moonshine-vi","moonshine-en",multilingualModel] : captionModels(captionProfileId, aiProfiles, captionTranslate,captionSourceLang) as m}<option
+                  ><option value="" disabled>{tr.taskNone}</option>{#each captionProfileId === "__local__" && !captionTranslate ? ["moonshine-vi","moonshine-en",multilingualModel] : selectableCaptionModels(captionProfileId, aiProfiles, captionTranslate,captionSourceLang) as m}<option
                       value={m} disabled={captionProfileId === "__local__" && (!data.models.some(model=>model.id===m&&model.installed) || !captionModels(captionProfileId,aiProfiles,captionTranslate,captionSourceLang).includes(m))}>{modelLabel(captionProfileId,m)}{captionProfileId === "__local__" ? ` · ${data.models.some(model=>model.id===m&&model.installed) ? "Đã tải" : "Chưa tải"}${!captionModels(captionProfileId,aiProfiles,captionTranslate,captionSourceLang).includes(m) ? " · Không phù hợp ngôn ngữ gốc" : ""}` : ""}</option
                     >{/each}</select
                 ></label
               >
             </div>
             <SpeechQualityControl compact scope="Phụ đề" locale={uiLocale??"vi"} value={captionSpeechQuality} provider={captionQualityProvider} model={captionModel} disabled={busy || captionRunning || captionTesting} onchange={q=>chooseProcessingLevel(captionLevelKey,q)} />
-            {#if captionProfileId && !captionModels(captionProfileId,aiProfiles,captionTranslate,captionSourceLang).includes(captionModel)}<p class="test-error">Model đã chọn không phù hợp chế độ hoặc ngôn ngữ gốc. Moonshine có model riêng cho Việt/Anh; Nemotron hỗ trợ đa ngôn ngữ. Hãy chọn lại model.</p>{/if}
+            {#if captionTranslate && profileOf(captionProfileId,aiProfiles)?.provider === "groq"}<p class="test-error" role="status">Groq Whisper hiện chỉ chép lời gốc trong Innote. Hãy tắt Dịch sang để dùng model này. <button class="text-button" onclick={()=>{captionTranslate=false;markPresetCustom("captionsonly");}}>Chỉ chép lời gốc</button></p>{/if}
+            {#if captionProfileId && !(captionTranslate && profileOf(captionProfileId,aiProfiles)?.provider === "groq") && !captionModels(captionProfileId,aiProfiles,captionTranslate,captionSourceLang).includes(captionModel)}<p class="test-error">Model đã chọn không phù hợp chế độ hoặc ngôn ngữ gốc. Moonshine có model riêng cho Việt/Anh; Nemotron hỗ trợ đa ngôn ngữ. Hãy chọn lại model.</p>{/if}
             {#if captionProfileId === "__local__" && !captionLocalReady}<p class="test-error" role="status">{captionModel.startsWith("moonshine-") ? tr.modelMissingBundled : "Model chưa tải: mở Mẫu cấu hình → Model chép lời để tải trước."}</p>{/if}
             {#if captionProfileId === "__local__" || aiProfiles.find(p=>p.id===captionProfileId)?.provider === "groq"}<details class="workflow-help caption-engine-guide"><summary>Thông tin xử lý và hạn mức</summary>
             {#if captionProfileId === "__local__"}<p class="quality-hint">Chép trên máy, không cần API và không tự chuyển lên cloud. {captionModel === multilingualModel ? "Nemotron nhận audio liên tục, có chữ tạm theo lời nói; hỗ trợ Việt, Anh, Hàn và Trung. Tốc độ phụ thuộc CPU." : "Moonshine có sẵn trong Innote, chép streaming theo ngôn ngữ Việt/Anh của model đã chọn; không tự nhận diện đa ngôn ngữ. Tốc độ phụ thuộc CPU."} {captionLocalReady ? captionModel.startsWith("moonshine-") ? tr.modelBundled : "Model đã có trên máy." : ""}</p>{/if}
-            {#if profileOf(captionProfileId,aiProfiles)?.provider === "groq"}<p class="quality-hint">Groq Whisper: độ dài đoạn và ngữ cảnh thay đổi theo Mức xử lý đã chọn; phần audio chồng lấn cũng dùng hạn mức API. Có thể trễ thêm do API, không có chữ tạm từng từ. Khi lỗi chỉ chuyển sang dự phòng bạn đã chọn, nếu có. Hiện hỗ trợ phụ đề dùng riêng.</p>{/if}
+            {#if profileOf(captionProfileId,aiProfiles)?.provider === "groq"}<p class="quality-hint">Groq Whisper: độ dài đoạn và ngữ cảnh thay đổi theo Mức xử lý đã chọn; phần audio chồng lấn cũng dùng hạn mức API. Có thể trễ thêm do API, không có chữ tạm từng từ. Khi lỗi chỉ chuyển sang dự phòng bạn đã chọn, nếu có. Chép lời cuộc họp và phụ đề dùng riêng đều dùng Whisper theo đoạn.</p>{/if}
             </details>{/if}
             <div class="caption-actions">
               {#if captionProfileId !== "__local__"}
@@ -2961,6 +2841,7 @@
                     systemMissing ||
                     microphoneMissing ||
                     (transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)) ||
+                    (transcribe && provider === "groq" && (!profileOf(transcriptionProfileId,aiProfiles)?.has_key || !groqSpeechModels.includes(transcriptionModel))) ||
                     (transcribe && (provider === "local" || localFallback) && !currentModel?.installed)}
                   onclick={start}
                   ><Circle size={15} fill="currentColor" />{testing
@@ -2984,7 +2865,7 @@
 
           {#if active && selected === active.id && recording}<div class="meeting-caption-controls">
             <CaptionWindowToggle />
-            <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" checked={meetingTranslate} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} disabled={busy || !active.speech || active.speech.local_fallback} /> Dịch sang</label>
+            <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" checked={meetingTranslate} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} disabled={busy || !active.speech || active.speech.local_fallback || active.provider === "groq"} /> Dịch sang</label>
             {#if meetingTranslate}<label>Ngôn ngữ dịch đích<select aria-label="Ngôn ngữ dịch đích cuộc họp" value={meetingTargetLang} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(true,input.value).finally(()=>input.value=meetingTargetLang);}} disabled={busy}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文</option><option value="ja">日本語</option></select></label>{/if}
             <button class="text-button" aria-expanded={meetingStyleOpen} aria-controls="meeting-caption-style" onclick={()=>{meetingStyleOpen=true;void tick().then(()=>document.getElementById("meeting-caption-style")?.scrollIntoView({block:"nearest"}));}}><Settings size={15} /> Cài đặt phụ đề</button>
           </div>{/if}
@@ -3154,11 +3035,13 @@
                   <select
                     id="transcription-provider"
                     aria-label={tr.provider}
-                    bind:value={provider}
+                    value={provider}
+                    onchange={e=>changeMeetingProvider(e.currentTarget.value)}
                     disabled={busy}
                   >
                     <option value="local">{tr.providerLocal}</option>
                     <option value="soniox">{tr.providerSoniox}</option>
+                    <option value="groq">Groq · Whisper · chép lời theo đoạn</option>
                   </select></div>
                   {#if provider === "local" || localFallback}
                     <label class="ai-field ai-field-full">{provider === "local" ? tr.localSpeechModel : tr.localFallbackModel}
@@ -3166,6 +3049,11 @@
                         {#each compatibleLocalModels(language) as id}<option value={id}>{modelLabel("__local__",id)} · {data.models.some(m=>m.id===id&&m.installed)?tr.installed:tr.downloadModel}</option>{/each}
                       </select>
                     </label>
+                  {/if}
+                  {#if provider === "groq"}
+                    <label class="ai-field">Cấu hình Groq<select aria-label="Cấu hình Groq" bind:value={transcriptionProfileId} disabled={busy}><option value="">Chọn cấu hình Groq…</option>{#each aiProfiles.filter(p=>p.provider === "groq") as p}<option value={p.id}>{p.name} · groq</option>{/each}</select></label>
+                    <label class="ai-field">Model chép lời Groq<select aria-label="Model chép lời Groq" bind:value={transcriptionModel} disabled={busy || !transcriptionProfileId}>{#each groqSpeechModels as m}<option value={m}>{modelLabel(transcriptionProfileId,m)}</option>{/each}</select></label>
+                    <p class="quality-hint">Groq Whisper chép lời theo đoạn, gửi cùng âm thanh loa/micro đã chọn cho cuộc họp. Phụ đề dùng lại bản chép này; không mở luồng gửi audio thứ hai. Hạn mức theo tài khoản Groq Free. API dự phòng được chọn trong mẫu.</p>
                   {/if}
                   {#if provider === "soniox"}
                     <label class="ai-field ai-field-full"
@@ -3181,7 +3069,7 @@
                       ></label
                     >
                     <label class="ai-field">Model chép lời Soniox
-                      <select aria-label="Model chép lời Soniox" disabled={busy}><option value="stt-rt-v5">{modelLabel(transcriptionProfileId,"stt-rt-v5")}</option></select>
+                      <select aria-label="Model chép lời Soniox" disabled={busy}><option value={SONIOX_RT_MODEL}>{modelLabel(transcriptionProfileId,SONIOX_RT_MODEL)}</option></select>
                     </label>
                     <p class="quality-hint">Soniox lưu bản chép gốc. Khi bật phụ đề, dùng cùng luồng âm thanh; không chạy local song song.</p>
                     <label class="checkbox"><input type="checkbox" aria-label="Dự phòng local khi Soniox lỗi" bind:checked={localFallback} disabled={busy} /> Dự phòng local khi Soniox lỗi</label>
@@ -3189,7 +3077,7 @@
                   {/if}
                 </div>
               {/if}
-              {#if transcribe}<SpeechQualityControl compact scope="Cuộc họp" locale={uiLocale??"vi"} value={meetingSpeechQuality} provider={provider} model={provider === "local" ? effectiveModel : "stt-rt-v5"} disabled={busy} onchange={q=>chooseProcessingLevel(meetingLevelKey,q)} />{/if}
+              {#if transcribe}<SpeechQualityControl compact scope="Cuộc họp" locale={uiLocale??"vi"} value={meetingSpeechQuality} provider={provider} model={currentMeetingModel} disabled={busy} onchange={q=>chooseProcessingLevel(meetingLevelKey,q)} />{/if}
               {#if transcribe}<div class="meeting-caption-setup">
                 <h2>Phụ đề &amp; bản dịch</h2>
                 <div class="meeting-caption-switches"><label class="checkbox"><input type="checkbox" aria-label="Bật phụ đề khi bắt đầu cuộc họp" bind:checked={meetingCaptions} disabled={busy} /> Bật phụ đề khi bắt đầu cuộc họp</label>
@@ -3199,17 +3087,18 @@
                 </div>
                 </div>
                 <p class="quality-hint">Có thể bật/tắt hộp khi đang ghi. Bản chép và bản dịch vẫn được lưu.</p>
+                {#if provider === "groq" && meetingTranslate}<p class="test-error" role="status">Groq Whisper chỉ chép lời gốc trong Innote; hãy tắt Dịch sang hoặc chọn Soniox để dịch. <button class="text-button" onclick={()=>{meetingTranslate=false;markPresetCustom("meeting");}}>Chỉ chép lời gốc</button></p>{/if}
                 {#if meetingCaptions || meetingTranslate}<div class="meeting-shared-model">
                   <label class="ai-field">{meetingTranslate ? "Model dùng chung chép lời & dịch phụ đề" : "Model dùng chung chép lời & phụ đề"}
                     <select id="meeting-shared-model" aria-label="Model dùng chung cho cuộc họp" value={meetingSharedChoice} disabled={busy} onchange={e=>chooseMeetingSharedModel(e.currentTarget.value)}>
                       <option value="" disabled>Chọn cấu hình/model dùng chung…</option>
                       {#if !meetingTranslate}{#each compatibleLocalModels(language) as id}<option value={JSON.stringify({profileId:"__local__",model:id})}>{modelLabel("__local__",id)}</option>{/each}{/if}
-                      {#each sonioxProfiles(aiProfiles) as p}<option value={JSON.stringify({profileId:p.id,model:"stt-rt-v5"})}>{modelLabel(p.id,"stt-rt-v5")}</option>{/each}
+                      {#each speechProfiles(aiProfiles) as p}{#each meetingSpeechModels(p.id,aiProfiles) as m}<option value={JSON.stringify({profileId:p.id,model:m})}>{modelLabel(p.id,m)}{p.provider === "groq" ? " · Chỉ lời gốc" : ""}</option>{/each}{/each}
                     </select>
                   </label>
-                  {#if provider === "soniox" && transcriptionProfileId}<p class="quality-hint">{modelLabel(transcriptionProfileId,"stt-rt-v5")} · Chép lời{meetingTranslate ? " và dịch" : ""} trên một kết nối. Âm thanh gửi lên Soniox.</p>
+                  {#if provider === "soniox" && transcriptionProfileId}<p class="quality-hint">{modelLabel(transcriptionProfileId,SONIOX_RT_MODEL)} · Chép lời{meetingTranslate ? " và dịch" : ""} trên một kết nối. Âm thanh gửi lên Soniox.</p>
                   {:else if meetingTranslate}<p class="test-error" role="status">Hãy chọn Soniox ở đây; phần Cách chép lời sẽ đổi sang cùng cấu hình/model. Local không hỗ trợ dịch.</p>{/if}
-                  {#if meetingTranslate}<details class="workflow-help"><summary>Khả năng dịch trong cuộc họp</summary><p>Hiện chỉ Soniox hỗ trợ chép lời và dịch dùng chung trong cuộc họp. OpenAI/Gemini/Groq chưa dùng được cho luồng chung này. Quản lý API key trong Cài đặt.</p></details>{/if}
+                  {#if meetingTranslate}<details class="workflow-help"><summary>Khả năng dịch trong cuộc họp</summary><p>Soniox dùng chung chép lời và dịch; Groq Whisper dùng chung chép lời và phụ đề gốc theo đoạn. OpenAI/Gemini chưa dùng cho luồng chung cuộc họp này. Quản lý API key trong Cài đặt.</p></details>{/if}
                 </div>{/if}
               <section class="meeting-caption-appearance" id="meeting-caption-style"><h3>Hiển thị phụ đề</h3><CaptionControls visibilityControl={false} collapsible={false} onstylechange={()=>markPresetCustom("meeting")}/></section>
               </div>{/if}
@@ -3294,7 +3183,7 @@
 
           <div class="transcript-heading">
             <div>
-              {#if meeting?.smoothed || meeting?.summary}
+              {#if meeting?.corrected || meeting?.summary}
                 <div
                   class="transcript-tabs"
                   role="tablist"
@@ -3313,14 +3202,14 @@
                       transcriptTab = "transcript";
                     }}><FileText size={13} /> {tr.summaryTabTranscript}</button
                   >
-                  {#if meeting?.smoothed}<button
+                  {#if meeting?.corrected}<button
                       type="button"
                       role="tab"
                       class="transcript-tab"
-                      class:active={transcriptView === "smoothed"}
-                      aria-selected={transcriptView === "smoothed"}
+                      class:active={transcriptView === "corrected"}
+                      aria-selected={transcriptView === "corrected"}
                       onclick={() => {
-                        transcriptView = "smoothed";
+                        transcriptView = "corrected";translationView="original";
                         transcriptTab = "transcript";
                       }}><Sparkles size={13} /> {tr.smoothViewTab}</button
                     >{/if}
@@ -3357,7 +3246,7 @@
                   })}</span
                 >{/if}
             </div>
-            {#if meeting?.translations?.length || meeting?.speech?.translation_language}
+            {#if transcriptView !== "corrected" && (meeting?.translations?.length || meeting?.speech?.translation_language)}
               <label class="transcript-language-view">Nội dung hiển thị
                 <select aria-label="Nội dung hiển thị" bind:value={translationView} onchange={()=>{transcriptView="original";transcriptTab="transcript";}}>
                   <option value="original">Bản gốc</option><option value="translation">Bản dịch</option><option value="bilingual">Song ngữ</option>
@@ -3366,36 +3255,26 @@
               {#if translationLanguages.length>1}<label class="transcript-language-view">Ngôn ngữ bản dịch<select aria-label="Ngôn ngữ bản dịch đã lưu" bind:value={translationLanguage}>{#each translationLanguages as lang}<option value={lang}>{lang}</option>{/each}</select></label>{/if}
             {/if}
             <div class="transcript-tools">
-              {#if canSmooth}<button
+              {#if canCorrect}<button
                   class="button secondary small"
-                  title={meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}
+                  title={meeting?.corrected ? tr.smoothAgain : tr.smoothButton}
                   disabled={busy}
                   onclick={() => {
-                    smoothProfileId =
-                      taskAssigns.meeting?.smooth?.profileId ?? "";
-                    useSessionProfile(smoothProfileId);
-                    smoothModel =
-                      taskAssigns.meeting?.smooth?.model ||
-                      textModels(smoothProfileId, aiProfiles)[0] ||
-                      "";
-                    smoothOpen = true;
+                    if(!correctionRunning){correctionProfileId="__local__";correctionModel=defaultCorrectionModel(meeting?.language??"");correctionFallback=undefined;correctionError="";}
+                    correctionOpen = true;
                   }}
                   ><Sparkles size={14} />
-                  {meeting?.smoothed ? tr.smoothAgain : tr.smoothButton}</button
+                  {correctionRunning ? tr.smoothRunning : meeting?.corrected ? tr.smoothAgain : tr.smoothButton}</button
                 >{/if}
-              {#if canSmooth}<button
+              {#if canSummarize}<button
                   class="button secondary small"
                   title={meeting?.summary
                     ? tr.summaryRegenerate
                     : tr.summaryButton}
                   disabled={busy}
                   onclick={() => {
-                    summaryProfileId =
-                      taskAssigns.meeting?.summary?.profileId ?? "";
-                    summaryModel =
-                      taskAssigns.meeting?.summary?.model ||
-                      textModels(summaryProfileId, aiProfiles)[0] ||
-                      "";
+                    summaryProfileId="";summaryModel="";summaryFallback=undefined;summaryError="";summaryStyle="overview";summaryPrompt="";
+                    summarySource=transcriptView === "corrected" || !meeting?.segments.length ? "corrected" : "original";
                     summaryOpen = true;
                   }}
                   ><ClipboardList size={14} />
@@ -3406,14 +3285,14 @@
               {#if meeting && (meeting.segments.length || showLive || audioUrl)}<div
                   class="export-controls compact"
                 >
-                  {#if meeting?.segments.length > 0}<button
+                  {#if meeting && (meeting.segments.length > 0 || !!meeting.corrected)}<button
                       class="button secondary small"
                       title={tr.copyTranscriptTitle}
                       disabled={busy}
                       onclick={() => copyTranscript()}
                       ><Copy size={14} /> {tr.copyTranscript}</button
                     >{/if}
-                  {#if meeting.segments.length || showLive}<button
+                  {#if meeting.segments.length || meeting.corrected || showLive}<button
                       class="button secondary small"
                       title={refinementPending
                         ? tr.exportWaitRefinement
@@ -3447,8 +3326,9 @@
                 </div>{/if}
             </div>
           </div>
+          {#if correctionRunning}<div class="notice" role="status"><span>{(correctionJob?.model??correctionModel).startsWith("moonshine-") || (correctionJob?.model??correctionModel)==="nemotron-3.5-q8" ? "Hiệu chỉnh bản thu trên máy" : "Hiệu chỉnh bản thu qua cloud"} · {correctionJob?.model??correctionModel} · {correctionJob?.stage??"Đang chuẩn bị"}</span><button class="text-button" onclick={()=>correctionOpen=true}>Xem tiến trình</button></div>{/if}
           <div class="workspace">
-            {#if transcriptTab !== "summary" && transcriptView === "smoothed" && meeting?.smoothed}
+            {#if transcriptTab !== "summary" && transcriptView === "corrected" && meeting?.corrected}
               <div
                 class="smooth-view"
                 role="tabpanel"
@@ -3458,15 +3338,15 @@
                   <span class="smooth-meta">
                     <Sparkles size={14} />
                     {fill(tr.smoothResultBy, {
-                      provider: meeting.smoothed.provider,
-                      model: meeting.smoothed.model,
+                      provider: meeting.corrected.provider,
+                      model: meeting.corrected.model,
                     })}
                   </span>
                   <div class="smooth-bar-actions">
                     <button
                       class="text-button"
                       title={tr.smoothCopy}
-                      onclick={() => copySmoothed()}
+                      onclick={() => copyCorrected()}
                       ><Check size={14} /> {tr.smoothCopy}</button
                     >
                     <button
@@ -3478,15 +3358,15 @@
                   </div>
                 </div>
                 <div class="smooth-result">
-                  {#if smoothSegments.length}
-                    {#each smoothSegments as seg (seg.id)}
+                  {#if correctedSegments.length}
+                    {#each correctedSegments as seg (seg.id)}
                       <article class="segment smooth-segment">
                         <button
                           type="button"
                           class="timestamp"
                           title={tr.playFromHere}
                           disabled={!audioUrl}
-                          onclick={() => seek(seg.start)}
+                          onclick={() => seek(seg.start,seg.end)}
                           >{clock(seg.start)}</button
                         >
                         <div class="segment-body">
@@ -3495,7 +3375,7 @@
                       </article>
                     {/each}
                   {:else}
-                    <p>{meeting.smoothed.text}</p>
+                    <p>{meeting.corrected.text}</p>
                   {/if}
                 </div>
               </div>
@@ -3513,7 +3393,8 @@
                       class="button secondary small"
                       disabled={busy}
                       onclick={() => {
-                        summaryOpen = true;
+                        summarySource=transcriptView === "corrected" || !meeting?.segments.length ? "corrected" : "original";
+                    summaryOpen = true;
                       }}>{tr.summaryRegenerate}</button
                     >
                   </div>
@@ -3522,9 +3403,9 @@
                   <span class="summary-meta-text">
                     {fill(tr.summaryMeta, {
                       source:
-                        meeting.summary.source === "smoothed"
-                          ? tr.summarySourceSmoothed
-                          : tr.summarySourceOriginal,
+                        meeting.summary.source === "corrected"
+                          ? "Bản hiệu chỉnh"
+                          : meeting.summary.source === "smoothed" ? "Bản biên tập cũ" : tr.summarySourceOriginal,
                       provider: meeting.summary.provider,
                       model: meeting.summary.model,
                     })}
@@ -3547,7 +3428,8 @@
                       title={tr.summaryRegenerate}
                       disabled={busy}
                       onclick={() => {
-                        summaryOpen = true;
+                        summarySource=transcriptView === "corrected" || !meeting?.segments.length ? "corrected" : "original";
+                    summaryOpen = true;
                       }}><RefreshCw size={13} /> {tr.summaryRegenerate}</button
                     >
                     <button
@@ -3974,107 +3856,37 @@
       </div>
     </dialog>
   {/if}
-  {#if smoothOpen}
-    <dialog
-      class="confirm-dialog smooth-dialog"
-      bind:this={smoothDialog}
-      aria-labelledby="smooth-title"
-      onclose={() => {
-        smoothOpen = false;
-      }}
-      oncancel={() => {
-        smoothOpen = false;
-      }}
-    >
-      <h2 id="smooth-title">{tr.smoothHeading}</h2>
-      <p>{tr.smoothIntro}</p>
-      <label class="summary-field"
-        ><span>{tr.smoothConfigPick}</span><select
-          value={smoothProfileId}
-          disabled={busy}
-          onchange={(e) => {
-            smoothProfileId = e.currentTarget.value;
-            useSessionProfile(smoothProfileId);
-            llmConnectionSignature = "";
-          }}
-        >
-          <option value="">{tr.smoothConfigManual}</option>
-          {#each chatProfiles(aiProfiles) as p}<option value={p.id}
-              >{p.name} · {p.provider}</option
-            >{/each}
-        </select></label
-      >
-      <label class="summary-field"
-        >{tr.aiModel}<input
-          bind:value={smoothModel}
-          disabled={busy}
-          list="smooth-task-models"
-          oninput={() => (llmConnectionSignature = "")}
-        /></label
-      >
-      <datalist id="smooth-task-models"
-        >{#each textModels(smoothProfileId, aiProfiles) as m}<option value={m} label={modelLabel(smoothProfileId,m)}></option>{/each}</datalist
-      >
-      {#if smoothProfileId}<p class="quality-hint">
-          {fill(tr.smoothUsingConfig, {
-            name: profileOf(smoothProfileId, aiProfiles)?.name ?? "",
-          })}
-        </p>{/if}
-      <p class="smooth-config">
-        {fill(tr.smoothUsing, {
-          provider: smoothProfileId
-            ? (profileOf(smoothProfileId, aiProfiles)?.provider ?? "")
-            : smoothProvider,
-          model: smoothModel || smoothDefaults[smoothProvider],
-        })}
-      </p>
-      {#if llmConnected}
-        <p class="smooth-connected" role="status">{tr.aiConnected}</p>
-      {:else}
-        <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
-        {#if !data.llm_configured}<p class="smooth-connect-hint">
-            {tr.aiNeedKey}
-          </p>{/if}
-        <button
-          class="button secondary small"
-          disabled={busy}
-          onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
-        >
-        {#if !data.llm_configured}<button
-            class="text-button"
-            disabled={busy}
-            onclick={() => {
-              smoothOpen = false;
-              page = "settings";
-            }}>{tr.aiOpenSettings}</button
-          >{/if}
-      {/if}
-      {#if meeting?.smoothed}
-        <label class="smooth-prompt"
-          >{tr.smoothPromptLabel}<textarea
-            bind:value={smoothPrompt}
-            placeholder={tr.smoothPromptPlaceholder}
-            aria-label={tr.smoothPromptLabel}></textarea>
-        </label>
-      {/if}
-      <div>
-        <button
-          class="button secondary"
-          onclick={() => {
-            smoothOpen = false;
-          }}>{tr.editCancel}</button
-        ><button
-          class="button primary"
-          disabled={busy || !llmConnected}
-          onclick={() => smoothTranscript()}
-          >{busy
-            ? tr.smoothRunning
-            : meeting?.smoothed
-              ? tr.smoothAgain
-              : tr.smoothButton}</button
-        >
+  {#if correctionOpen}
+    <dialog class="confirm-dialog correction-dialog" bind:this={correctionDialog} aria-labelledby="correction-title" onclose={()=>correctionOpen=false} oncancel={()=>correctionOpen=false}>
+      <h2 id="correction-title">Hiệu chỉnh từ file ghi âm</h2>
+      <p>Model nghe lại bản thu để tạo <strong>Bản hiệu chỉnh</strong> có mốc thời gian riêng. Bản gốc và bản dịch được giữ nguyên.</p>
+      <div class="summary-form">
+      <label class="summary-field"><span>Cấu hình AI hiệu chỉnh</span><select aria-label="Cấu hình AI hiệu chỉnh" bind:value={correctionProfileId} disabled={correctionRunning} onchange={()=>{correctionModel="";correctionFallback=undefined;correctionError="";}}>
+        <option value="">Chọn cấu hình…</option><option value="__local__">Local trên máy · không cần API</option>{#each correctionProfiles(aiProfiles) as p}<option value={p.id}>{p.name} · {p.provider}</option>{/each}
+      </select></label>
+      <label class="summary-field"><span>Model hiệu chỉnh</span><select aria-label="Model hiệu chỉnh" bind:value={correctionModel} onchange={()=>correctionFallback=undefined} disabled={correctionRunning||!correctionProfileId}>
+        <option value="">Chọn model…</option>{#if correctionProfileId === "__local__" && correctionModel && !correctionModels(correctionProfileId,aiProfiles).includes(correctionModel)}<option value={correctionModel} disabled>{modelLabel(correctionProfileId,correctionModel)} · Chưa sẵn sàng</option>{/if}{#each correctionModels(correctionProfileId,aiProfiles) as m}<option value={m}>{modelLabel(correctionProfileId,m)}</option>{/each}
+      </select></label>
       </div>
-      <p class="smooth-note">{tr.smoothOriginalKept}</p>
+      {#if correctionProfileId === "__local__"}<p class="quality-hint">Nghe lại file trên máy, không cần API và không tự chuyển lên cloud. Chỉ dùng model đã tải, đúng ngôn ngữ bản thu. Dùng lại cùng model không bảo đảm chính xác hơn bản trực tiếp; tác vụ có thể dùng nhiều CPU. Mốc nghe lại của model local có thể chỉ gần đúng.</p>
+      {#if !correctionModels("__local__",aiProfiles).length}<p class="test-error">Chưa có model local đã tải phù hợp ngôn ngữ bản thu. Tải model trong Mẫu cấu hình hoặc chọn cấu hình cloud.</p>{/if}
+      {#if correctionModel && correctionModels("__local__",aiProfiles).length && !correctionModels("__local__",aiProfiles).includes(correctionModel)}<p class="test-error">Model local đã chọn chưa có trên máy hoặc không phù hợp ngôn ngữ bản thu. Chọn model khác hoặc tải model trong Mẫu cấu hình.</p>{/if}
+      {:else}<p class="quality-hint">File ghi âm sẽ được gửi lên nhà cung cấp bạn chọn và dùng thêm hạn mức/phí API. Hiệu chỉnh nhận lại lời gốc, không dịch và không bảo đảm đúng 100%.</p>{/if}
+      {#if correctionProfileId && correctionModel}<details class="action-options">
+        <summary>Dự phòng (tùy chọn)</summary>
+        <label class="summary-field"><span>Model hiệu chỉnh dự phòng</span><select aria-label="Model hiệu chỉnh dự phòng" disabled={correctionRunning} value={correctionFallback?JSON.stringify(correctionFallback):""} onchange={e=>correctionFallback=e.currentTarget.value?JSON.parse(e.currentTarget.value):undefined}>
+          <option value="">Không dùng dự phòng</option>{#each fallbackChoices("correction",aiProfiles,{correction:{profileId:correctionProfileId,model:correctionModel}},"meeting",false) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
+        </select></label>
+        <p class="quality-hint">Chỉ chuyển một lần sang model bạn chọn. Dự phòng cloud có thể gửi bản thu sang nhà cung cấp khác và dùng thêm hạn mức/phí API.</p>
+      </details>{/if}
+      {#if correctionModel === "stt-async-v6"}<p class="correction-meta">Hủy sẽ dừng nhận và lưu kết quả tại Innote; tác vụ Soniox đã nhận có thể vẫn xử lý và dùng hạn mức.</p>{/if}
+      {#if !correctionProfiles(aiProfiles).length && !correctionModels("__local__",aiProfiles).length}<p class="test-error">Chưa có cấu hình nhận âm thanh. Thêm API trong Cài đặt hoặc tải model local phù hợp.</p>{/if}
+      {#if correctionRunning}<p role="status" aria-live="polite">{correctionJob?.stage??"Đang bắt đầu hiệu chỉnh…"} · {correctionJob?.model??correctionModel}{#if correctionJob?.processed} · {clock(correctionJob.processed)} / {clock(correctionJob.total)}{/if}</p>{/if}
+      {#if correctionError}<p class="test-error" role="alert">{correctionError}</p>{/if}
+      <div><button class="button secondary" onclick={()=>correctionOpen=false}>{correctionRunning ? "Đóng, tiếp tục xử lý" : "Đóng"}</button>
+        {#if correctionRunning}<button class="button secondary" disabled={correctionJob?.cancelling} onclick={()=>cancelCorrection()}>Hủy hiệu chỉnh</button>
+        {:else}<button class="button primary" disabled={!canCorrect||!correctionModels(correctionProfileId,aiProfiles).includes(correctionModel)} onclick={()=>correctTranscript()}>{meeting?.corrected ? "Hiệu chỉnh lại" : "Bắt đầu hiệu chỉnh"}</button>{/if}
+      </div>
     </dialog>
   {/if}
   {#if summaryOpen}
@@ -4093,103 +3905,35 @@
         <ClipboardList size={18} />
         {tr.summaryTitle}
       </h2>
+      <p>Chọn cấu hình AI và model cho lần tóm tắt này. Model đọc bản chép bạn chọn; không gửi file ghi âm.</p>
       <div class="summary-form">
-        {#if meeting?.smoothed}
-          <label class="summary-field"
-            ><span>{tr.summarySource}</span><select
-              bind:value={summarySource}
-              disabled={busy}
-              aria-label={tr.summarySource}
-            >
-              <option value="original">{tr.summarySourceOriginal}</option>
-              <option value="smoothed">{tr.summarySourceSmoothed}</option>
-            </select></label
-          >
-        {/if}
-        <label class="summary-field"
-          ><span>{tr.summaryStyle}</span><select
-            bind:value={summaryStyle}
-            disabled={busy}
-            aria-label={tr.summaryStyle}
-          >
-            <option value="overview">{tr.summaryStyleOverview}</option>
-            <option value="decisions">{tr.summaryStyleDecisions}</option>
-            <option value="full">{tr.summaryStyleFull}</option>
-          </select></label
-        >
-        <label class="summary-field"
-          ><span>{tr.summaryPromptLabel}</span><textarea
-            bind:value={summaryPrompt}
-            placeholder={tr.summaryPromptPlaceholder}
-            aria-label={tr.summaryPromptLabel}
-            rows="3"></textarea></label
-        >
-        <p class="smooth-config">
-          {fill(tr.smoothUsing, {
-            provider: summaryProfileId
-              ? (profileOf(summaryProfileId, aiProfiles)?.provider ?? "")
-              : smoothProvider,
-            model: summaryModel,
-          })}
-        </p>
-        <label class="summary-field"
-          ><span>{tr.smoothConfigPick}</span><select
-            value={summaryProfileId}
-            disabled={busy}
-            onchange={(e) => {
-              summaryProfileId = e.currentTarget.value;
-              summaryModel = textModels(summaryProfileId, aiProfiles)[0] ?? "";
-              llmConnectionSignature = "";
-            }}
-          >
-            <option value="">{tr.smoothConfigManual}</option>
-            {#each chatProfiles(aiProfiles) as p}<option value={p.id}
-                >{p.name} · {p.provider}</option
-              >{/each}
-          </select></label
-        >
-        <label class="summary-field"
-          >{tr.aiModel}<input
-            bind:value={summaryModel}
-            disabled={busy}
-            list="summary-task-models"
-            oninput={() => (llmConnectionSignature = "")}
-          /></label
-        >
-        <datalist id="summary-task-models"
-          >{#each textModels(summaryProfileId, aiProfiles) as m}<option
-              value={m}
-              label={modelLabel(summaryProfileId,m)}
-            ></option>{/each}</datalist
-        >
-        {#if summaryProfileId}<p class="quality-hint">
-            {fill(tr.smoothUsingConfig, {
-              name: profileOf(summaryProfileId, aiProfiles)?.name ?? "",
-            })}
-          </p>{/if}
-        {#if llmConnected}
-          <p class="smooth-connected" role="status">{tr.aiConnected}</p>
-        {:else}
-          <p class="smooth-connect-hint">{tr.aiConnectRequired}</p>
-          {#if !data.llm_configured}<p class="smooth-connect-hint">
-              {tr.aiNeedKey}
-            </p>{/if}
-          <div class="summary-connect-row">
-            <button
-              class="button secondary small"
-              disabled={busy}
-              onclick={() => testLlmConnection()}>{tr.aiTestConnection}</button
-            >
-            {#if !data.llm_configured}<button
-                class="text-button"
-                disabled={busy}
-                onclick={() => {
-                  summaryOpen = false;
-                  page = "settings";
-                }}>{tr.aiOpenSettings}</button
-              >{/if}
-          </div>
-        {/if}
+        <label class="summary-field"><span>Cấu hình AI tóm tắt</span><select aria-label="Cấu hình AI tóm tắt" bind:value={summaryProfileId} disabled={busy} onchange={()=>{summaryModel="";summaryFallback=undefined;summaryError="";}}>
+          <option value="">Chọn cấu hình…</option>{#each chatProfiles(aiProfiles).filter(p=>p.has_key) as p}<option value={p.id}>{p.name} · {p.provider}</option>{/each}
+        </select></label>
+        <label class="summary-field"><span>Model tóm tắt</span>
+          {#if profileOf(summaryProfileId,aiProfiles)?.provider === "openai-compatible"}<input aria-label="Model tóm tắt" placeholder="Nhập model ID" bind:value={summaryModel} disabled={busy} oninput={()=>summaryFallback=undefined}/>
+          {:else}<select aria-label="Model tóm tắt" bind:value={summaryModel} disabled={busy||!summaryProfileId} onchange={()=>summaryFallback=undefined}>
+            <option value="">Chọn model…</option>{#each summaryProfileId?textModels(summaryProfileId,aiProfiles):[] as m}<option value={m}>{modelLabel(summaryProfileId,m)}{m === "qwen/qwen3.8-27b" ? " · Preview" : ""}</option>{/each}
+          </select>{/if}
+        </label>
+        <div class="summary-options-row">
+          {#if meeting?.corrected}<label class="summary-field"><span>{tr.summarySource}</span><select bind:value={summarySource} disabled={busy} aria-label={tr.summarySource}>
+            {#if meeting.segments.length}<option value="original">{tr.summarySourceOriginal}</option>{/if}<option value="corrected">Bản hiệu chỉnh</option>
+          </select></label>{/if}
+          <label class="summary-field"><span>{tr.summaryStyle}</span><select bind:value={summaryStyle} disabled={busy} aria-label={tr.summaryStyle}>
+            <option value="overview">{tr.summaryStyleOverview}</option><option value="decisions">{tr.summaryStyleDecisions}</option><option value="full">{tr.summaryStyleFull}</option>
+          </select></label>
+        </div>
+        <details class="action-options"><summary>Tùy chọn thêm</summary>
+          <label class="summary-field"><span>{tr.summaryPromptLabel}</span><textarea bind:value={summaryPrompt} disabled={busy} placeholder={tr.summaryPromptPlaceholder} aria-label={tr.summaryPromptLabel} rows="3"></textarea></label>
+          <label class="summary-field"><span>Model tóm tắt dự phòng</span><select aria-label="Model tóm tắt dự phòng" disabled={busy||!summaryReady} value={summaryFallback?JSON.stringify(summaryFallback):""} onchange={e=>summaryFallback=e.currentTarget.value?JSON.parse(e.currentTarget.value):undefined}>
+            <option value="">Không dùng dự phòng</option>{#each fallbackChoices("summary",aiProfiles,{summary:{profileId:summaryProfileId,model:summaryModel}},"meeting",false) as choice}<option value={JSON.stringify(choice)}>{modelLabel(choice.profileId,choice.model)}</option>{/each}
+          </select></label>
+          <p class="quality-hint">Chỉ chuyển một lần sang model bạn chọn; bản chép có thể được gửi sang nhà cung cấp dự phòng và dùng hạn mức/phí của tài khoản đó.</p>
+        </details>
+        {#if !chatProfiles(aiProfiles).some(p=>p.has_key)}<p class="test-error">Chưa có cấu hình AI hỗ trợ tóm tắt. Thêm và kiểm tra API trong Cài đặt.</p><button class="text-button" disabled={busy} onclick={()=>{summaryOpen=false;page="settings";}}>{tr.aiOpenSettings}</button>{/if}
+        <p class="quality-hint">Bản chép sẽ được gửi lên nhà cung cấp bạn chọn và dùng hạn mức/phí API.</p>
+        {#if summaryError}<p class="test-error" role="alert">{summaryError}</p>{/if}
       </div>
       <div class="summary-dialog-footer">
         <button
@@ -4201,7 +3945,7 @@
         >
         <button
           class="button primary"
-          disabled={busy || !llmConnected}
+          disabled={busy || !summaryReady}
           onclick={() => createSummary()}
         >
           {busy

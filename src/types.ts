@@ -27,6 +27,9 @@ export interface Summary {
   created: string;
   source_hash?: string;
 }
+export interface CorrectedTranscript {
+  text:string; segments:Segment[]; provider:string; profile_id:string; model:string; created:string; audio_sha256:string;
+}
 export interface Meeting {
   speech_quality?: "fast" | "balanced" | "accurate";
   id: string;
@@ -36,7 +39,7 @@ export interface Meeting {
   status: string;
   language: string;
   model: string;
-  provider?: "local" | "soniox" | "mixed";
+  provider?: "local" | "soniox" | "groq" | "mixed";
   processed: number;
   segments: Segment[];
   live?: Segment[];
@@ -44,6 +47,7 @@ export interface Meeting {
   error: string | null;
   warnings: string[];
   smoothed?: SmoothedTranscript | null;
+  corrected?:CorrectedTranscript|null;
   summary?: Summary | null;
   translations?: { id: string; source_id: string; source_ids?: string[]; start: number; end: number; original: string; text: string; language: string; provider: string }[];
   speech?: { model: string; profile_id: string | null; translation_language: string | null; connections: number; uploaded_samples: number; local_fallback: boolean } | null;
@@ -55,6 +59,7 @@ export interface Model {
   installed: boolean;
 }
 export interface Snapshot {
+  corrections?:{id:string;stage:string;processed:number;total:number;model:string;cancelling:boolean}[];
   translation_preview?: { id: string; language: string; text: string; committed: number } | null;
   sessions: Meeting[];
   devices: Device[];

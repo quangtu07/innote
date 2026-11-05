@@ -167,8 +167,11 @@ fn translation_enabled() -> bool {
 }
 
 pub fn validate_options(o: &CaptionOptions) -> Result<()> {
-    ensure!(crate::speech_quality::SpeechQuality::supported(&o.provider) || o.speech_quality == Default::default(),
-        "API/model này hiện chỉ hỗ trợ mức Cân bằng (mặc định)");
+    ensure!(
+        crate::speech_quality::SpeechQuality::supported(&o.provider)
+            || o.speech_quality == Default::default(),
+        "API/model này hiện chỉ hỗ trợ mức Cân bằng (mặc định)"
+    );
     if o.provider == "local" {
         ensure!(
             !o.translate && o.mode == "standalone",
@@ -217,7 +220,7 @@ pub fn validate_options(o: &CaptionOptions) -> Result<()> {
         return Ok(());
     }
     let expected = match o.provider.as_str() {
-        "soniox" => "stt-rt-v5",
+        "soniox" => crate::soniox::RT_MODEL,
         "openai" => "gpt-realtime-translate",
         _ => "gemini-3.5-live-translate-preview",
     };
@@ -1348,33 +1351,63 @@ fn run_inner(app: tauri::AppHandle, mut opts: CaptionOptions, stop: Arc<AtomicBo
 mod tests {
     use super::*;
     #[test]
+    fn latest_soniox_model_is_explicit_and_async_cannot_run_as_live_captions() {
+        assert_eq!(crate::soniox::RT_MODEL, "stt-rt-v6");
+        assert!(validate_options(&options("soniox", "stt-rt-v6")).is_ok());
+        assert!(validate_options(&options("soniox", "stt-async-v6")).is_err());
+        assert!(validate_options(&options("soniox", "stt-rt-v5")).is_err());
+        let config = crate::meeting_soniox::configuration("en", Some("vi"), Default::default());
+        assert_eq!(config["model"], "stt-rt-v6");
+        assert_eq!(config["translation"]["type"], "one_way");
+        assert_eq!(config["translation"]["target_language"], "vi");
+    }
+    #[test]
     fn source_chunks_keep_subwords_and_do_not_commit_interim() {
         let mut parser = SonioxState::new();
-        let tokens: Vec<_> = ["one", " two", " three", " four", " five", " six", "teen", ",", " seven"]
-            .iter().map(|text| json!({"text":text,"is_final":true})).collect();
+        let tokens: Vec<_> = [
+            "one", " two", " three", " four", " five", " six", "teen", ",", " seven",
+        ]
+        .iter()
+        .map(|text| json!({"text":text,"is_final":true}))
+        .collect();
         let events = parser.push_source(&json!({"tokens":tokens})).unwrap();
         assert_eq!(events[0].text, "one two three four five sixteen,");
         assert!(events[0].final_);
         assert_eq!(events[1].text.trim(), "seven");
         assert!(!events[1].final_);
-        let interim = parser.push_source(&json!({"tokens":[{"text":" wrong","is_final":false}]})).unwrap();
+        let interim = parser
+            .push_source(&json!({"tokens":[{"text":" wrong","is_final":false}]}))
+            .unwrap();
         assert!(interim.iter().all(|e| !e.final_));
         let tail = parser.push_source(&json!({"finished":true})).unwrap();
         assert_eq!(tail[0].text, "seven");
         assert!(tail[0].final_);
-        assert!(parser.push_source(&json!({"finished":true})).unwrap().is_empty());
+        assert!(parser
+            .push_source(&json!({"finished":true}))
+            .unwrap()
+            .is_empty());
     }
     #[test]
     fn processing_levels_change_parameters_without_changing_model_or_provider() {
-        let mut opts=options("soniox","stt-rt-v5");
-        for (level,delay) in [(crate::speech_quality::SpeechQuality::Fast,500),(crate::speech_quality::SpeechQuality::Balanced,750),(crate::speech_quality::SpeechQuality::Accurate,1200)] {
-            opts.speech_quality=level;
-            let value:Value=serde_json::from_str(opts.init_message().unwrap().to_text().unwrap()).unwrap();
-            assert_eq!(value["model"],"stt-rt-v5");assert_eq!(value["max_endpoint_delay_ms"],delay);
-            assert_eq!(opts.provider,"soniox");assert_eq!(opts.api_key,"test-key");
+        let mut opts = options("soniox", crate::soniox::RT_MODEL);
+        for (level, delay) in [
+            (crate::speech_quality::SpeechQuality::Fast, 500),
+            (crate::speech_quality::SpeechQuality::Balanced, 750),
+            (crate::speech_quality::SpeechQuality::Accurate, 1200),
+        ] {
+            opts.speech_quality = level;
+            let value: Value =
+                serde_json::from_str(opts.init_message().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(value["model"], crate::soniox::RT_MODEL);
+            assert_eq!(value["max_endpoint_delay_ms"], delay);
+            assert_eq!(opts.provider, "soniox");
+            assert_eq!(opts.api_key, "test-key");
         }
-        let mut fixed=options("gemini","gemini-3.5-live-translate-preview");fixed.speech_quality=crate::speech_quality::SpeechQuality::Fast;
-        assert!(validate_options(&fixed).is_err());fixed.speech_quality=Default::default();assert!(validate_options(&fixed).is_ok());
+        let mut fixed = options("gemini", "gemini-3.5-live-translate-preview");
+        fixed.speech_quality = crate::speech_quality::SpeechQuality::Fast;
+        assert!(validate_options(&fixed).is_err());
+        fixed.speech_quality = Default::default();
+        assert!(validate_options(&fixed).is_ok());
     }
 
     #[test]
@@ -1408,7 +1441,7 @@ mod tests {
     }
     #[test]
     fn source_only_config_has_no_translation_and_rejects_translation_only_engines() {
-        let mut o = options("soniox", "stt-rt-v5");
+        let mut o = options("soniox", crate::soniox::RT_MODEL);
         assert!(o.translate);
         o.translate = false;
         o.source_language = Some("en".into());
@@ -1461,7 +1494,7 @@ mod tests {
 
     #[test]
     fn provider_configs_and_audio_match_dedicated_translation_protocols() {
-        let s = options("soniox", "stt-rt-v5");
+        let s = options("soniox", crate::soniox::RT_MODEL);
         validate_options(&s).unwrap();
         let init: Value =
             serde_json::from_str(s.init_message().unwrap().to_text().unwrap()).unwrap();

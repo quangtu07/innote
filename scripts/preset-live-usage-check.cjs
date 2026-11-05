@@ -10,7 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const profile=profiles.find(p=>p.provider==='soniox'&&p.has_key);assert(profile,'Saved Soniox connection required');
  const keys=['innote.workflow-presets.v1','innote.caption.style','may.preferences','may.caption.standalone','may.task_assign.meeting','may.task_assign.captionsonly','may.speech.processing-levels','may.meeting.local-models'];
  const saved=await main.evaluate(keys=>Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),keys);
- const out=path.resolve('test-results/preset-live-usage');fs.mkdirSync(out,{recursive:true});
+ const out=path.resolve(process.env.PRESET_QA_OUTPUT||'test-results/preset-live-usage');fs.mkdirSync(out,{recursive:true});
  let ownId;const result={meeting:null,standalone:null};
  async function create(mode,name,font){
   await main.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
@@ -28,7 +28,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await main.getByRole('button',{name:'Lưu mẫu',exact:true}).click();
   const row=main.locator('.preset-row').filter({has:main.getByRole('heading',{name,exact:true})});await row.waitFor();
   const preset=await main.evaluate(name=>JSON.parse(localStorage.getItem('innote.workflow-presets.v1')).presets.find(p=>p.name===name),name);
-  assert.equal(preset.captionStyle.fontSize,font);assert.equal(preset.tasks.caption.model,'stt-rt-v5');
+  assert.equal(preset.captionStyle.fontSize,font);assert.equal(preset.tasks.caption.model,'stt-rt-v6');
   if(mode==='meeting')await main.getByRole('button',{name:'Cuộc họp mới',exact:true}).click();
   else await main.getByRole('button',{name:'Chỉ phụ đề',exact:true}).click();
   await main.getByLabel(mode==='meeting'?'Mẫu cấu hình cuộc họp':'Mẫu cấu hình phụ đề').selectOption(preset.id);
@@ -37,8 +37,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await main.evaluate(()=>JSON.parse(localStorage.getItem('innote.caption.style')).fontSize),font);
   return preset;
  }
- async function play(){
-  await main.evaluate(async file=>{const{convertFileSrc}=await import('/node_modules/@tauri-apps/api/core.js');const a=new Audio(convertFileSrc(file));window.presetQAAudio=a;window.presetQAEnd=new Promise((resolve,reject)=>{a.onended=resolve;a.onerror=()=>reject(Error('Speaker playback failed'))});await a.play()},path.resolve('test-results/fixtures/vietnamese-pcm.wav'));
+ async function play(file='test-results/fixtures/vietnamese-pcm.wav'){
+  await main.evaluate(async file=>{const{convertFileSrc}=await import('/node_modules/@tauri-apps/api/core.js');const a=new Audio(convertFileSrc(file));window.presetQAAudio=a;window.presetQAEnd=new Promise((resolve,reject)=>{a.onended=resolve;a.onerror=()=>reject(Error('Speaker playback failed'))});await a.play()},path.resolve(file));
   await main.evaluate(()=>window.presetQAEnd);
  }
  async function inspectOverlay(font){
@@ -52,6 +52,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   return overlay;
  }
  try{
+  if(process.env.SONIOX_V6_QA==='1'){
+   const probe=await api('test_ai_connection',{input:{provider:'soniox',profileId:profile.id,apiKey:'',baseUrl:'',model:'stt-rt-v6'}});assert(probe);result.probe={model:'stt-rt-v6',passed:true};
+   await assert.rejects(()=>api('test_ai_connection',{input:{provider:'soniox',profileId:profile.id,apiKey:'',baseUrl:'',model:'stt-async-v6'}}),/async|trực tiếp/);
+  }
   const meetingPreset=await create('meeting','QA Mẫu cuộc họp Soniox',26);
   assert.equal(await main.getByLabel('Mẫu cấu hình cuộc họp').inputValue(),meetingPreset.id);
   await main.getByLabel('Tên cuộc họp').fill('QA dùng mẫu — cuộc họp và phụ đề');
@@ -62,6 +66,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const overlay=await inspectOverlay(26);await overlay.screenshot({path:path.join(out,'meeting-overlay.png')});await main.getByLabel('Nội dung hiển thị').selectOption('bilingual');await main.screenshot({path:path.join(out,'meeting-live.png')});
   await main.locator('.record-controls').getByRole('button',{name:'Kết thúc',exact:true}).click();await main.getByRole('button',{name:'Kết thúc và lưu',exact:true}).click();await wait(async()=>!(await api('snapshot')).active_id);
   const meeting=(await api('snapshot')).sessions.find(s=>s.id===ownId);assert.equal(meeting.status,'completed');assert.equal(meeting.speech.connections,1);assert.equal(meeting.speech.translation_language,'en');assert(meeting.segments.length&&meeting.translations.length);
+  assert.equal(meeting.speech.model,'stt-rt-v6');
   result.meeting={passed:true,id:ownId,presetId:meetingPreset.id,model:meeting.speech.model,connections:meeting.speech.connections,originals:meeting.segments.length,translations:meeting.translations.length,fontSize:26,microphone:false};
   const captionPreset=await create('captionsonly','QA Mẫu chỉ phụ đề Soniox',32);
   assert.equal(await main.getByLabel('Mẫu cấu hình phụ đề').inputValue(),captionPreset.id);
@@ -70,11 +75,20 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await main.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();await wait(async()=>await api('caption_running'));await play();
   const standOverlay=await inspectOverlay(32);assert.equal((await api('caption_snapshot')).translating,true);await standOverlay.screenshot({path:path.join(out,'standalone-overlay.png')});await main.screenshot({path:path.join(out,'standalone-live.png')});
   await main.getByRole('button',{name:'Dừng phụ đề',exact:true}).click();await wait(async()=>!await api('caption_running'));
+  result.standalone={passed:true,presetId:captionPreset.id,model:'stt-rt-v6',fontSize:32,bilingual:true,noMeetingCreated:true,microphone:false};
+  if(process.env.SONIOX_V6_QA==='1'){
+   await main.evaluate(async()=>{window.v6SourceTexts=[];const{listen}=await import('/node_modules/@tauri-apps/api/event.js');window.v6SourceOff=await listen('caption-text',({payload})=>{if(payload.text.trim())window.v6SourceTexts.push(payload)})});
+   await api('start_caption',{options:{provider:'',apiKey:'',baseUrl:'',model:'stt-rt-v6',targetLanguage:'vi',translate:false,sourceLanguage:'en',mode:'standalone',device:initial.devices.find(d=>d.kind==='system'&&d.default).id,profileId:profile.id}});
+   await play('test-results/fixtures/realtime/reference.wav');await wait(async()=>await main.evaluate(()=>window.v6SourceTexts.length>0));
+   const cache=await api('caption_snapshot');assert.equal(cache.translating,false);assert.equal(cache.caption.original,'');
+   await api('stop_caption');await wait(async()=>!await api('caption_running'));const events=await main.evaluate(()=>{window.v6SourceOff();return window.v6SourceTexts});
+   assert(events.every(e=>!e.original));result.sourceOnly={passed:true,model:'stt-rt-v6',microphone:false,finalTexts:events.filter(e=>e.final_).map(e=>e.text)};
+  }
   const final=await api('snapshot');assert(!final.active_id);assert.equal(final.sessions.length,count);for(const old of initial.sessions)assert.deepEqual(final.sessions.find(s=>s.id===old.id),old);assert.deepEqual(await api('list_ai_profiles'),profiles);
-  result.standalone={passed:true,presetId:captionPreset.id,model:'stt-rt-v5',fontSize:32,bilingual:true,noMeetingCreated:true,microphone:false};
   fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log('PASS real saved presets: meeting transcription+translation and standalone translated captions, speaker audio, mic off, styles applied, clean stops, original records preserved');
  }finally{
   await main.evaluate(()=>window.presetQAAudio?.pause()).catch(()=>{});
+  await main.evaluate(()=>window.v6SourceOff?.()).catch(()=>{});
   const active=(await api('snapshot')).active_id;if(ownId&&active===ownId){await api('stop');await wait(async()=>!(await api('snapshot')).active_id)}
   if(!active&&await api('caption_running')){await api('stop_caption');await wait(async()=>!await api('caption_running'))}
   await api('hide_caption_window');

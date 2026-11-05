@@ -43,8 +43,11 @@ pub fn prepare_vad(directory: &Path) -> Result<PathBuf> {
 }
 pub fn path(root: &Path, id: &str) -> Result<PathBuf> {
     if let Some(language) = moonshine_language(id) {
-        return Ok(std::env::current_exe()?.parent().context("Executable directory")?
-            .join("live-models").join(language));
+        return Ok(std::env::current_exe()?
+            .parent()
+            .context("Executable directory")?
+            .join("live-models")
+            .join(language));
     }
     anyhow::ensure!(CATALOG.iter().any(|x| x.0 == id), "Model không hợp lệ");
     let name = if id == NEMO_ID {
@@ -80,24 +83,58 @@ pub fn list(root: &Path) -> Vec<ModelInfo> {
                 .unwrap_or(false),
         })
         .collect();
-    for (id, name) in [(MOONSHINE_VI, "Moonshine · Tiếng Việt · Có sẵn"), (MOONSHINE_EN, "Moonshine · English · Có sẵn")] {
+    for (id, name) in [
+        (MOONSHINE_VI, "Moonshine · Tiếng Việt · Có sẵn"),
+        (MOONSHINE_EN, "Moonshine · English · Có sẵn"),
+    ] {
         let directory = path(root, id).ok();
         let ready = directory.as_ref().is_some_and(|p| moonshine_ready(p));
-        let bytes = directory.as_ref().and_then(|p|std::fs::read_dir(p).ok())
-            .map(|entries|entries.flatten().filter_map(|e|e.metadata().ok()).map(|m|m.len()).sum()).unwrap_or(0);
-        models.push(ModelInfo { id: id.into(), name: name.into(), bytes, installed: ready });
+        let bytes = directory
+            .as_ref()
+            .and_then(|p| std::fs::read_dir(p).ok())
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| e.metadata().ok())
+                    .map(|m| m.len())
+                    .sum()
+            })
+            .unwrap_or(0);
+        models.push(ModelInfo {
+            id: id.into(),
+            name: name.into(),
+            bytes,
+            installed: ready,
+        });
     }
     models
 }
 pub fn moonshine_language(id: &str) -> Option<&'static str> {
-    match id { MOONSHINE_VI => Some("vi"), MOONSHINE_EN => Some("en"), _ => None }
+    match id {
+        MOONSHINE_VI => Some("vi"),
+        MOONSHINE_EN => Some("en"),
+        _ => None,
+    }
 }
 fn moonshine_ready(directory: &Path) -> bool {
-    let files = ["streaming_config.json", "tokenizer.bin", "adapter.ort", "cross_kv.ort",
-        "decoder_kv.ort", "encoder.ort", "frontend.model.ort", "frontend.weights.ort"];
-    let valid = |p: PathBuf| std::fs::metadata(p).is_ok_and(|m|m.is_file() && m.len()>0);
-    files.iter().all(|f|valid(directory.join(f))) && directory.parent().and_then(Path::parent)
-        .is_some_and(|root|valid(root.join("moonshine.dll")) && valid(root.join("onnxruntime.dll")))
+    let files = [
+        "streaming_config.json",
+        "tokenizer.bin",
+        "adapter.ort",
+        "cross_kv.ort",
+        "decoder_kv.ort",
+        "encoder.ort",
+        "frontend.model.ort",
+        "frontend.weights.ort",
+    ];
+    let valid = |p: PathBuf| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() > 0);
+    files.iter().all(|f| valid(directory.join(f)))
+        && directory
+            .parent()
+            .and_then(Path::parent)
+            .is_some_and(|root| {
+                valid(root.join("moonshine.dll")) && valid(root.join("onnxruntime.dll"))
+            })
 }
 pub fn download(root: &Path, id: &str, mut progress: impl FnMut(u64, u64)) -> Result<()> {
     let (_, _, size, hash) = CATALOG
@@ -152,12 +189,25 @@ pub fn validate_mode(language: &str, model: &str, provider: &str) -> Result<()> 
         ["vi", "en", "ko", "zh", "multi", "auto"].contains(&language),
         "Ngôn ngữ không hợp lệ"
     );
+    if provider == "groq" {
+        anyhow::ensure!(
+            crate::groq::is_speech_model(model),
+            "Groq chép lời cần whisper-large-v3 hoặc whisper-large-v3-turbo"
+        );
+        return Ok(());
+    }
     if provider == "soniox" {
         return Ok(());
     }
-    anyhow::ensure!(model == NEMO_ID || moonshine_language(model).is_some(), "Model local không còn hỗ trợ; hãy chọn Moonshine hoặc Nemotron");
+    anyhow::ensure!(
+        model == NEMO_ID || moonshine_language(model).is_some(),
+        "Model local không còn hỗ trợ; hãy chọn Moonshine hoặc Nemotron"
+    );
     if let Some(expected) = moonshine_language(model) {
-        anyhow::ensure!(language == expected, "Model Moonshine không khớp ngôn ngữ đã chọn");
+        anyhow::ensure!(
+            language == expected,
+            "Model Moonshine không khớp ngôn ngữ đã chọn"
+        );
     }
     if ["multi", "ko", "zh"].contains(&language) {
         anyhow::ensure!(model == NEMO_ID, "Chế độ này cần model đa ngôn ngữ");
@@ -175,13 +225,24 @@ mod mode_tests {
     use super::*;
     #[test]
     fn mode_selects_an_actual_compatible_recognizer() {
+        for lang in ["vi", "en", "zh", "multi", "auto"] {
+            for model in ["whisper-large-v3", "whisper-large-v3-turbo"] {
+                assert!(validate_mode(lang, model, "groq").is_ok());
+            }
+        }
+        assert!(validate_mode("en", "openai/gpt-oss-20b", "groq").is_err());
+        assert!(validate_mode("invalid", "whisper-large-v3", "groq").is_err());
         for lang in ["multi", "ko", "zh"] {
             assert!(validate_mode(lang, NEMO_ID, "local").is_ok());
             assert!(validate_mode(lang, MOONSHINE_VI, "local").is_err());
             assert!(validate_mode(lang, NEMO_ID, "soniox").is_ok());
         }
         for lang in ["vi", "en"] {
-            let id = if lang == "vi" { MOONSHINE_VI } else { MOONSHINE_EN };
+            let id = if lang == "vi" {
+                MOONSHINE_VI
+            } else {
+                MOONSHINE_EN
+            };
             assert!(validate_mode(lang, id, "soniox").is_ok());
             assert!(validate_mode(lang, id, "local").is_ok());
             assert!(validate_mode(lang, NEMO_ID, "local").is_ok());
@@ -192,12 +253,26 @@ mod mode_tests {
     }
     #[test]
     fn partial_bundles_are_not_reported_ready() {
-        let root=std::env::temp_dir().join(format!("innote-bundle-{}",uuid::Uuid::new_v4()));
-        let directory=root.join("live-models/vi");std::fs::create_dir_all(&directory).unwrap();
+        let root = std::env::temp_dir().join(format!("innote-bundle-{}", uuid::Uuid::new_v4()));
+        let directory = root.join("live-models/vi");
+        std::fs::create_dir_all(&directory).unwrap();
         assert!(!moonshine_ready(&directory));
-        for file in ["streaming_config.json","tokenizer.bin","adapter.ort","cross_kv.ort","decoder_kv.ort","encoder.ort","frontend.model.ort","frontend.weights.ort"] { std::fs::write(directory.join(file),b"fixture").unwrap(); }
+        for file in [
+            "streaming_config.json",
+            "tokenizer.bin",
+            "adapter.ort",
+            "cross_kv.ort",
+            "decoder_kv.ort",
+            "encoder.ort",
+            "frontend.model.ort",
+            "frontend.weights.ort",
+        ] {
+            std::fs::write(directory.join(file), b"fixture").unwrap();
+        }
         assert!(!moonshine_ready(&directory));
-        std::fs::write(root.join("moonshine.dll"),b"fixture").unwrap();std::fs::write(root.join("onnxruntime.dll"),b"fixture").unwrap();
-        assert!(moonshine_ready(&directory));std::fs::remove_dir_all(root).unwrap();
+        std::fs::write(root.join("moonshine.dll"), b"fixture").unwrap();
+        std::fs::write(root.join("onnxruntime.dll"), b"fixture").unwrap();
+        assert!(moonshine_ready(&directory));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

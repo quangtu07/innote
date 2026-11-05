@@ -135,4 +135,108 @@ releaseNotes["0.8.7"]={
     ]
   }
 };
-export const previewReleaseVersion = "0.8.7";
+
+
+releaseNotes["0.8.8"]={
+  "vi": {
+    "title": "Có gì mới trong Innote?",
+    "subtitle": "Chọn AI dễ hơn, nghe lại bản thu để hiệu chỉnh.",
+    "close": "Đóng thông báo cập nhật",
+    "done": "Đã hiểu",
+    "once": "Chỉ tự động hiện một lần cho phiên bản này.",
+    "items": [
+      {
+        "title": "Soniox v6 cho cuộc họp và phụ đề",
+        "detail": "Cập nhật model realtime lên v6. Khi dùng Soniox trong cuộc họp, bản chép và phụ đề dùng chung luồng âm thanh; lời gốc và bản dịch được lưu riêng."
+      },
+      {
+        "title": "Chọn Groq và model rõ ràng hơn",
+        "detail": "Cấu hình Groq đã lưu xuất hiện trong Cuộc họp, Chỉ phụ đề và Mẫu cấu hình. Chọn Whisper cho lời gốc; tên model có kèm tên cấu hình để phân biệt nhiều API key."
+      },
+      {
+        "title": "Hiệu chỉnh bằng file ghi âm",
+        "detail": "Sau khi kết thúc, bấm Hiệu chỉnh để model nghe lại bản thu và tạo Bản hiệu chỉnh riêng. Mặc định Moonshine Việt/Anh; phiên đa ngôn ngữ dùng Nemotron đã tải. Có thể đổi sang Groq hoặc Soniox async."
+      },
+      {
+        "title": "Mẫu gọn hơn, chọn AI khi cần",
+        "detail": "Mẫu chỉ cấu hình chép lời và phụ đề khi đang ghi. Bấm Hiệu chỉnh hoặc Tóm tắt để chọn model và dự phòng cho lần chạy đó. Tóm tắt có thể dùng Bản gốc hoặc Bản hiệu chỉnh; dữ liệu cũ được giữ nguyên."
+      }
+    ]
+  },
+  "en": {
+    "title": "What’s new in Innote?",
+    "subtitle": "Clearer AI choices and correction from your recording.",
+    "close": "Close update notes",
+    "done": "Got it",
+    "once": "Shown automatically once for this version.",
+    "items": [
+      {
+        "title": "Soniox v6 for meetings and captions",
+        "detail": "The realtime model is updated to v6. Soniox meeting transcripts and captions share one audio stream; original text and translations are saved separately."
+      },
+      {
+        "title": "Clearer Groq and model selection",
+        "detail": "Saved Groq profiles are available in Meetings, Captions only and Presets. Choose Whisper for original speech; model labels include profile names to distinguish multiple API keys."
+      },
+      {
+        "title": "Correct from the recorded audio",
+        "detail": "After ending, choose Correction to transcribe the recording into a separate corrected transcript. Defaults use Vietnamese/English Moonshine or downloaded Nemotron for multilingual meetings. Groq and Soniox async remain selectable."
+      },
+      {
+        "title": "Simpler presets, AI choices when needed",
+        "detail": "Presets configure live transcription and captions. Choose a model and optional backup when opening Correction or Summary. Summaries can use the original or corrected transcript; existing data is preserved."
+      }
+    ]
+  },
+  "ko": {
+    "title": "Innote의 새로운 기능",
+    "subtitle": "더 명확한 AI 선택과 녹음 기반 교정.",
+    "close": "업데이트 안내 닫기",
+    "done": "확인",
+    "once": "이 버전에서 한 번만 자동으로 표시됩니다.",
+    "items": [
+      {
+        "title": "회의와 자막용 Soniox v6",
+        "detail": "실시간 모델을 v6로 업데이트했습니다. Soniox 회의 전사와 자막은 하나의 오디오 스트림을 공유하며 원문과 번역을 따로 저장합니다."
+      },
+      {
+        "title": "더 명확한 Groq와 모델 선택",
+        "detail": "저장된 Groq 설정을 회의, 자막 전용, 프리셋에서 선택할 수 있습니다. 원문 전사에는 Whisper를 사용하고 모델 이름 앞에 설정 이름을 표시합니다."
+      },
+      {
+        "title": "녹음 파일로 전사 교정",
+        "detail": "회의 종료 후 교정을 눌러 녹음을 다시 인식하고 별도의 교정본을 만듭니다. 베트남어·영어는 Moonshine, 다국어 회의는 다운로드한 Nemotron이 기본입니다. Groq 또는 Soniox async로 바꿀 수 있습니다."
+      },
+      {
+        "title": "간결한 프리셋과 작업별 AI 선택",
+        "detail": "프리셋은 실시간 전사와 자막만 설정합니다. 교정 또는 요약을 열 때 모델과 선택적 대체 모델을 고르세요. 요약에는 원본이나 교정본을 사용할 수 있으며 기존 데이터는 유지됩니다."
+      }
+    ]
+  },
+  "zh": {
+    "title": "Innote 更新了什么？",
+    "subtitle": "更清晰的 AI 选择，直接听录音校正转录。",
+    "close": "关闭更新说明",
+    "done": "知道了",
+    "once": "此版本仅自动显示一次。",
+    "items": [
+      {
+        "title": "会议与字幕升级 Soniox v6",
+        "detail": "实时模型升级至 v6。Soniox 会议转录和字幕共用一路音频，原文与译文分别保存。"
+      },
+      {
+        "title": "更清晰地选择 Groq 和模型",
+        "detail": "已保存的 Groq 配置可在会议、仅字幕和预设中选择。原文转录可选 Whisper；模型名称包含配置名称，便于区分多个 API key。"
+      },
+      {
+        "title": "根据录音文件校正转录",
+        "detail": "结束会议后点击校正，重新识别录音并生成独立的校正版。越南语、英语默认使用 Moonshine，多语言会议使用已下载的 Nemotron；也可改选 Groq 或 Soniox async。"
+      },
+      {
+        "title": "精简预设，按需选择 AI",
+        "detail": "预设只配置录音中的转录和字幕。打开校正或摘要时再选择模型及可选备用模型。摘要可使用原文或校正版，已有数据保持不变。"
+      }
+    ]
+  }
+};
+export const previewReleaseVersion = "0.8.8";

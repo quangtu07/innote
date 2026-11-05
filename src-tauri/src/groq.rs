@@ -104,10 +104,10 @@ fn multipart(samples: &[i16], model: &str, language: Option<&str>) -> (String, V
     (format!("multipart/form-data; boundary={boundary}"), body)
 }
 #[derive(Debug)]
-struct Word {
-    text: String,
-    start: f64,
-    end: f64,
+pub(crate) struct Word {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
 }
 fn parse(raw: &[u8], duration: f64) -> Result<Vec<Word>> {
     ensure!(raw.len() < 2_000_000, "Groq trả dữ liệu quá lớn");
@@ -138,6 +138,38 @@ fn parse(raw: &[u8], duration: f64) -> Result<Vec<Word>> {
     }
     Ok(result)
 }
+/// Shared HTTP adapter. Credentials and provider response bodies never enter errors.
+pub(crate) async fn recognize(
+    client: &reqwest::Client,
+    key: &str,
+    base: &str,
+    model: &str,
+    language: Option<&str>,
+    samples: &[i16],
+) -> Result<Vec<Word>> {
+    ensure!(is_speech_model(model), "Model Groq không hỗ trợ chép lời");
+    let (content, body) = multipart(samples, model, language);
+    let response = client
+        .post(endpoint(base)?)
+        .bearer_auth(key)
+        .header("Content-Type", content)
+        .body(body)
+        .send()
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("Groq phản hồi quá lâu hoặc mất mạng; hãy kiểm tra rồi bắt đầu lại")
+        })?;
+    ensure!(
+        response.status().is_success(),
+        "{}",
+        status_error(response.status().as_u16())
+    );
+    let data = response
+        .bytes()
+        .await
+        .map_err(|_| anyhow::anyhow!("Không đọc được kết quả Groq; bản thu vẫn được giữ"))?;
+    parse(&data, samples.len() as f64 / RATE as f64)
+}
 pub fn test_speech(key: &str, base: &str, model: &str) -> Result<()> {
     ensure!(is_speech_model(model), "Model Groq không hỗ trợ chép lời");
     let (content, body) = multipart(&vec![0; RATE], model, Some("en"));
@@ -159,13 +191,13 @@ pub fn test_speech(key: &str, base: &str, model: &str) -> Result<()> {
     Ok(())
 }
 
-struct AudioChunk {
-    samples: Vec<i16>,
-    base: usize,
-    final_: bool,
+pub(crate) struct AudioChunk {
+    pub samples: Vec<i16>,
+    pub base: usize,
+    pub final_: bool,
 }
 impl AudioChunk {
-    fn voiced(&self) -> bool {
+    pub(crate) fn voiced(&self) -> bool {
         self.samples.iter().any(|s| s.unsigned_abs() > 24)
     }
 }
@@ -184,7 +216,10 @@ impl Assembler {
         let mut samples = std::mem::take(&mut self.context);
         samples.extend(audio);
         self.cursor += len;
-        self.context = samples[samples.len().saturating_sub(self.overlap_limit.unwrap_or(OVERLAP))..].to_vec();
+        self.context = samples[samples
+            .len()
+            .saturating_sub(self.overlap_limit.unwrap_or(OVERLAP))..]
+            .to_vec();
         AudioChunk {
             samples,
             base,
@@ -192,12 +227,12 @@ impl Assembler {
         }
     }
 }
-fn visible_words(
+pub(crate) fn confirmed_words(
     words: Vec<Word>,
     chunk: &AudioChunk,
     watermark: &mut f64,
     deferred: &mut Vec<Word>,
-) -> String {
+) -> Vec<Word> {
     let base = chunk.base as f64 / RATE as f64;
     let until =
         base + chunk.samples.len() as f64 / RATE as f64 - if chunk.final_ { 0. } else { 0.4 };
@@ -228,12 +263,24 @@ fn visible_words(
         let end = word.end;
         if end > *watermark + 0.015 && end <= until && start >= *watermark - 0.15 {
             *watermark = end;
-            shown.push(word.text);
+            shown.push(word);
         } else if end > until && end > *watermark + 0.015 {
             deferred.push(word);
         }
     }
-    shown.join(" ")
+    shown
+}
+fn visible_words(
+    words: Vec<Word>,
+    chunk: &AudioChunk,
+    watermark: &mut f64,
+    deferred: &mut Vec<Word>,
+) -> String {
+    confirmed_words(words, chunk, watermark, deferred)
+        .into_iter()
+        .map(|w| w.text)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub async fn run_captions<F: FnMut(CaptionText)>(
@@ -293,8 +340,6 @@ pub async fn run_captions<F: FnMut(CaptionText)>(
             if let Some(last) = last_request {
                 tokio::time::sleep_until(last + Duration::from_millis(3200)).await;
             }
-            let (content, body) =
-                multipart(&chunk.samples, &opts.model, opts.source_language.as_deref());
             crate::caption::emit_status(
                 app,
                 "groq",
@@ -307,23 +352,15 @@ pub async fn run_captions<F: FnMut(CaptionText)>(
                 "Đang gửi một đoạn audio lên Groq để chép lời; không yêu cầu dịch.",
             );
             last_request = Some(tokio::time::Instant::now());
-            let response = client
-                .post(endpoint(&opts.base_url)?)
-                .bearer_auth(&opts.api_key)
-                .header("Content-Type", content)
-                .body(body)
-                .send()
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!(
-                        "Groq phản hồi quá lâu hoặc mất mạng; hãy kiểm tra rồi bắt đầu lại"
-                    )
-                })?;
-            if !response.status().is_success() {
-                return Err(status_error(response.status().as_u16()));
-            }
-            let duration = chunk.samples.len() as f64 / RATE as f64;
-            let words = parse(&response.bytes().await?, duration)?;
+            let words = recognize(
+                &client,
+                &opts.api_key,
+                &opts.base_url,
+                &opts.model,
+                opts.source_language.as_deref(),
+                &chunk.samples,
+            )
+            .await?;
             if std::env::var("INNOTE_GROQ_AUDIT").as_deref() == Ok("1") {
                 use tauri::Emitter;
                 let _=app.emit("groq-caption-audit",serde_json::json!({"model":opts.model,"base":chunk.base,"samples":chunk.samples.len(),"final":chunk.final_,"watermark":watermark,"words":words.iter().map(|w|serde_json::json!({"text":w.text,"start":w.start,"end":w.end})).collect::<Vec<_>>()}));
@@ -378,13 +415,99 @@ pub async fn run_captions<F: FnMut(CaptionText)>(
 mod tests {
     use super::*;
     #[test]
+    fn shared_async_recognizer_preserves_times_and_sanitizes_http_errors() {
+        use std::io::{Read, Write};
+        for code in [200, 401, 403, 429, 503] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut input = Vec::new();
+                let mut buffer = [0u8; 8192];
+                loop {
+                    let count = socket.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    input.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = input.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&input[..end]).to_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .unwrap()
+                            .trim()
+                            .parse()
+                            .unwrap();
+                        if input.len() >= end + 4 + length {
+                            assert!(headers.starts_with("post /audio/transcriptions "));
+                            assert!(headers.contains("bearer private-test-key"));
+                            let body = String::from_utf8_lossy(&input[end + 4..]);
+                            assert!(body.contains("whisper-large-v3-turbo"));
+                            assert!(body.contains("\r\nen\r\n"));
+                            break;
+                        }
+                    }
+                }
+                let body = if code == 200 {
+                    r#"{"words":[{"word":"hello","start":0.2,"end":0.7}]}"#
+                } else {
+                    r#"{"error":{"message":"private-test-key"}}"#
+                };
+                write!(socket,"HTTP/1.1 {code} Response\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            });
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let result = runtime.block_on(async {
+                recognize(
+                    &reqwest::Client::new(),
+                    "private-test-key",
+                    &format!("http://{address}"),
+                    "whisper-large-v3-turbo",
+                    Some("en"),
+                    &vec![100; RATE],
+                )
+                .await
+            });
+            if code == 200 {
+                let words = result.unwrap();
+                assert_eq!(words.len(), 1);
+                assert_eq!(words[0].text, "hello");
+                assert_eq!((words[0].start, words[0].end), (0.2, 0.7));
+            } else {
+                let error = format!("{:#}", result.unwrap_err());
+                assert!(error.contains(&code.to_string()));
+                assert!(!error.contains("private-test-key"));
+            }
+            server.join().unwrap();
+        }
+    }
+    #[test]
     fn processing_levels_keep_every_new_sample_and_bound_overlap() {
-        for level in [crate::speech_quality::SpeechQuality::Fast,crate::speech_quality::SpeechQuality::Balanced,crate::speech_quality::SpeechQuality::Accurate] {
-            let n=level.groq_chunk_samples();let overlap=level.groq_overlap_samples();
-            let mut audio=Assembler{overlap_limit:Some(overlap),..Default::default()};
-            for turn in 0..4 {audio.pending=vec![turn as i16+1;n];let chunk=audio.take(n,false);
-                let context=(turn*n).min(overlap);assert_eq!(chunk.base,turn*n-context);
-                assert_eq!(chunk.samples.len(),context+n);assert_eq!(&chunk.samples[context..],vec![turn as i16+1;n].as_slice());
+        for level in [
+            crate::speech_quality::SpeechQuality::Fast,
+            crate::speech_quality::SpeechQuality::Balanced,
+            crate::speech_quality::SpeechQuality::Accurate,
+        ] {
+            let n = level.groq_chunk_samples();
+            let overlap = level.groq_overlap_samples();
+            let mut audio = Assembler {
+                overlap_limit: Some(overlap),
+                ..Default::default()
+            };
+            for turn in 0..4 {
+                audio.pending = vec![turn as i16 + 1; n];
+                let chunk = audio.take(n, false);
+                let context = (turn * n).min(overlap);
+                assert_eq!(chunk.base, turn * n - context);
+                assert_eq!(chunk.samples.len(), context + n);
+                assert_eq!(
+                    &chunk.samples[context..],
+                    vec![turn as i16 + 1; n].as_slice()
+                );
             }
         }
     }

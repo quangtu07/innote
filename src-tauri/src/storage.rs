@@ -142,6 +142,10 @@ pub fn export(s: &Session, format: &str) -> String {
     export_version(s, format, "original")
 }
 fn validate_translation_export(s: &Session, format: &str, version: &str) -> Result<()> {
+    anyhow::ensure!(
+        version != "corrected" || s.corrected.is_some(),
+        "Chưa có bản hiệu chỉnh"
+    );
     if let Some((mode, language)) = version
         .split_once(':')
         .filter(|(m, _)| ["translation", "bilingual"].contains(m))
@@ -160,6 +164,15 @@ fn validate_translation_export(s: &Session, format: &str, version: &str) -> Resu
     Ok(())
 }
 pub fn export_version(s: &Session, format: &str, version: &str) -> String {
+    if version == "corrected" {
+        if let Some(corrected) = s.corrected.as_ref() {
+            let mut copy = s.clone();
+            copy.segments = corrected.segments.clone();
+            copy.live.clear();
+            copy.title = format!("{} — Bản hiệu chỉnh", s.title);
+            return export_version(&copy, format, "original");
+        }
+    }
     if let Some((mode, language)) = version
         .split_once(':')
         .filter(|(m, _)| ["translation", "bilingual"].contains(m))
@@ -585,6 +598,7 @@ mod tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            corrected: None,
             summary: None,
             translations: vec![],
             speech: None,
@@ -642,6 +656,7 @@ mod tests {
             error: None,
             warnings: vec![],
             smoothed: None,
+            corrected: None,
             summary: None,
             translations: vec![],
             speech: None,
@@ -702,6 +717,42 @@ mod tests {
             load(&dir, &s.id).unwrap().summary.unwrap().text,
             "bản tóm tắt ý chính"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn audio_correction_roundtrip_exports_real_timestamps_without_replacing_legacy_or_original() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let mut s:Session=serde_json::from_value(serde_json::json!({"id":uuid::Uuid::new_v4().to_string(),"title":"QA","created":"now","duration":10.,"status":"completed","language":"en","model":"moonshine-en","processed":10.,"segments":[{"id":"original","start":0.,"end":10.,"text":"original text","edited":true}],"notes":"keep notes","error":null})).unwrap();
+        assert!(export_file_version(&dir.join("missing.srt"), &s, "srt", "corrected").is_err());
+        s.corrected = Some(crate::types::CorrectedTranscript {
+            text: "corrected audio text".into(),
+            segments: vec![crate::types::Segment {
+                id: "new".into(),
+                start: 2.5,
+                end: 4.75,
+                text: "corrected audio text".into(),
+                edited: false,
+            }],
+            provider: "groq".into(),
+            profile_id: "groq1".into(),
+            model: "whisper-large-v3".into(),
+            created: "now".into(),
+            audio_sha256: "hash".into(),
+        });
+        save(&dir, &s).unwrap();
+        let restored = load(&dir, &s.id).unwrap();
+        assert_eq!(restored.segments[0].text, "original text");
+        assert!(restored.segments[0].edited);
+        assert_eq!(restored.notes, "keep notes");
+        assert_eq!(
+            restored.corrected.as_ref().unwrap().model,
+            "whisper-large-v3"
+        );
+        let srt = export_version(&restored, "srt", "corrected");
+        assert!(srt.contains("00:00:02,500 --> 00:00:04,750"));
+        assert!(srt.contains("corrected audio text"));
+        assert!(!srt.contains("original text"));
+        assert!(export(&restored, "txt").contains("original text"));
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

@@ -28,7 +28,19 @@ struct StreamWorker {
     queued: Arc<AtomicUsize>,
 }
 impl StreamWorker {
-    fn new(model: &Path, language: &str, quality: crate::speech_quality::SpeechQuality) -> Result<Self> {
+    fn new(
+        model: &Path,
+        language: &str,
+        quality: crate::speech_quality::SpeechQuality,
+    ) -> Result<Self> {
+        Self::new_mode(model, language, quality, false)
+    }
+    fn new_mode(
+        model: &Path,
+        language: &str,
+        quality: crate::speech_quality::SpeechQuality,
+        file: bool,
+    ) -> Result<Self> {
         let mut command = Command::new(std::env::current_exe()?);
         command
             .arg("--caption-stream-worker")
@@ -38,6 +50,12 @@ impl StreamWorker {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        if file {
+            command
+                .arg("file-correction")
+                .env("OPENBLAS_NUM_THREADS", "1")
+                .env("OMP_NUM_THREADS", "1");
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -67,7 +85,10 @@ impl StreamWorker {
                     })
                 })();
                 if tx
-                    .send(notice.unwrap_or_else(|e| Notice::Error(format!("Model local worker: {e}"))))
+                    .send(
+                        notice
+                            .unwrap_or_else(|e| Notice::Error(format!("Model local worker: {e}"))),
+                    )
                     .is_err()
                 {
                     break;
@@ -120,6 +141,87 @@ impl StreamWorker {
         Ok(())
     }
 }
+/// File correction feeds one frame only after native acknowledgement. It uses
+/// no capture/audio clock and never queues the whole recording in memory.
+pub(crate) async fn transcribe_file(
+    model: &Path,
+    language: &str,
+    path: &Path,
+    control: &crate::correction::Control,
+    model_id: &str,
+) -> Result<Vec<crate::types::Segment>> {
+    let model = model.to_owned();
+    let language = language.to_owned();
+    let mut worker = tokio::task::spawn_blocking(move || {
+        StreamWorker::new_mode(
+            &model,
+            &language,
+            crate::speech_quality::SpeechQuality::Accurate,
+            true,
+        )
+    })
+    .await??;
+    let mut wav = hound::WavReader::open(path)?;
+    let total = wav.duration() as usize;
+    let mut submitted = 0usize;
+    let mut words = Vec::new();
+    let mut last_progress = std::time::Instant::now();
+    let mut input_closed = false;
+    control.update("Đang nạp model local trên máy", 0., model_id);
+    loop {
+        ensure!(
+            !control.cancel.load(Ordering::Acquire),
+            "Đã hủy hiệu chỉnh local; bản cũ vẫn được giữ"
+        );
+        tokio::select! {
+            notice=worker.output.recv()=>{
+                match notice {
+                    Some(Notice::Ready)|Some(Notice::Progress(_))=>{
+                        if let Some(Notice::Progress(processed))=notice {control.update("Đang nghe lại bản thu trên máy",processed as f64/16000.,model_id);}
+                        last_progress=std::time::Instant::now();
+                        if !input_closed {
+                            let frame=wav.samples::<i16>().take(2560).collect::<std::result::Result<Vec<_>,_>>()?;
+                            ensure!(!frame.is_empty() || submitted == total,"File ghi âm kết thúc sớm; bản cũ vẫn được giữ");
+                            submitted += frame.len();
+                            if !frame.is_empty(){worker.send(frame.into_iter().map(|s|s as f32/32768.).collect())?;}
+                            // Close immediately after the last frame: the native reader
+                            // needs EOF to consume a frame shorter than 160 ms.
+                            if submitted >= total {worker.input.take();input_closed=true;}
+                        }
+                    },
+                    Some(Notice::Text(update)) if update.final_text=>{words.extend(update.words);},
+                    Some(Notice::Error(error))=>anyhow::bail!(error),
+                    Some(Notice::Closed)|None=>{ensure!(input_closed,"Model local dừng trước khi đọc hết file ghi âm");break;},
+                    _=>{}
+                }
+            },
+            _=tokio::time::sleep(Duration::from_millis(80))=>{
+                ensure!(!control.cancel.load(Ordering::Acquire),"Đã hủy hiệu chỉnh local; bản cũ vẫn được giữ");
+                ensure!(last_progress.elapsed()<Duration::from_secs(120),"Model local không phản hồi trong 120 giây; bản cũ vẫn được giữ");
+            }
+        }
+    }
+    ensure!(
+        !control.cancel.load(Ordering::Acquire),
+        "Đã hủy hiệu chỉnh local"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = worker.child.try_wait()? {
+            ensure!(
+                status.success(),
+                "Model local kết thúc bất thường; chưa thay bản hiệu chỉnh trước"
+            );
+            break;
+        }
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "Model local chưa kết thúc sau khi đọc file"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Ok(words)
+}
 impl Drop for StreamWorker {
     fn drop(&mut self) {
         self.input.take();
@@ -133,7 +235,10 @@ pub async fn run<F: FnMut(CaptionText)>(
     stop: Arc<AtomicBool>,
     mut publish: F,
 ) -> Result<()> {
-    let model = opts.local_model.clone().context("Thiếu model Model local")?;
+    let model = opts
+        .local_model
+        .clone()
+        .context("Thiếu model Model local")?;
     let language =
         crate::local_caption::language(&opts.model, opts.source_language.as_deref())?.to_string();
     crate::caption::emit_status(
@@ -145,7 +250,8 @@ pub async fn run<F: FnMut(CaptionText)>(
     );
     let quality = opts.speech_quality;
     let mut worker =
-        tokio::task::spawn_blocking(move || StreamWorker::new(&model, &language, quality)).await??;
+        tokio::task::spawn_blocking(move || StreamWorker::new(&model, &language, quality))
+            .await??;
     let ready = async {
         loop {
             tokio::select! {
@@ -269,7 +375,10 @@ pub async fn run<F: FnMut(CaptionText)>(
 fn due_samples(elapsed: Duration, submitted: usize) -> usize {
     // Allow capture packets 80 ms to arrive. Never insert silence and then
     // speed up the same clock again merely because a packet arrived late.
-    let target = (elapsed.saturating_sub(Duration::from_millis(80)).as_secs_f64() * 16000.) as usize;
+    let target = (elapsed
+        .saturating_sub(Duration::from_millis(80))
+        .as_secs_f64()
+        * 16000.) as usize;
     target.saturating_sub(submitted).min(640)
 }
 
@@ -286,7 +395,11 @@ mod tests {
     }
 }
 /// Private binary-pipe worker entry. Reuses the model with a caption-only CPU profile.
-pub fn worker(model: &Path, language: &str, quality: crate::speech_quality::SpeechQuality) -> Result<()> {
+pub fn worker(
+    model: &Path,
+    language: &str,
+    quality: crate::speech_quality::SpeechQuality,
+) -> Result<()> {
     let mut decoder = crate::live::CaptionDecoder::captions_with_quality(model, language, quality)?;
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();

@@ -14,6 +14,7 @@ use tokio_tungstenite::{
 };
 
 const ENDPOINT: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
+pub const RT_MODEL: &str = "stt-rt-v6";
 
 pub fn validate_key(key: &str) -> Result<String> {
     let key = key.trim();
@@ -161,7 +162,7 @@ pub async fn test_connection_at(endpoint: &str, key: &str, timeout: Duration) ->
         socket
             .send(Message::Text(
                 json!({
-                    "model": "stt-rt-v5",
+                    "model": RT_MODEL,
                     "audio_format": "pcm_s16le",
                     "sample_rate": 16000,
                     "num_channels": 1,
@@ -258,7 +259,7 @@ async fn transcribe_at(
             .await
             .map_err(|_| anyhow::anyhow!("Kết nối Soniox quá lâu"))?
             .map_err(websocket_error)?;
-        socket.send(Message::Text(json!({"model":"stt-rt-v5","audio_format":"pcm_s16le","sample_rate":16000,"num_channels":1,"language_hints":[job.language],"enable_speaker_diarization":false}).to_string())).await.map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
+        socket.send(Message::Text(json!({"model":RT_MODEL,"audio_format":"pcm_s16le","sample_rate":16000,"num_channels":1,"language_hints":[job.language],"enable_speaker_diarization":false}).to_string())).await.map_err(|_| anyhow::anyhow!("Không gửi được cấu hình Soniox"))?;
         for chunk in pcm.chunks(64000) {
             socket
                 .send(Message::Binary(chunk.to_vec()))
@@ -500,6 +501,7 @@ mod tests {
             let config = socket.next().await.unwrap().unwrap();
             let config: Value = serde_json::from_str(config.to_text().unwrap()).unwrap();
             assert_eq!(config["audio_format"], "pcm_s16le");
+            assert_eq!(config["model"], "stt-rt-v6");
             assert!(
                 matches!(socket.next().await.unwrap().unwrap(), Message::Binary(b) if b.len() == 6400)
             );

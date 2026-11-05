@@ -28,7 +28,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
     await page.getByLabel('Cấu hình AI phụ đề').selectOption(profile.id);
     await page.getByRole('button',{name:'Bắt đầu phụ đề',exact:true}).click();
     await wait(async()=>await api('caption_running'));
-   }else await api('start_caption',{options:{provider:'',apiKey:'',baseUrl:'',model:'stt-rt-v5',targetLanguage:'vi',translate:process.env.CAPTION_SOURCE!=='1',sourceLanguage:'en',device:null,mode:'standalone',profileId:profile.id,sessionDir:null}});
+   }else await api('start_caption',{options:{provider:'',apiKey:'',baseUrl:'',model:'stt-rt-v6',targetLanguage:'vi',translate:process.env.CAPTION_SOURCE!=='1',sourceLanguage:'en',device:null,mode:'standalone',profileId:profile.id,sessionDir:null}});
    await api('open_caption_window');
    // WebView2 CDP can retain detached targets after native close. The latest
    // target must also acknowledge an event before it is used as render evidence.

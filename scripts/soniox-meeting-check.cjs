@@ -28,7 +28,7 @@ const{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.getByLabel('Bật phụ đề khi bắt đầu cuộc họp').setChecked(!rotate);
   if(!rotate)await page.getByLabel('Dịch sang trong cuộc họp').setChecked(translate);
   if(translate)await page.getByLabel('Ngôn ngữ bản dịch',{exact:true}).selectOption('en');
-  if(translate){await page.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:profile.id,model:'stt-rt-v5'}));assert.equal(await page.getByLabel('Cách chép lời').inputValue(),'soniox');assert.equal(await page.getByLabel('Cấu hình Soniox',{exact:true}).inputValue(),profile.id);}
+  if(translate){await page.getByLabel('Model dùng chung cho cuộc họp').selectOption(JSON.stringify({profileId:profile.id,model:'stt-rt-v6'}));assert.equal(await page.getByLabel('Cách chép lời').inputValue(),'soniox');assert.equal(await page.getByLabel('Cấu hình Soniox',{exact:true}).inputValue(),profile.id);}
   await page.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
   await wait(async()=>!!(await api('snapshot')).active_id,15000);
   ownId=(await api('snapshot')).active_id;

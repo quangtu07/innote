@@ -287,10 +287,18 @@ fn commit(
     render: bool,
     language: Option<&str>,
 ) -> Result<()> {
-    let mut committed = if let Some(preview) = run.speech.preview().filter(|p| Some(p.language.as_str()) == language) {
+    let mut committed = if let Some(preview) = run
+        .speech
+        .preview()
+        .filter(|p| Some(p.language.as_str()) == language)
+    {
         preview.committed
     } else {
-        crate::storage::load(&may.root, &run.id)?.translations.iter().filter(|t| Some(t.language.as_str()) == language).count()
+        crate::storage::load(&may.root, &run.id)?
+            .translations
+            .iter()
+            .filter(|t| Some(t.language.as_str()) == language)
+            .count()
     };
     if !batch.originals.is_empty() || !batch.translations.is_empty() {
         let saved = may.edit(&run.id, |s| {
@@ -306,13 +314,19 @@ fn commit(
                 }
             }
         })?;
-        committed = saved.translations.iter().filter(|t| Some(t.language.as_str()) == language).count();
+        committed = saved
+            .translations
+            .iter()
+            .filter(|t| Some(t.language.as_str()) == language)
+            .count();
         let _ = app.emit("session-changed", run.id.clone());
     }
     if run.speech.target().as_deref() == language {
         let preview = language.map(|language| TranslationPreview {
-            id: run.id.clone(), language: language.into(),
-            text: batch.live_translation.clone(), committed,
+            id: run.id.clone(),
+            language: language.into(),
+            text: batch.live_translation.clone(),
+            committed,
         });
         *run.speech.preview.lock().unwrap() = preview.clone();
         let _ = app.emit("meeting-translation-preview", preview);
@@ -368,8 +382,12 @@ fn commit(
     Ok(())
 }
 
-pub(crate) fn configuration(language: &str, target: Option<&str>, quality: crate::speech_quality::SpeechQuality) -> Value {
-    let mut config = json!({"model":"stt-rt-v5","audio_format":"pcm_s16le","sample_rate":16000,"num_channels":1,"enable_endpoint_detection":true,"enable_language_identification":true,"max_endpoint_delay_ms":quality.soniox_endpoint_ms()});
+pub(crate) fn configuration(
+    language: &str,
+    target: Option<&str>,
+    quality: crate::speech_quality::SpeechQuality,
+) -> Value {
+    let mut config = json!({"model":crate::soniox::RT_MODEL,"audio_format":"pcm_s16le","sample_rate":16000,"num_channels":1,"enable_endpoint_detection":true,"enable_language_identification":true,"max_endpoint_delay_ms":quality.soniox_endpoint_ms()});
     if ["vi", "en", "ko", "zh", "ja"].contains(&language) {
         config["language_hints"] = json!([language]);
     }
@@ -499,32 +517,58 @@ mod tests {
     fn short_confirmed_chunks_keep_timestamps_tail_and_translation_alignment() {
         let mut timeline = Timeline::default();
         timeline.append(0, 160000);
-        let words = ["one", " two", " three", " four", " five", " six", "teen", ",", " seven", " eight"];
-        let tokens: Vec<_> = words.iter().enumerate().map(|(i, text)| json!({
-            "text":text,"is_final":true,"translation_status":"original",
-            "start_ms":i*100,"end_ms":(i+1)*100
-        })).collect();
+        let words = [
+            "one", " two", " three", " four", " five", " six", "teen", ",", " seven", " eight",
+        ];
+        let tokens: Vec<_> = words
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                json!({
+                    "text":text,"is_final":true,"translation_status":"original",
+                    "start_ms":i*100,"end_ms":(i+1)*100
+                })
+            })
+            .collect();
         let mut parser = Parser::default();
-        let batch = parser.push(&json!({"tokens":tokens}), &timeline, None).unwrap();
+        let batch = parser
+            .push(&json!({"tokens":tokens}), &timeline, None)
+            .unwrap();
         assert_eq!(batch.originals.len(), 1);
         assert_eq!(batch.originals[0].text, "one two three four five sixteen,");
         assert_eq!(batch.originals[0].start, 0.);
         assert_eq!(batch.originals[0].end, 0.8);
-        let tail = parser.push(&json!({"finished":true}), &timeline, None).unwrap();
+        let tail = parser
+            .push(&json!({"finished":true}), &timeline, None)
+            .unwrap();
         assert_eq!(tail.originals[0].text, "seven eight");
         assert_eq!(tail.originals[0].start, 0.8);
         assert_eq!(tail.originals[0].end, 1.);
-        assert!(parser.push(&json!({"finished":true}), &timeline, None).unwrap().originals.is_empty());
+        assert!(parser
+            .push(&json!({"finished":true}), &timeline, None)
+            .unwrap()
+            .originals
+            .is_empty());
         // The same tokens must stay one complete aligned source when translating.
         let mut translated = Parser::default();
-        assert!(translated.push(&json!({"tokens":tokens}), &timeline, Some("vi")).unwrap().originals.is_empty());
+        assert!(translated
+            .push(&json!({"tokens":tokens}), &timeline, Some("vi"))
+            .unwrap()
+            .originals
+            .is_empty());
         let pair = translated.push(&json!({"tokens":[
             {"text":"<end>","is_final":true,"translation_status":"original"},
             {"text":"Một bản dịch đủ câu.","is_final":true,"translation_status":"translation"},
             {"text":"<end>","is_final":true,"translation_status":"translation"}
         ]}), &timeline, Some("vi")).unwrap();
-        assert_eq!(pair.translations[0].original, "one two three four five sixteen, seven eight");
-        assert_eq!(pair.translations[0].source_ids, vec![pair.originals[0].id.clone()]);
+        assert_eq!(
+            pair.translations[0].original,
+            "one two three four five sixteen, seven eight"
+        );
+        assert_eq!(
+            pair.translations[0].source_ids,
+            vec![pair.originals[0].id.clone()]
+        );
     }
     #[test]
     fn timeline_retains_pause_and_cutover_offsets() {
@@ -611,8 +655,12 @@ mod tests {
     }
     #[test]
     fn translation_is_explicit_and_idempotent_control_does_not_restart_stt() {
-        assert!(configuration("multi", None, Default::default()).get("translation").is_none());
-        assert!(configuration("multi", None, Default::default()).get("language_hints").is_none());
+        assert!(configuration("multi", None, Default::default())
+            .get("translation")
+            .is_none());
+        assert!(configuration("multi", None, Default::default())
+            .get("language_hints")
+            .is_none());
         assert_eq!(
             configuration("en", Some("vi"), Default::default())["translation"],
             json!({"type":"one_way","target_language":"vi"})
@@ -646,7 +694,10 @@ mod tests {
             {"text":"<end>","is_final":true}
         ]}), &timeline, Some("vi")).unwrap();
         assert_eq!(final_batch.translations[0].text, "Xin chào thế giới.");
-        assert_eq!(final_batch.translations[0].source_id, source.originals[0].id);
+        assert_eq!(
+            final_batch.translations[0].source_id,
+            source.originals[0].id
+        );
         assert!(final_batch.live_translation.is_empty());
     }
     #[test]

@@ -8,8 +8,10 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 
 - Ghi đồng thời **âm thanh cuộc họp** (WASAPI loopback) và **micro**.
 - Moonshine có sẵn để chép lời local Việt/Anh; Nemotron là model tùy chọn cho Việt/Anh/Hàn/Trung xen kẽ.
-- Phụ đề lời gốc hoặc bản dịch từ âm thanh loa/tai nghe, với hộp nổi kéo/đổi kích thước và tùy chỉnh trong Cài đặt.
-- Lưu nhiều cấu hình API, chọn model riêng theo tác vụ và cấu hình dự phòng. Soniox hỗ trợ dùng chung chép lời/phụ đề trong cuộc họp; Groq Whisper hỗ trợ phụ đề lời gốc dùng riêng theo đoạn.
+- Phụ đề lời gốc hoặc bản dịch từ âm thanh loa/tai nghe, với hộp nổi kéo/đổi kích thước và tùy chỉnh ngay tại màn hình sử dụng, lưu được trong mẫu cấu hình.
+- Lưu nhiều cấu hình API, chọn model và dự phòng cho chép lời/phụ đề. Soniox v6 dùng chung chép lời và dịch phụ đề trong cuộc họp; Groq Whisper dùng chung chép lời và phụ đề gốc theo đoạn, hoặc dùng riêng cho Chỉ phụ đề.
+- Sau cuộc họp, chọn model **Hiệu chỉnh** để nghe lại file ghi âm và lưu **Bản hiệu chỉnh** riêng. Mặc định Moonshine Việt/Anh hoặc Nemotron đã tải cho đa ngôn ngữ; vẫn có thể chọn Groq Whisper hoặc Soniox async v6.
+- Chọn model **Tóm tắt** ngay khi thực hiện; dùng Bản gốc hoặc Bản hiệu chỉnh. Mẫu chỉ cấu hình công việc realtime, không bắt buộc chọn AI hậu xử lý trước cuộc họp.
 - Chọn ngôn ngữ giao diện: Tiếng Việt, English, 한국어, 中文（简体）.
 - Nghe lại, sửa từng đoạn, ghi chú, tìm kiếm và xuất `.md`, `.txt`, `.srt`; tải thêm bản ghi âm `.mp3`.
 - Tự thông báo và cập nhật khi có bản mới qua GitHub Releases.
@@ -265,8 +267,8 @@ Public key đã có trong `src-tauri/tauri.conf.json`. Sao lưu private key + m�
 ```powershell
 .\scripts\release.ps1 `
   -Repo USERNAME/innote `
-  -Version 0.8.7 `
-  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.7.md"))
+  -Version 0.8.8 `
+  -Notes ([IO.File]::ReadAllText("docs/releases/0.8.8.md"))
 ```
 
 Script tự:
@@ -274,8 +276,8 @@ Script tự:
 - trỏ updater về `https://github.com/USERNAME/innote/releases/latest/download/latest.json`
 - build binary + NSIS
 - ký bằng `%USERPROFILE%\.tauri\innote.key`
-- tạo `release\Innote-Setup-0.8.7.exe`
-- tạo `release\Innote-Setup-0.8.7.exe.sig`
+- tạo `release\Innote-Setup-0.8.8.exe`
+- tạo `release\Innote-Setup-0.8.8.exe.sig`
 - tạo `release\latest.json`
 
 Sau đó commit cấu hình endpoint:
@@ -289,8 +291,8 @@ git commit -m "Configure GitHub updater endpoint"
 
 Tạo tag `v0.6.3`, rồi upload đúng **3 file**:
 
-1. `release\Innote-Setup-0.8.7.exe`
-2. `release\Innote-Setup-0.8.7.exe.sig`
+1. `release\Innote-Setup-0.8.8.exe`
+2. `release\Innote-Setup-0.8.8.exe.sig`
 3. `release\latest.json`
 
 Không upload source/build folder vào release. Endpoint `releases/latest/download/latest.json` sẽ được app đọc ở lần kiểm tra sau.

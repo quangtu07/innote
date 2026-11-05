@@ -4,8 +4,8 @@ import ts from 'typescript';
 const styleJS=ts.transpileModule(readFileSync('src/lib/caption-style.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const styleURL='data:text/javascript;base64,'+Buffer.from(styleJS).toString('base64');
 const js=ts.transpileModule(readFileSync('src/lib/workflow-presets.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace('"./caption-style"',JSON.stringify(styleURL));
-const {copyPreset,parsePresets,serializePresets,writePresetPreferences}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
-const p={id:'one',name:'English study',mode:'captionsonly',tasks:{caption:{profileId:'groq1',model:'whisper-large-v3-turbo',targetLang:'vi',translate:false,fallback:{profileId:'soniox1',model:'stt-rt-v5'},apiKey:'secret-must-not-persist'}},source:'en',quality:'fast',captions:false,translate:false,target:'vi',transcribe:true,localFallback:false};
+const {copyPreset,parsePresets,serializePresets,writePresetPreferences,realtimeAssignments}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const p={id:'one',name:'English study',mode:'captionsonly',tasks:{caption:{profileId:'groq1',model:'whisper-large-v3-turbo',targetLang:'vi',translate:false,fallback:{profileId:'soniox1',model:'stt-rt-v6'},apiKey:'secret-must-not-persist'}},source:'en',quality:'fast',captions:false,translate:false,target:'vi',transcribe:true,localFallback:false};
 const raw=serializePresets([p]);assert(!raw.includes('secret'));assert(!raw.includes('apiKey'));
 const parsed=parsePresets(raw);assert.equal(parsed[0].tasks.caption.fallback.profileId,'soniox1');
 assert.equal(parsed[0].captionStyle,undefined,'Legacy presets remain readable');
@@ -23,3 +23,11 @@ const store={getItem:k=>values.get(k)??null,setItem:(k,v)=>{if(k==='three'&&fail
 assert.throws(()=>writePresetPreferences(store,{one:'new',two:'added',three:'error'}));assert.deepEqual([...values],[['one','old']]);
 writePresetPreferences(store,{one:'new',two:'added'});assert.equal(values.get('two'),'added');
 console.log('PASS preset preference writes: failed partial update rolls back; successful write commits');
+
+const audioTasks=parsePresets(serializePresets([{...p,mode:'meeting',tasks:{smooth:{profileId:'old-chat',model:'old-chat-model'},correction:{profileId:'groq1',model:'whisper-large-v3',fallback:{profileId:'soniox1',model:'stt-async-v6'},apiKey:'never-save'},summary:{profileId:'chat',model:'summary-model'}}}]))[0].tasks;
+assert.equal(audioTasks.correction.model,'whisper-large-v3');assert.equal(audioTasks.correction.fallback.model,'stt-async-v6');assert.equal(audioTasks.smooth.model,'old-chat-model');assert(!('apiKey' in audioTasks.correction));
+assert.equal(parsePresets(serializePresets([{...p,tasks:{smooth:{profileId:'old-chat',model:'old-chat-model'}}}]))[0].tasks.correction,undefined);
+console.log('PASS audio correction task: independent model/backup roundtrip, legacy text task never becomes audio correction, no keys persisted');
+const launch=realtimeAssignments({...audioTasks,transcription:{profileId:'speech',model:'stt-rt-v6',fallback:{profileId:'backup',model:'stt-rt-v6'}},caption:p.tasks.caption});
+assert.deepEqual(Object.keys(launch),['transcription','caption']);assert.equal(launch.correction,undefined);assert.equal(launch.summary,undefined);assert.equal(launch.smooth,undefined);launch.transcription.fallback.model='edited';assert.equal(audioTasks.correction.model,'whisper-large-v3');assert.equal(launch.caption.model,p.tasks.caption.model);launch.caption.model='another';assert.equal(p.tasks.caption.model,'whisper-large-v3-turbo');
+console.log('PASS realtime-only assignments: legacy post-session tasks stay readable but never enter launch copies; copies are detached');
