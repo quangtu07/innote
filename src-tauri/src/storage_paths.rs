@@ -47,7 +47,10 @@ pub struct ValidatedRoot {
 
 pub fn load_registry(private_root: &Path) -> Result<StorageRegistry> {
     let path = private_root.join("meeting-storage.json");
-    if !path.exists() {
+    if !path
+        .try_exists()
+        .context("Không kiểm tra được cấu hình nơi lưu cuộc họp")?
+    {
         return Ok(StorageRegistry::default());
     }
     let registry: StorageRegistry = serde_json::from_slice(&std::fs::read(path)?)
@@ -187,15 +190,15 @@ pub fn open_or_create_library(root: &ValidatedRoot) -> Result<LibraryRef> {
     reject_reparse(&internal)?;
     let _lease = acquire_library_writer(&root.path)?;
     let marker = internal.join("library.json");
-    if marker.exists() {
+    if marker.try_exists()? {
         reject_reparse(&marker)?;
     }
-    let metadata: LibraryMarker = if marker.exists() {
+    let metadata: LibraryMarker = if marker.try_exists()? {
         serde_json::from_slice(&std::fs::read(&marker)?)
             .context("Không đọc được nhận diện thư viện; không tạo đè")?
     } else {
         anyhow::ensure!(
-            !internal.join("meetings.sqlite").exists(),
+            !internal.join("meetings.sqlite").try_exists()?,
             "Thư viện thiếu nhận diện; cần phục hồi, không tạo đè"
         );
         let metadata = LibraryMarker {
@@ -397,6 +400,46 @@ mod tests {
         assert_eq!(first, f.library("a"));
         assert!(!f.root("a/.innote/meetings.sqlite").exists());
         assert!(!f.root("a/ai-profiles.json").exists());
+    }
+    #[test]
+    fn unreadable_registry_does_not_become_empty_default() {
+        let f = Fixture::new();
+        // A directory at the registry filename is an I/O error, not a missing registry.
+        let path = f.root("private/meeting-storage.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), b"recovery evidence").unwrap();
+        assert!(load_registry(&f.root("private")).is_err());
+        assert!(save_registry(&f.root("private"), &StorageRegistry::default()).is_err());
+        assert_eq!(
+            std::fs::read(path.join("keep")).unwrap(),
+            b"recovery evidence"
+        );
+    }
+    #[test]
+    fn rejected_long_root_creates_no_probe_or_library() {
+        let f = Fixture::new();
+        let path = f.root("a").join("x".repeat(120));
+        std::fs::create_dir(&path).unwrap();
+        assert!(validate_library_root(&path, &f.root("private"), &f.root("runtime")).is_err());
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+    }
+    #[test]
+    fn unicode_root_preserves_name_and_does_not_copy_private_files() {
+        let f = Fixture::new();
+        let name = "Họp khách hàng 中文";
+        std::fs::create_dir(f.root(name)).unwrap();
+        std::fs::write(f.root("private/ai-profiles.json"), b"PRIVATE SENTINEL").unwrap();
+        let library = f.library(name);
+        assert_eq!(
+            library.root.file_name().unwrap(),
+            std::ffi::OsStr::new(name)
+        );
+        assert!(!library.root.join("ai-profiles.json").exists());
+        assert_eq!(
+            std::fs::read(f.root("private/ai-profiles.json")).unwrap(),
+            b"PRIVATE SENTINEL"
+        );
+        assert_eq!(std::fs::read_dir(library.root).unwrap().count(), 1);
     }
     #[test]
     fn writer_lease_is_exclusive_and_released() {

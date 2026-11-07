@@ -35,3 +35,31 @@ Chưa chạy UI/native app/ghi âm thật cho tính năng mới vì chưa nối 
 - Task 6: thử Windows thực tế, audio hệ thống/ổ khác, disk failures và tương thích dữ liệu cũ.
 
 Chưa build installer, chưa release/push. Test dùng thư mục tạm riêng; không thao tác di chuyển dữ liệu khách.
+
+## Rà soát lại theo yêu cầu người dùng
+
+Ngày 07/11/2026, sau checkpoint 1. **Kết luận: chưa đủ điều kiện nghiệm thu tính năng lưu trữ mới.**
+
+| Yêu cầu | Bằng chứng hiện tại | Kết luận |
+|---|---|---|
+| Một thư mục chung đổi trong Cài đặt | App.svelte vẫn hiển thị data.data_dir và gọi open_folder; chưa có storage commands | Chưa có luồng UI |
+| Cuộc họp mới thực sự thu tại nơi đã chọn | May.root, storage::save/load/session_dir vẫn dùng root cũ; storage_paths chỉ được khai báo module | Chưa tích hợp |
+| Cuộc họp cũ nguyên vị trí, vẫn đọc được cùng thư viện mới | Adapter/router hợp nhất chưa có; tests cũ vẫn qua | Chưa chứng minh luồng A→B + legacy |
+| Folder theo tên cuộc họp, đổi tên an toàn | storage::session_dir vẫn sessions/UUID | Chưa triển khai |
+| Các bản gốc/dịch/hiệu chỉnh và JSON/MD cho agent | BundlePublisher chưa có | Chưa triển khai |
+| API key tách khỏi cuộc họp mới | Lớp nền không copy private file (test sentinel qua); recording chưa đổi nơi lưu | Chỉ xác minh lớp nền, chưa đạt end-to-end |
+| Media scope giới hạn ở audio hợp lệ | tauri.conf.json vẫn còn scope ** | Chưa harden; phải xử lý trước nghiệm thu |
+| Mất ổ/đầy ổ/restart giữa phiên | Validation thiếu root đã test; luồng capture/router mới chưa có | Chưa test được toàn phiên |
+
+Bổ sung ba test: lỗi đọc registry không thành default rỗng, root quá dài không tạo file probe/thư viện, đường dẫn Unicode không copy private file. Đổi kiểm tra tồn tại registry/marker/DB sang try_exists để truyền lỗi I/O thay vì coi mọi lỗi metadata là không tồn tại.
+
+Kết quả lần rà soát:
+
+- Full Rust: **132 passed; 0 failed; 0 ignored** (14 test storage).
+- `npm run check`: 0 errors, 0 warnings.
+- `npm run build`: PASS; đây là frontend build, không phải build/test NSIS.
+- `node scripts/workflow-presets-check.mjs`: PASS; persistence/rollback/mẫu và cấu hình hiệu chỉnh.
+- `node scripts/caption-presentation-check.mjs`: PASS; ghép song ngữ/trạng thái bản gốc-bản dịch.
+- `git diff --check`: PASS.
+
+Không gọi các kết quả trên là kiểm thử UI tương tác hay ghi âm thật cho storage mới. Chưa có màn hình/command storage để test theo hành vi người dùng; không chạy phiên API cloud hoặc ghi dữ liệu thật chỉ để minh họa cho chức năng chưa tích hợp. Cần hoàn thành Tasks 2–6 và thử trên Windows trước khi kết luận đúng toàn bộ yêu cầu.
