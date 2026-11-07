@@ -23,6 +23,7 @@ mod session_logic;
 mod soniox;
 mod speech_quality;
 mod storage;
+mod storage_paths;
 mod types;
 
 use anyhow::{Context, Result};
