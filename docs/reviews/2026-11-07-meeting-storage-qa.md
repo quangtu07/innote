@@ -47,6 +47,8 @@ Các script `meeting-storage-{native,cloud,groq,offline,packaged}-check.cjs` tro
 
 Bằng chứng tại `test-results/meeting-storage-native/{native,cloud,groq,offline,packaged}-results.json`; ảnh UI tại đó và `test-results/meeting-storage-ui-focused-final/`. Không stage audio/bằng chứng/API key để push.
 
+Build test cuối: `src-tauri/target/release/bundle/nsis/Innote_0.8.8_x64-setup.exe`, **79,341,427 bytes**, SHA256 `75b608bf22d452f9f6bc4c316d793efe469491457995ebdfb94eb68ad922d9a9`. Production smoke cuối đã xác nhận thêm ghi mới và rename sau stop trên đúng executable/resources này. Probe asset cuối dùng `meeting-storage.json` **đang tồn tại** trong private fixture (không lấy 404 của key file đã dọn làm bằng chứng bảo vệ).
+
 App người dùng đã cài giữ nguyên và không bị dừng/thay thế. Để thử API thật đã dùng một bản sao profile mã hóa nhẹ trong **private fixture**, không trong library; hash khớp source khi dọn, bản sao credential đã xóa. Source profile thực không được ghi bởi script. Không in API key ra output kiểm thử.
 
 ### Điều chỉnh thiết kế và giới hạn kiểm thử
