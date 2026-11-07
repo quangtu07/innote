@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');const{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+ const browser=await chromium.connectOverCDP('http://127.0.0.1:9224');const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().includes('tauri.localhost'));assert(page,'Production packaged origin required');
+ const api=(cmd,args={})=>page.evaluate(({cmd,args})=>window.__TAURI_INTERNALS__.invoke(cmd,args),{cmd,args});
+ const state=await api('snapshot');assert(state.data_dir.includes('innote-storage-native-20261107')&&!state.active_id);
+ const result=JSON.parse(fs.readFileSync('test-results/meeting-storage-native/native-results.json','utf8'));assert(state.sessions.some(s=>s.id===result.first.id)&&state.sessions.some(s=>s.id===result.second.id));
+ const info=await api('meeting_files_status',{id:result.first.id});const wav=await api('audio_path',{id:result.first.id});
+ const media=await page.evaluate(async file=>{const src=window.__TAURI_INTERNALS__.convertFileSrc(file,'asset');const audio=new Audio(src);await audio.play();const end=Date.now()+5000;while(!audio.currentTime&&Date.now()<end)await new Promise(r=>setTimeout(r,100));const x={duration:audio.duration,time:audio.currentTime};audio.pause();return x;},wav);assert(media.duration>5&&media.time>0);
+ const forbidden=await page.evaluate(async file=>{try{return(await fetch(window.__TAURI_INTERNALS__.convertFileSrc(file,'asset'))).status;}catch{return 'request_rejected';}},path.join(state.data_dir,'ai-profiles.json'));assert(forbidden==='request_rejected'||forbidden>=400);
+ const exported=await api('export_session',{id:result.first.id,format:'md',path:null,version:'original'});assert(exported.startsWith(info.path));assert(fs.existsSync(exported));
+ const mp3=path.join(info.path,'exports','QA-recording.mp3');await api('export_audio',{id:result.first.id,path:mp3});assert(fs.statSync(mp3).size>1000);
+ const speaker=state.devices.find(d=>d.kind==='system'&&d.default)||state.devices.find(d=>d.kind==='system');
+ const fresh=await api('start',{options:{title:'QA production',system:speaker.id,microphone:null,language:'en',model:'moonshine-en',transcribe:false,provider:'local',captions_enabled:false,translation_language:null}});
+ await api('edit_session',{id:fresh.id,title:'QA production đổi tên',notes:null,segmentId:null,text:null});await page.waitForTimeout(1500);await api('stop');
+ const until=Date.now()+30000;while((await api('snapshot')).active_id&&Date.now()<until)await page.waitForTimeout(100);
+ const newFiles=await api('meeting_files_status',{id:fresh.id});assert(newFiles.path.includes('QA production đổi tên'));assert(fs.existsSync(path.join(newFiles.path,'recording.wav')));
+ await page.evaluate(version=>{localStorage.setItem('may.ui_locale','vi');localStorage.setItem('innote.release-notice.v1',JSON.stringify({version,pending:null}));},require('../package.json').version);await page.reload();
+ if(await page.getByRole('button',{name:'Đã hiểu',exact:true}).isVisible().catch(()=>false))await page.getByRole('button',{name:'Đã hiểu',exact:true}).click();
+ await page.getByRole('button',{name:'Cài đặt',exact:true}).click();await page.getByRole('heading',{name:'Lưu trữ cuộc họp',exact:true}).waitFor();await page.locator('.meeting-storage').screenshot({path:'test-results/meeting-storage-native/production-storage.png'});
+ fs.writeFileSync('test-results/meeting-storage-native/packaged-results.json',JSON.stringify({origin:page.url(),restart:true,media,privateAssetStatus:forbidden,exportAtMeeting:true,mp3:true,newRecordingRenamed:true},null,2));console.log('PASS production origin, restart, cross-volume WAV, private key asset denied, text/MP3 export and new recording rename');await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});

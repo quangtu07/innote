@@ -13,6 +13,8 @@ mod llm;
 mod local_caption;
 mod local_stream_caption;
 mod meeting_groq;
+mod meeting_store;
+mod meeting_bundle;
 mod meeting_soniox;
 mod models;
 mod moonshine;
@@ -42,6 +44,7 @@ use types::*;
 #[derive(Clone)]
 struct May {
     root: PathBuf,
+    library_leases: Arc<Mutex<std::collections::HashMap<String,std::fs::File>>>,
     active: Arc<Mutex<Option<Arc<Run>>>>,
     writing: Arc<Mutex<()>>,
     downloading: Arc<AtomicBool>,
@@ -80,8 +83,27 @@ impl Run {
     }
 }
 impl May {
+    fn lock_libraries(&self) -> Result<()> {
+        let mut leases=self.library_leases.lock().unwrap();
+        let default=storage_paths::load_registry(&self.root)?.default_library_id;
+        for l in meeting_store::libraries(&self.root)? {
+            if l.root.is_dir() && !leases.contains_key(&l.id) {
+                let lease=meeting_store::validate_registered(&l).and_then(|_|storage_paths::acquire_library_writer(&l.root));
+                match lease {Ok(lease)=>{leases.insert(l.id,lease);},Err(e) if default.as_ref()==Some(&l.id)=>return Err(e),Err(_)=>{}}
+            }
+        } Ok(())
+    }
+    fn ensure_library(&self,id:&str)->Result<()> {
+        if storage_paths::load_registry(&self.root)?.default_library_id.is_none(){return Ok(());}
+        let location=meeting_store::locate(&self.root,id)?;if !location.modern{return Ok(());}
+        let library=meeting_store::libraries(&self.root)?.into_iter().find(|l|l.root.join(".innote/meetings.sqlite")==location.database).context("Không tìm thấy thư viện")?;
+        let mut leases=self.library_leases.lock().unwrap();if !leases.contains_key(&library.id){
+            meeting_store::validate_registered(&library)?;leases.insert(library.id,storage_paths::acquire_library_writer(&library.root)?);
+        } Ok(())
+    }
     fn edit(&self, id: &str, f: impl FnOnce(&mut Session)) -> Result<Session> {
         let _lock = self.writing.lock().unwrap();
+        self.ensure_library(id)?;
         let mut s = storage::load(&self.root, id)?;
         f(&mut s);
         storage::save(&self.root, &s)?;
@@ -306,6 +328,9 @@ fn remote_then_local<T>(
 }
 
 fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Result<Session> {
+    let library=meeting_store::default_library(&may.root)?;
+    may.lock_libraries()?;
+    anyhow::ensure!(storage_paths::available_bytes(&library.root)?>16*1024*1024,"Nơi lưu còn quá ít dung lượng; hãy giải phóng dung lượng hoặc chọn ổ khác");
     anyhow::ensure!(
         ["local", "soniox", "groq"].contains(&options.provider.as_str()),
         "Cách chép lời không hợp lệ"
@@ -426,8 +451,6 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         "Chọn ít nhất một nguồn âm thanh"
     );
     let id = uuid::Uuid::new_v4().to_string();
-    let dir = storage::session_dir(&may.root, &id)?;
-    std::fs::create_dir_all(&dir)?;
     let title = if options.title.trim().is_empty() {
         format!("Cuộc họp {}", chrono::Local::now().format("%d/%m • %H:%M"))
     } else {
@@ -473,7 +496,11 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
             ..SpeechInfo::default()
         }),
     };
-    storage::save(&may.root, &s)?;
+    let _writing = may.writing.lock().unwrap();
+    let location = meeting_store::create(&may.root,&s)?;
+    let dir = location.capture();
+    meeting_bundle::changed(&may.root,&id,false);
+    drop(_writing);
     let run = Arc::new(Run {
         id: id.clone(),
         epoch: audio::clock_hns(),
@@ -898,7 +925,13 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                 s.error = Some(format!("Chưa tạo được file nghe lại: {e}"));
             }
         });
-        may.active.lock().unwrap().take();
+        let mut active=may.active.lock().unwrap();
+        if storage_paths::load_registry(&may.root).ok().and_then(|r|r.default_library_id).is_some() {
+            let _writing=may.writing.lock().unwrap();
+            let _=meeting_store::rename(&may.root,&id,false);
+            meeting_bundle::changed(&may.root,&id,true);
+        }
+        active.take();drop(active);
         let _ = app.emit("session-changed", id);
     });
     Ok(s)
@@ -1371,6 +1404,8 @@ async fn correct_transcript(
     fallback: Option<config::ModelChoice>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
+    m.ensure_library(&id).map_err(err)?;
+    if m.current().is_some_and(|r|r.id==id){return Err("Hãy đợi cuộc họp hoàn tất lưu bản thu trước khi hiệu chỉnh".into());}
     let session = storage::load(&m.root, &id).map_err(err)?;
     if ["recording", "paused", "processing"].contains(&session.status.as_str()) {
         return Err(
@@ -1415,7 +1450,7 @@ async fn correct_transcript(
         jobs.insert(id.clone(), control.clone());
     }
     let operation = async {
-        let path = storage::session_dir(&m.root, &id)?.join("recording.wav");
+        let path = storage::recording_path(&m.root, &id)?;
         let first = correction::transcribe(
             &profile,
             &model,
@@ -2133,7 +2168,7 @@ fn edit_session(
     segment_id: Option<String>,
     text: Option<String>,
 ) -> std::result::Result<Session, String> {
-    may.edit(&id, |s| {
+    let result = may.edit(&id, |s| {
         if let Some(title) = title {
             if !title.trim().is_empty() {
                 s.title = title.trim().into();
@@ -2149,7 +2184,13 @@ fn edit_session(
             }
         }
     })
-    .map_err(err)
+    .map_err(err)?;
+    let defer=may.current().is_some() || !may.corrections.lock().unwrap().is_empty();
+    if storage_paths::load_registry(&may.root).map_err(err)?.default_library_id.is_some() {
+        meeting_store::rename(&may.root,&id,defer).map_err(err)?;
+        if !defer { meeting_bundle::changed(&may.root,&id,true); }
+    }
+    Ok(result)
 }
 fn export_filename(title: &str, format: &str) -> String {
     let clean: String = title
@@ -2168,7 +2209,6 @@ fn export_filename(title: &str, format: &str) -> String {
 }
 #[tauri::command]
 async fn choose_export_path(
-    app: tauri::AppHandle,
     may: State<'_, May>,
     id: String,
     format: String,
@@ -2180,7 +2220,7 @@ async fn choose_export_path(
         "srt" => ("Phụ đề SRT", "srt"),
         _ => return Err("Định dạng xuất không hợp lệ".into()),
     };
-    let folder = app.path().download_dir().map_err(err)?.join("Innote");
+    let folder = storage::meeting_folder(&may.root,&id).map_err(err)?.join("exports");
     let name = export_filename(&s.title, extension);
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>> {
         std::fs::create_dir_all(&folder)?;
@@ -2197,7 +2237,6 @@ async fn choose_export_path(
 }
 #[tauri::command]
 fn export_session(
-    app: tauri::AppHandle,
     may: State<May>,
     id: String,
     format: String,
@@ -2214,16 +2253,17 @@ fn export_session(
             .to_string_lossy()
             .into());
     }
-    let folder = app.path().download_dir().map_err(err)?.join("Innote");
+    let folder = storage::meeting_folder(&may.root,&id).map_err(err)?.join("exports");
     Ok(storage::export_to_version(&folder, &s, &format, version)
         .map_err(err)?
         .to_string_lossy()
         .into())
 }
 #[tauri::command]
-fn open_exports_folder(app: tauri::AppHandle) -> std::result::Result<(), String> {
-    let folder = app.path().download_dir().map_err(err)?.join("Innote");
-    std::fs::create_dir_all(&folder).map_err(err)?;
+fn open_exports_folder(path:String) -> std::result::Result<(), String> {
+    let file=PathBuf::from(path);
+    if !file.is_absolute() || !file.is_file(){return Err("Không tìm thấy tệp đã xuất".into());}
+    let folder=file.parent().ok_or("Không tìm thấy thư mục xuất")?;
     Command::new("explorer.exe")
         .arg(folder)
         .spawn()
@@ -2243,11 +2283,11 @@ fn open_author_link(kind: String) -> std::result::Result<(), String> {
     Ok(())
 }
 #[tauri::command]
-fn audio_path(may: State<May>, id: String) -> std::result::Result<String, String> {
-    let p = storage::session_dir(&may.root, &id)
-        .map_err(err)?
-        .join("recording.wav");
+fn audio_path(app: tauri::AppHandle, may: State<May>, id: String) -> std::result::Result<String, String> {
+    let p = storage::recording_path(&may.root, &id).map_err(err)?;
     if p.exists() {
+        storage_paths::reject_reparse(&p).map_err(err)?;
+        app.asset_protocol_scope().allow_file(&p).map_err(err)?;
         Ok(p.to_string_lossy().into())
     } else {
         Err("Bản thu chưa được hoàn tất".into())
@@ -2255,13 +2295,90 @@ fn audio_path(may: State<May>, id: String) -> std::result::Result<String, String
 }
 
 #[tauri::command]
+fn meeting_storage_status(may: State<May>) -> std::result::Result<serde_json::Value,String> {
+    let registry=storage_paths::load_registry(&may.root).map_err(err)?;
+    let default=registry.libraries.iter().find(|l|Some(&l.id)==registry.default_library_id.as_ref());
+    let mut issues=Vec::new();
+    for l in &registry.libraries {
+        if !l.root.is_dir() { issues.push(format!("Ổ lưu chưa kết nối: {}",l.root.display())); }
+        else if meeting_store::validate_registered(l).is_err() { issues.push(format!("Thư mục không khớp thư viện đã đăng ký: {}",l.root.display())); }
+        else if l.root.join(".innote/meetings.sqlite").exists() {
+            let readable=meeting_store::connection(&l.root.join(".innote/meetings.sqlite")).and_then(|c|Ok(c.query_row("SELECT COUNT(*) FROM sessions",[],|r|r.get::<_,i64>(0))?));
+            if readable.is_err() { issues.push(format!("Chưa đọc được thư viện: {}",l.root.display())); }
+        }
+    }
+    let free=default.and_then(|l|storage_paths::available_bytes(&l.root).ok());
+    Ok(serde_json::json!({"path":default.map(|l|l.root.to_string_lossy()),"ready":default.map_or(false,|l|l.root.is_dir()),"available_bytes":free,"issues":issues,"private_path":may.root,"legacy_retained":true}))
+}
+#[tauri::command]
+async fn choose_meetings_directory(app:tauri::AppHandle)->std::result::Result<Option<String>,String> {
+    let suggested=app.path().document_dir().map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move ||rfd::FileDialog::new().set_title("Chọn thư mục lưu cuộc họp mới").set_directory(suggested).pick_folder().map(|p|p.to_string_lossy().into_owned())).await.map_err(err)
+}
+#[tauri::command]
+fn set_meetings_directory(app:tauri::AppHandle,may:State<May>,path:String)->std::result::Result<(),String> {
+    let active=may.active.lock().unwrap();
+    let corrections=may.corrections.lock().unwrap();
+    if !(active.is_none()&&corrections.is_empty()&&may.caption_done.load(Ordering::Acquire)) {return Err("Hãy kết thúc phiên/hiệu chỉnh/phụ đề trước khi đổi nơi lưu".into());}
+    let _writing=may.writing.lock().unwrap();
+    let runtime=app.path().resource_dir().map_err(err)?;
+    let valid=storage_paths::validate_library_root(std::path::Path::new(&path),&may.root,&runtime).map_err(err)?;
+    let mut registry=storage_paths::load_registry(&may.root).map_err(err)?;
+    let canonical=std::fs::canonicalize(&path).map_err(err)?;
+    if let Ok(bytes)=std::fs::read(canonical.join(".innote/library.json")) {
+        if let Ok(marker)=serde_json::from_slice::<serde_json::Value>(&bytes) {
+            if let Some(id)=marker["library_id"].as_str() {
+                if registry.libraries.iter().any(|old|old.id==id && old.root!=canonical && !old.root.exists()) {
+                    may.library_leases.lock().unwrap().remove(id);
+                }
+            }
+        }
+    }
+    let l=if let Some(existing)=registry.libraries.iter().find(|l|l.root==canonical) {existing.clone()} else {storage_paths::open_or_create_library(&valid).map_err(err)?};
+    registry.select(l.clone()).map_err(err)?;
+    let mut leases=may.library_leases.lock().unwrap();
+    let new_lease=if !leases.contains_key(&l.id) {Some(storage_paths::acquire_library_writer(&l.root).map_err(err)?)} else {None};
+    storage_paths::save_registry(&may.root,&registry).map_err(err)?;
+    if let Some(lease)=new_lease {leases.insert(l.id,lease);}
+    Ok(())
+}
+#[tauri::command]
+fn open_meetings_directory(may:State<May>)->std::result::Result<(),String> {
+    let l=meeting_store::default_library(&may.root).map_err(err)?;
+    storage_paths::reject_reparse(&l.root).map_err(err)?;
+    Command::new("explorer.exe").arg(l.root).spawn().map_err(err)?; Ok(())
+}
+#[tauri::command]
+fn open_meeting_directory(may:State<May>,id:String)->std::result::Result<(),String> {
+    let folder=storage::meeting_folder(&may.root,&id).map_err(err)?;
+    storage_paths::reject_reparse(&folder).map_err(err)?;
+    Command::new("explorer.exe").arg(folder).spawn().map_err(err)?; Ok(())
+}
+#[tauri::command]
+fn meeting_files_status(may:State<May>,id:String)->std::result::Result<serde_json::Value,String> {
+    let l=meeting_store::locate(&may.root,&id).map_err(err)?;
+    let (revision,published,error)=if l.modern {meeting_store::revision(&l,&id).map_err(err)?} else {(0,0,None)};
+    let rename_pending=if l.modern {meeting_store::connection(&l.database).map_err(err)?.query_row::<Option<String>,_,_>("SELECT pending_folder_name FROM session_paths WHERE session_id=?1",[&id],|r|r.get(0)).map_err(err)?.is_some()} else {false};
+    Ok(serde_json::json!({"path":l.folder,"legacy":!l.modern,"revision":revision,"published_revision":published,"error":error,"rename_pending":rename_pending}))
+}
+#[tauri::command]
+fn retry_meeting_bundle(may:State<May>,id:String)->std::result::Result<(),String> {may.ensure_library(&id).map_err(err)?;meeting_bundle::publish(&may.root,&id).map_err(err)}
+#[tauri::command]
+fn rescan_meeting_libraries(may:State<May>)->std::result::Result<usize,String> {
+    let active=may.active.lock().unwrap();let jobs=may.corrections.lock().unwrap();
+    if active.is_some()||!jobs.is_empty(){return Err("Hãy đợi phiên và hiệu chỉnh kết thúc trước khi quét thư viện".into());}
+    let _writing=may.writing.lock().unwrap();
+    for s in storage::list(&may.root).map_err(err)? {may.ensure_library(&s.id).map_err(err)?;}
+    meeting_store::rescan(&may.root).map_err(err)
+}
+
+#[tauri::command]
 async fn choose_audio_export_path(
-    app: tauri::AppHandle,
     may: State<'_, May>,
     id: String,
 ) -> std::result::Result<Option<String>, String> {
     let s = storage::load(&may.root, &id).map_err(err)?;
-    let folder = app.path().download_dir().map_err(err)?.join("Innote");
+    let folder = storage::meeting_folder(&may.root,&id).map_err(err)?.join("exports");
     let name = export_filename(&s.title, "mp3");
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>> {
         std::fs::create_dir_all(&folder)?;
@@ -2283,9 +2400,7 @@ async fn export_audio(
     id: String,
     path: String,
 ) -> std::result::Result<String, String> {
-    let source = storage::session_dir(&may.root, &id)
-        .map_err(err)?
-        .join("recording.wav");
+    let source = storage::recording_path(&may.root, &id).map_err(err)?;
     if !source.exists() {
         return Err("Bản thu chưa được hoàn tất".into());
     }
@@ -2317,14 +2432,18 @@ fn delete_session(may: State<May>, id: String) -> std::result::Result<(), String
         return Err("Không thể xóa phiên đang chạy".into());
     }
     let _lock = may.writing.lock().unwrap();
-    let dir = storage::session_dir(&may.root, &id).map_err(err)?;
+    may.ensure_library(&id).map_err(err)?;
+    let dir = storage::meeting_folder(&may.root, &id).map_err(err)?;
     if dir.exists() {
+        storage_paths::reject_reparse(&dir).map_err(err)?;
         std::fs::remove_dir_all(dir).map_err(err)?;
     }
-    storage::db(&may.root)
-        .map_err(err)?
-        .execute("DELETE FROM sessions WHERE id=?1", [id])
-        .map_err(err)?;
+    let modern = storage_paths::load_registry(&may.root).map_err(err)?.default_library_id.is_some();
+    let db = if modern { meeting_store::connection(&meeting_store::locate(&may.root,&id).map_err(err)?.database) } else { storage::db(&may.root) };
+    let mut db=db.map_err(err)?;let tx=db.transaction().map_err(err)?;
+    tx.execute("DELETE FROM sessions WHERE id=?1", [&id]).map_err(err)?;
+    if modern && meeting_store::locate(&may.root,&id).map(|l|l.modern).unwrap_or(false){tx.execute("DELETE FROM session_paths WHERE session_id=?1",[&id]).map_err(err)?;}
+    tx.commit().map_err(err)?;
     Ok(())
 }
 #[tauri::command]
@@ -2409,8 +2528,10 @@ async fn test_audio(
     }
     let m = may.inner().clone();
     let id = uuid::Uuid::new_v4().to_string();
-    let dir = storage::session_dir(&m.root, &id).map_err(err)?;
+    let library = meeting_store::default_library(&m.root).map_err(err)?;
+    let dir = library.root.join(".innote/audio-tests").join(&id);
     std::fs::create_dir_all(&dir).map_err(err)?;
+    app.asset_protocol_scope().allow_file(dir.join("recording.wav")).map_err(err)?;
     let run = Arc::new(Run {
         id: id.clone(),
         epoch: audio::clock_hns(),
@@ -2577,6 +2698,7 @@ mod controller_tests {
     fn may(root: PathBuf) -> May {
         May {
             root,
+            library_leases: Arc::new(Mutex::new(std::collections::HashMap::new())),
             active: Arc::new(Mutex::new(None)),
             writing: Arc::new(Mutex::new(())),
             downloading: Arc::new(AtomicBool::new(false)),
@@ -3037,9 +3159,6 @@ fn main() {
             return;
         }
     };
-    if let Err(e) = storage::recover(&root) {
-        eprintln!("Recovery: {e:#}");
-    }
     let available = std::thread::spawn(audio::devices)
         .join()
         .ok()
@@ -3047,6 +3166,7 @@ fn main() {
         .unwrap_or_default();
     let may = May {
         root,
+        library_leases: Arc::new(Mutex::new(std::collections::HashMap::new())),
         active: Arc::new(Mutex::new(None)),
         writing: Arc::new(Mutex::new(())),
         downloading: Arc::new(AtomicBool::new(false)),
@@ -3059,6 +3179,22 @@ fn main() {
         verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
         corrections: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
+    match may.lock_libraries() {
+        Ok(()) => {if let Err(e)=storage::recover_where(&may.root,|id|may.ensure_library(id).is_ok()) {eprintln!("Recovery: {e:#}");}}
+        Err(_) => eprintln!("Một thư viện đang bận; bỏ qua recovery để giữ nguyên dữ liệu"),
+    }
+    if let Ok(sessions)=storage::list(&may.root) {
+        for s in sessions {
+            if may.ensure_library(&s.id).is_err(){continue;}
+            if let Ok(l)=meeting_store::locate(&may.root,&s.id) {
+                if l.modern {
+                    let pending=meeting_store::connection(&l.database).and_then(|c|Ok(c.query_row::<Option<String>,_,_>("SELECT pending_folder_name FROM session_paths WHERE session_id=?1",[&s.id],|r|r.get(0))?));
+                    if matches!(pending,Ok(Some(_))){let _=meeting_store::rename(&may.root,&s.id,false);}
+                    if meeting_store::revision(&l,&s.id).is_ok_and(|(r,p,e)|r>p||e.is_some()){meeting_bundle::changed(&may.root,&s.id,false);}
+                }
+            }
+        }
+    }
     // Restore previously saved API keys so in-app updates / restarts do not
     // require the user to re-enter or reconnect them.
     {
@@ -3076,6 +3212,7 @@ fn main() {
         .manage(may)
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            meeting_storage_status, choose_meetings_directory, set_meetings_directory, open_meetings_directory, open_meeting_directory, meeting_files_status, retry_meeting_bundle, rescan_meeting_libraries,
             report_live_paint,
             set_soniox_key,
             test_soniox_connection,

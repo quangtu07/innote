@@ -7,6 +7,7 @@
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import type { Segment } from "./types";
   import Logo from "./Logo.svelte";
+  import MeetingStorage from "./MeetingStorage.svelte";
   import SpeechQualityControl from "./SpeechQualityControl.svelte";
   import WhatsNewDialog from "./WhatsNewDialog.svelte";
   import {SPEECH_LEVELS_KEY,parseProcessingLevels,qualityKey,qualitySupported,type SpeechQuality} from "./lib/speech-quality";
@@ -2621,24 +2622,7 @@
               {updateChecking ? tr.updateChecking : tr.checkUpdates}
             </button>
           </div>
-          <div class="settings-section">
-            <h2>{tr.dataTitle}</h2>
-            <p>{tr.dataDesc}</p>
-            <div class="folder-path">
-              {data.data_dir || tr.dataFolderFallback}
-            </div>
-            <button
-              class="button secondary"
-              disabled={!desktop}
-              onclick={() =>
-                action(async () => {
-                  await invoke("open_folder");
-                })}><FolderOpen size={17} /> {tr.openDataFolder}</button
-            >
-            <p class="fine-print">
-              {fill(tr.finePrint, { version: appVersion })}
-            </p>
-          </div>
+          <MeetingStorage mode="settings" {desktop}/>
                   </section>
       {:else if page === "caption"}
         <section class="caption-page">
@@ -2863,6 +2847,7 @@
             </div>
           </div>
 
+          {#if meeting}<MeetingStorage mode="meeting" id={meeting.id} {desktop}/>{:else}<MeetingStorage mode="hint" {desktop} openSettings={()=>page="settings"}/>{/if}
           {#if active && selected === active.id && recording}<div class="meeting-caption-controls">
             <CaptionWindowToggle />
             <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" checked={meetingTranslate} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} disabled={busy || !active.speech || active.speech.local_fallback || active.provider === "groq"} /> Dịch sang</label>
@@ -3631,7 +3616,7 @@
                   title={lastExport}
                   onclick={() =>
                     action(async () => {
-                      await invoke("open_exports_folder");
+                      await invoke("open_exports_folder",{path:lastExport});
                     })}><FolderOpen size={15} /> {tr.openExportFolder}</button
                 >{/if}
             </div>

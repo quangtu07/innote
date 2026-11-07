@@ -24,15 +24,7 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; media-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$LOCALDATA/Innote/sessions/**",
-          "$LOCALDATA/Thư ký Mây/sessions/**",
-          "$APPLOCALDATA/sessions/**",
-          "$APPLOCALDATA/**",
-          "$LOCALDATA/Innote/**",
-          "$LOCALDATA/Thư ký Mây/**",
-          "**"
-        ]
+        "scope": []
       }
     }
   },

@@ -1,6 +1,6 @@
 # Đặc tả: nơi lưu cuộc họp riêng, thư mục có tên và dữ liệu dễ đọc cho AI
 
-Ngày: 07/11/2026. Trạng thái: đề xuất để duyệt, chưa triển khai hoặc di chuyển dữ liệu thật.
+Ngày: 07/11/2026. Trạng thái: đã triển khai trên nhánh `codex/meeting-storage`, chưa phát hành. Không di chuyển dữ liệu thật. Kết quả và giới hạn trong [báo cáo kiểm thử](../reviews/2026-11-07-meeting-storage-qa.md).
 
 ## 1. Quyết định đã chốt với người dùng
 
@@ -48,7 +48,6 @@ Ví dụ người dùng chọn `D:/Innote Meetings`:
         original.srt
         translations/
           vi.md
-          vi.srt
         corrected.md
         corrected.srt
         summary.md
@@ -57,6 +56,8 @@ Ví dụ người dùng chọn `D:/Innote Meetings`:
         .innote/work/                # PCM/phần thu phục hồi/tệp làm việc
 
 Các tệp bản dịch, hiệu chỉnh, tóm tắt và WAV chỉ xuất hiện khi thực sự có dữ liệu tương ứng. Không tạo tệp rỗng làm agent hiểu nhầm đã có kết quả. MP3 chỉ tạo khi người dùng yêu cầu xuất, không tự nhân đôi WAV thành MP3.
+
+Triển khai giữ quy tắc hiện có của app: không tạo SRT bản dịch khi chưa có alignment dịch riêng. Bản dịch có Markdown và JSON với source IDs/time ranges; SRT bản gốc/hiệu chỉnh vẫn được tạo. Thêm `.innote-identity.json` chỉ có meeting/library UUID để quét lại folder đã đổi tên, kể cả trước lần công bố `meeting.json` đầu tiên.
 
 Xuất thủ công mặc định vào `exports/` của đúng cuộc họp; người dùng vẫn có thể chọn đích khác. Không tiếp tục mặc định ghi bản xuất mới vào Downloads trên ổ C. Thư mục nội bộ `.innote/` thuộc ứng dụng; để agent đọc, ưu tiên cấp quyền vào thư mục cuộc họp cụ thể và các tệp công bố, không yêu cầu đọc DB nội bộ.
 

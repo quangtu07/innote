@@ -23,26 +23,22 @@ impl Default for StorageRegistry {
         }
     }
 }
-#[derive(Clone, Debug)]
-pub enum MeetingLayout {
-    Legacy,
-    NamedV1,
-}
-#[derive(Clone, Debug)]
-pub struct SessionPaths {
-    pub meeting_dir: PathBuf,
-    pub capture_dir: PathBuf,
-    pub recording_path: PathBuf,
-}
-#[derive(Clone, Debug)]
-pub struct MeetingLocation {
-    pub library_id: Option<String>,
-    pub session_id: String,
-    pub layout: MeetingLayout,
-    pub paths: SessionPaths,
-}
 pub struct ValidatedRoot {
     path: PathBuf,
+}
+pub fn available_bytes(root: &Path) -> Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut free = 0;
+    unsafe {
+        windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            Some(&mut free),
+            None,
+            None,
+        )?;
+    }
+    Ok(free)
 }
 
 pub fn load_registry(private_root: &Path) -> Result<StorageRegistry> {
@@ -89,14 +85,30 @@ impl StorageRegistry {
         let mut next = self.clone();
         if let Some(old) = next
             .libraries
-            .iter()
+            .iter_mut()
             .find(|r| r.id == library.id || path_key(&r.root) == path_key(&library.root))
         {
+            if old.id == library.id
+                && path_key(&old.root) != path_key(&library.root)
+                && !old.root.try_exists()?
+            {
+                old.root = library.root.clone();
+            }
             anyhow::ensure!(
                 old.id == library.id && path_key(&old.root) == path_key(&library.root),
                 "Thư viện trùng ID hoặc đường dẫn; cần liên kết lại có xác nhận"
             );
         } else {
+            anyhow::ensure!(
+                !next.libraries.iter().any(|l| contains_path(
+                    &path_key(&l.root),
+                    &path_key(&library.root)
+                ) || contains_path(
+                    &path_key(&library.root),
+                    &path_key(&l.root)
+                )),
+                "Các thư viện phải ở những thư mục riêng, không nằm lồng nhau"
+            );
             next.libraries.push(library.clone());
         }
         next.default_library_id = Some(library.id);

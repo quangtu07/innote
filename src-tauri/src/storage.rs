@@ -39,6 +39,15 @@ pub fn db(root: &Path) -> Result<Connection> {
     Ok(c)
 }
 pub fn save(root: &Path, s: &Session) -> Result<()> {
+    if crate::storage_paths::load_registry(root)?.default_library_id.is_some() {
+        let location = crate::meeting_store::locate(root, &s.id)?;
+        crate::meeting_store::save(&location, s)?;
+        if location.modern {
+            let finished=!["recording", "paused", "processing", "stopping"].contains(&s.status.as_str());
+            crate::meeting_bundle::changed(root, &s.id, finished);
+        }
+        return Ok(());
+    }
     db(root)?.execute("INSERT INTO sessions(id,body) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET body=excluded.body", params![s.id, serde_json::to_string(s)?])?;
     Ok(())
 }
@@ -62,6 +71,10 @@ fn normalize_legacy_resume_text(s: &mut Session) {
 }
 pub fn load(root: &Path, id: &str) -> Result<Session> {
     ensure_id(id)?;
+    if crate::storage_paths::load_registry(root)?.default_library_id.is_some() {
+        let mut s = crate::meeting_store::load(&crate::meeting_store::locate(root,id)?, id)?;
+        drop_stale_discontinuity_warnings(&mut s); normalize_legacy_resume_text(&mut s); return Ok(s);
+    }
     let text: String = db(root)?
         .query_row("SELECT body FROM sessions WHERE id=?1", [id], |r| r.get(0))
         .context("Không tìm thấy cuộc họp")?;
@@ -71,6 +84,11 @@ pub fn load(root: &Path, id: &str) -> Result<Session> {
     Ok(s)
 }
 pub fn list(root: &Path) -> Result<Vec<Session>> {
+    if crate::storage_paths::load_registry(root)?.default_library_id.is_some() {
+        let mut out = crate::meeting_store::list(root)?;
+        for s in &mut out { drop_stale_discontinuity_warnings(s); normalize_legacy_resume_text(s); } return Ok(out);
+    }
+    if !root.join("meetings.sqlite").try_exists()? {return Ok(Vec::new());}
     let c = db(root)?;
     let mut q = c.prepare("SELECT body FROM sessions")?;
     let rows = q.query_map([], |r| r.get::<_, String>(0))?;
@@ -90,10 +108,20 @@ pub fn ensure_id(id: &str) -> Result<()> {
 }
 pub fn session_dir(root: &Path, id: &str) -> Result<PathBuf> {
     ensure_id(id)?;
+    if crate::storage_paths::load_registry(root)?.default_library_id.is_some() { return Ok(crate::meeting_store::locate(root,id)?.capture()); }
     Ok(root.join("sessions").join(id))
 }
+pub fn meeting_folder(root: &Path, id: &str) -> Result<PathBuf> {
+    if crate::storage_paths::load_registry(root)?.default_library_id.is_some() { return Ok(crate::meeting_store::locate(root,id)?.folder); }
+    session_dir(root,id)
+}
+pub fn recording_path(root: &Path, id: &str) -> Result<PathBuf> { Ok(meeting_folder(root,id)?.join("recording.wav")) }
 pub fn recover(root: &Path) -> Result<()> {
+    recover_where(root, |_|true)
+}
+pub fn recover_where(root: &Path, writable:impl Fn(&str)->bool) -> Result<()> {
     for mut s in list(root)? {
+        if !writable(&s.id){continue;}
         if ["recording", "paused", "processing", "stopping"].contains(&s.status.as_str()) {
             s.status = "interrupted".into();
             if let Ok(dir) = session_dir(root, &s.id) {

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crate::types::Device;
 use anyhow::{anyhow, Result};
 use std::{
@@ -445,7 +446,8 @@ pub fn finalize(dir: &Path, duration: f64) -> Result<()> {
     }
     w.finalize()?;
     OpenOptions::new().write(true).open(&pending)?.sync_all()?;
-    std::fs::rename(pending, dir.join("recording.wav"))?;
+    let destination = if dir.ends_with(".innote/work") { dir.parent().and_then(|p|p.parent()).context("Thiếu thư mục cuộc họp")?.join("recording.wav") } else { dir.join("recording.wav") };
+    std::fs::rename(pending, destination)?;
     Ok(())
 }
 #[cfg(test)]

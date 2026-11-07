@@ -141,6 +141,14 @@ async function setup(options = {}) {
         const qa = window.qa;
         qa.calls.push({ cmd, args });
         if (cmd === "snapshot") return structuredClone(qa.snapshot);
+        if(cmd==='meeting_storage_status')return {path:localStorage.getItem('qa.storagePath')||'C:\\Meetings',ready:true,available_bytes:100*1024**3,private_path:'C:\\Private Innote',issues:options.storageOffline?['Ổ lưu chưa kết nối: D:\\Meetings']:[]};
+        if(cmd==='choose_meetings_directory')return options.cancelStoragePicker?null:'D:\\Meetings';
+        if(cmd==='set_meetings_directory'){if(options.failStorage||qa.snapshot.active_id)throw Error('Hãy kết thúc phiên trước khi đổi nơi lưu');localStorage.setItem('qa.storagePath',args.path);return;}
+        if(cmd==='meeting_files_status'&&qa.storageReadFailed)throw Error('Ổ thư viện tạm thời chưa kết nối');
+        if(cmd==='meeting_files_status')return {path:'D:\\Meetings\\2026-11-07 - Họp',legacy:false,revision:2,published_revision:options.bundleFailed?1:2,error:options.bundleFailed?'Đã lưu trong Innote, chưa cập nhật xong tệp cuộc họp':null};
+        if(['open_meetings_directory','open_meeting_directory','retry_meeting_bundle'].includes(cmd))return;
+        if(cmd==='rescan_meeting_libraries')return 0;
+
         if (cmd === "plugin:updater|check") {
           if (!options.updateAvailable) return null;
           return {
@@ -440,6 +448,44 @@ async function check(name, options, fn) {
 }
 try {
   for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
+    await check(`Meeting storage explicit confirmation and restart ${viewport.width}`,{viewport},async p=>{
+      await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+      const panel=p.locator('.meeting-storage');await panel.scrollIntoViewIfNeeded();
+      await p.getByRole('button',{name:'Chọn thư mục',exact:true}).click();
+      await p.getByLabel('Thư mục cuộc họp đã chọn').waitFor();
+      assert.equal(await p.evaluate(()=>qa.calls.filter(x=>x.cmd==='set_meetings_directory').length),0);
+      await p.getByRole('button',{name:'Hủy',exact:true}).click();
+      assert.equal(await p.getByLabel('Thư mục cuộc họp đã chọn').count(),0);
+      await p.getByRole('button',{name:'Chọn thư mục',exact:true}).click();
+      await p.getByRole('button',{name:'Dùng cho cuộc họp mới',exact:true}).click();
+      await p.getByText('Đã đổi nơi lưu cho cuộc họp mới',{exact:true}).waitFor();
+      assert.equal(await p.evaluate(()=>localStorage.getItem('qa.storagePath')),'D:\\Meetings');
+      assert.equal(await panel.evaluate(el=>el.scrollWidth>el.clientWidth),false);
+      await panel.screenshot({path:join(output,`storage-${viewport.width}.png`)});
+      await p.reload();await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+      await p.locator('.meeting-storage .storage-destination').getByText('D:\\Meetings',{exact:true}).waitFor();
+    });
+  }
+  await check('Meeting storage picker cancellation keeps current destination',{cancelStoragePicker:true},async p=>{
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByRole('button',{name:'Chọn thư mục',exact:true}).click();
+    assert.equal(await p.getByRole('button',{name:'Dùng cho cuộc họp mới',exact:true}).count(),0);
+    assert.equal(await p.evaluate(()=>qa.calls.filter(x=>x.cmd==='set_meetings_directory').length),0);
+  });
+  await check('Meeting storage clears stale read error after library reconnects',{},async p=>{
+    await p.evaluate(()=>qa.storageReadFailed=true);await openMeeting(p,'Cuộc họp Alpha');
+    await p.getByRole('alert').filter({hasText:'Ổ thư viện tạm thời chưa kết nối'}).waitFor();
+    await p.evaluate(()=>qa.storageReadFailed=false);
+    await p.locator('.meeting-files').waitFor();
+    assert.equal(await p.getByRole('alert').filter({hasText:'Ổ thư viện tạm thời chưa kết nối'}).count(),0);
+  });
+  await check('Meeting storage failed commit preserves old destination',{failStorage:true},async p=>{
+    await p.getByRole('button',{name:'Cài đặt',exact:true}).click();await p.getByRole('button',{name:'Chọn thư mục',exact:true}).click();
+    await p.getByRole('button',{name:'Dùng cho cuộc họp mới',exact:true}).click();
+    await p.getByText('Hãy kết thúc phiên trước khi đổi nơi lưu',{exact:true}).waitFor();
+    assert.equal(await p.evaluate(()=>localStorage.getItem('qa.storagePath')),null);
+    assert.equal(await p.getByText('Đã đổi nơi lưu cho cuộc họp mới',{exact:true}).count(),0);
+  });
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
     await check(`Compact workflow layout ${viewport.width}`,{viewport,profiles:mockProfiles,naturalMeetingDefaults:true},async p=>{
       const metrics={};
       const measure=async (selector,name)=>{
@@ -648,7 +694,7 @@ try {
     await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
     await p.getByRole('heading',{name:'Ngôn ngữ giao diện',exact:true}).waitFor();
     await p.getByRole('heading',{name:'Cập nhật',exact:true}).waitFor();
-    await p.getByRole('heading',{name:'Dữ liệu của bạn',exact:true}).waitFor();
+    await p.getByRole('heading',{name:'Lưu trữ cuộc họp',exact:true}).waitFor();
     await p.getByRole('button',{name:'Mẫu cấu hình',exact:true}).click();
     await p.waitForFunction(()=>document.querySelector('.preset-page')?.scrollTop===0);
     assert.equal(await p.getByRole('tab',{name:'Cuộc họp',exact:true}).getAttribute('aria-selected'),'true');

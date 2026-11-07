@@ -33,7 +33,9 @@
 
 ## Cấu trúc file và hợp đồng dùng chung
 
-**Tiến độ 07/11/2026:** đã triển khai lớp nền Task 1, 11 test mới và full Rust 129/129 pass. Chưa nối router/UI/recording (Tasks 2–6). Xem [checkpoint kiểm thử](../../reviews/2026-11-07-meeting-storage-qa.md); không coi đây là tính năng đã dùng được trong app.
+**Tiến độ 07/11/2026:** đã triển khai Tasks 1–6, kiểm thử tích hợp Windows/API thật và NSIS build tại máy. Full Rust 138/138, full UI 140/140 pass; xem [báo cáo kiểm thử](../../reviews/2026-11-07-meeting-storage-qa.md). Không di chuyển dữ liệu thật, chưa release/push.
+
+Triển khai dùng `meeting_store::Location` và facade storage hiện có thay vì thay mọi call-site thành `MeetingStore` object; `May.root` vẫn riêng cho config/model và được router giải quyết khi đọc/ghi meeting. Đường dẫn được chốt theo UUID/index, không theo default hoặc title mới. Chi tiết điều chỉnh DTO/identity/SRT và giới hạn thử USB/full disk nằm trong QA.
 
 Tên dưới đây là API dự kiến, cần giữ nhất quán giữa các task. `Result<T>` dùng `anyhow::Result<T>`; ID là UUID string đã kiểm tra. Các type mới khai báo cùng module sở hữu, không dùng chuỗi đường dẫn frontend làm định danh cuộc họp.
 
