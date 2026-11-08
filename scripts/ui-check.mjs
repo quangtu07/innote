@@ -456,16 +456,13 @@ try {
   for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
     await check(`Meeting storage file guide explains every output ${viewport.width}`,{viewport},async p=>{
       await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
-      const library=p.locator('.meeting-storage .file-guide');await library.locator('summary').click();
-      for(const name of ['recording.wav','original.md','corrected.md / corrected.srt','meeting.json','.innote/work/','.innote-identity.json'])assert((await library.innerText()).includes(name));
-      assert((await library.innerText()).includes('meetings.sqlite'));
-      assert((await library.innerText()).includes('Bản ghi âm'));
-      assert((await library.innerText()).includes('Bản chép gốc'));
-      assert((await library.innerText()).includes('Bản hiệu chỉnh'));
-      assert.equal(await library.evaluate(el=>el.scrollWidth>el.clientWidth),false);
-      await library.screenshot({path:join(output,`meeting-file-guide-${viewport.width}.png`)});
+      const panel=p.locator('.meeting-storage');
+      assert.equal(await panel.locator('details').count(),0);
+      assert.equal(await panel.evaluate(el=>el.scrollWidth>el.clientWidth),false);
+      await panel.screenshot({path:join(output,`storage-simple-${viewport.width}.png`)});
       await openMeeting(p,'Cuộc họp Alpha');
       const meeting=p.locator('.meeting-files + .file-guide');await meeting.locator('summary').click();
+      for(const name of ['recording.wav','original.md','corrected.md / corrected.srt','meeting.json','.innote/work/','.innote-identity.json'])assert((await meeting.innerText()).includes(name));
       assert((await meeting.innerText()).includes('Sửa file bên ngoài không cập nhật ngược vào Innote'));
       assert.equal(await meeting.evaluate(el=>el.scrollWidth>el.clientWidth),false);
     });
