@@ -239,4 +239,30 @@ releaseNotes["0.8.8"]={
     ]
   }
 };
-export const previewReleaseVersion = "0.8.8";
+releaseNotes["0.8.9"]={
+  vi:{title:"Có gì mới trong Innote?",subtitle:"Cuộc họp được lưu riêng, dễ tìm và dễ chia sẻ hơn.",close:"Đóng thông báo cập nhật",done:"Đã hiểu",once:"Chỉ tự động hiện một lần cho phiên bản này.",items:[
+    {title:"Chọn nơi lưu cuộc họp",detail:"Innote tự tạo thư mục Innote Meetings trong thư mục cá nhân. Bạn có thể đổi nơi lưu tại Cài đặt, kể cả sang ổ khác; các cuộc họp cũ giữ nguyên vị trí."},
+    {title:"Mỗi cuộc họp có thư mục riêng",detail:"Tên thư mục có ngày, giờ và tên cuộc họp. Bản ghi âm, bản chép gốc, bản dịch, bản hiệu chỉnh và tóm tắt được lưu cùng nhau khi có; cấu hình và API key nằm riêng."},
+    {title:"Dễ đọc và đưa nội dung cho AI",detail:"Mở tệp ĐỌC TÔI TRƯỚC để biết từng bản dùng làm gì. Dùng Markdown để đọc hoặc chia sẻ; meeting.json dành cho phần mềm và AI phân tích, không chứa API key."},
+    {title:"Thu gọn cài đặt phụ đề khi đang ghi",detail:"Bấm lại Cài đặt phụ đề hoặc nút × Thu gọn để đóng khung. Các tùy chỉnh được giữ và cuộc họp tiếp tục ghi bình thường."},
+  ]},
+  en:{title:"What’s new in Innote?",subtitle:"Meeting files are separate, easier to find and share.",close:"Close update notes",done:"Got it",once:"Shown automatically once for this version.",items:[
+    {title:"Choose where meetings are saved",detail:"Innote creates an Innote Meetings folder in your user folder. Change the destination in Settings, including another drive; existing meetings stay where they are."},
+    {title:"One folder for each meeting",detail:"Folder names include the date, time and meeting title. Available recordings, original transcripts, translations, corrections and summaries stay together; settings and API keys stay separate."},
+    {title:"Readable files for people and AI",detail:"Open the read-me guide to identify each file. Use Markdown for reading and sharing, or meeting.json for software and AI analysis. It contains no API keys."},
+    {title:"Collapse caption settings while recording",detail:"Click Caption settings again or use the × Collapse button. Your appearance choices are preserved and meeting recording continues."},
+  ]},
+  ko:{title:"Innote의 새로운 기능",subtitle:"회의 파일을 따로 저장하고 쉽게 찾아 공유하세요.",close:"업데이트 안내 닫기",done:"확인",once:"이 버전에서 한 번만 자동으로 표시됩니다.",items:[
+    {title:"회의 저장 위치 선택",detail:"사용자 폴더에 Innote Meetings를 자동으로 만듭니다. 설정에서 다른 드라이브나 폴더로 변경할 수 있으며 기존 회의는 이동하지 않습니다."},
+    {title:"회의마다 별도 폴더",detail:"폴더 이름에 날짜, 시간과 회의 제목을 표시합니다. 생성된 녹음, 원문, 번역, 교정본과 요약을 함께 저장하며 설정과 API 키는 따로 보관합니다."},
+    {title:"사람과 AI가 읽을 수 있는 파일",detail:"안내 파일에서 각 파일의 용도를 확인하세요. Markdown은 읽기와 공유에, meeting.json은 소프트웨어와 AI 분석에 사용할 수 있습니다. API 키는 포함하지 않습니다."},
+    {title:"녹음 중 자막 설정 접기",detail:"자막 설정을 다시 누르거나 × 접기 버튼을 사용하세요. 모양 설정은 유지되며 회의 녹음도 계속됩니다."},
+  ]},
+  zh:{title:"Innote 更新了什么？",subtitle:"会议文件独立保存，更容易查找和分享。",close:"关闭更新说明",done:"知道了",once:"此版本仅自动显示一次。",items:[
+    {title:"选择会议保存位置",detail:"Innote 自动在用户文件夹中创建 Innote Meetings。可在设置中改用其他文件夹或磁盘；已有会议仍保留在原位置。"},
+    {title:"每个会议一个文件夹",detail:"文件夹名称包含日期、时间和会议标题。已生成的录音、原文、译文、校正版与摘要保存在一起；设置和 API 密钥单独保存。"},
+    {title:"方便阅读和交给 AI 分析",detail:"打开说明文件了解各文件用途。Markdown 适合阅读和分享，meeting.json 适合软件及 AI 分析，其中不含 API 密钥。"},
+    {title:"录音时可收起字幕设置",detail:"再次点击字幕设置或使用 × 收起按钮。外观设置仍会保留，会议录音继续进行。"},
+  ]},
+};
+export const previewReleaseVersion = "0.8.9";
