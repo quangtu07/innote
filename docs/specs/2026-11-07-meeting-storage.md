@@ -125,7 +125,7 @@ Phần thông tin thu gọn cho biết: cấu hình/API nằm riêng; dữ liệ
 - Sau khi kết thúc có **Mở thư mục cuộc họp**; đường dẫn đầy đủ nằm trong phần thông tin, không làm dài trang.
 - Danh sách hợp nhất, có nhãn “Nơi lưu cũ” khi cần phân biệt, không tạo bản sao cuộc họp.
 - Thiếu ổ đĩa: vẫn vào được app/Cài đặt và đọc các thư viện còn hoạt động; không giả vờ danh sách trống hoặc tạo thư viện mới thay cho thư viện mất kết nối.
-- Lần đầu dùng bản có tính năng này: yêu cầu xác nhận nơi lưu trước khi tạo cuộc họp mới; gợi ý thư mục Documents/Innote Meetings theo Windows Known Folder nhưng cho chọn ổ khác. Không mặc định ghi tiếp bản mới vào legacy AppData.
+- Khi chưa có nơi lưu đã chọn, app tự tạo và chọn `%USERPROFILE%\Innote Meetings` (lấy thư mục cá nhân qua hệ điều hành). Người dùng có thể đổi thư mục trong Cài đặt, chỉ áp dụng cho cuộc họp mới. Không tự chuyển cuộc họp cũ; không thay lựa chọn đã lưu, kể cả khi ổ đó đang offline. Nếu không tạo được mặc định, báo lỗi trong Cài đặt để người dùng chọn nơi có quyền ghi. Dùng thư mục cá nhân thay Documents vì Documents có thể được chuyển vào OneDrive.
 
 ## 7. Hỏng ổ, đầy ổ và phạm vi hỗ trợ
 

@@ -1,5 +1,7 @@
 # Đọc thư mục cuộc họp Innote
 
+Nếu chưa chọn nơi lưu, Innote tự tạo và chọn `%USERPROFILE%\Innote Meetings` (ví dụ `C:\Users\PC\Innote Meetings`). Đổi trong **Cài đặt → Lưu trữ cuộc họp → Chọn thư mục**; chỉ các cuộc họp mới dùng nơi mới. Lựa chọn được giữ khi khởi động lại, kể cả lúc ổ đĩa đó tạm mất kết nối. Các cuộc họp cũ không tự chuyển.
+
 Trong **thư viện mới**, mỗi thư mục có ngày, giờ và tên là một cuộc họp, ví dụ `2026-11-08_09-30-00 - Họp kế hoạch`. Mở **00 - ĐỌC TÔI TRƯỚC.txt** trước: hướng dẫn bằng tiếng Việt, đọc được bằng Notepad, có trạng thái **ĐÃ CÓ/CHƯA CÓ** theo file thực tế.
 
 | Tên trong thư mục cuộc họp | Đây là gì? | Dùng khi nào? |

@@ -125,6 +125,45 @@ pub fn save_registry(private_root: &Path, registry: &StorageRegistry) -> Result<
         &serde_json::to_vec_pretty(registry)?,
     )
 }
+
+/// Select a Windows Known Folder destination once; existing choices, including
+/// temporarily offline drives, must never be replaced by a startup default.
+pub fn initialize_default_library(
+    private_root: &Path,
+    home: &Path,
+    runtime_root: &Path,
+) -> Result<bool> {
+    let mut registry = load_registry(private_root)?;
+    if registry.default_library_id.is_some() {
+        return Ok(false);
+    }
+    anyhow::ensure!(
+        home.is_absolute() && home.is_dir(),
+        "Không truy cập được thư mục cá nhân của Windows; hãy chọn nơi lưu khác trong Cài đặt"
+    );
+    reject_reparse(home)?;
+    let candidate = home.canonicalize()?.join("Innote Meetings");
+    for protected in [private_root, runtime_root] {
+        let protected = protected.canonicalize()?;
+        anyhow::ensure!(
+            !contains_path(&path_key(&protected), &path_key(&candidate))
+                && !contains_path(&path_key(&candidate), &path_key(&protected)),
+            "Thư mục mặc định phải nằm riêng với cấu hình và bộ cài"
+        );
+    }
+    match std::fs::create_dir(&candidate) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            return Err(e).context("Không tạo được thư mục Innote Meetings trong thư mục cá nhân")
+        }
+    }
+    let valid = validate_library_root(&candidate, private_root, runtime_root)?;
+    let library = open_or_create_library(&valid)?;
+    registry.select(library)?;
+    save_registry(private_root, &registry)?;
+    Ok(true)
+}
 pub fn validate_library_root(
     candidate: &Path,
     private_root: &Path,
@@ -362,6 +401,88 @@ mod tests {
         assert!(read.libraries.contains(&a));
     }
     #[test]
+    fn home_default_is_created_once_without_touching_private_data() {
+        let f = Fixture::new();
+        let home = f.root("home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(f.root("private/ai-profiles.json"), b"keep credentials").unwrap();
+        assert!(initialize_default_library(&f.root("private"), &home, &f.root("runtime")).unwrap());
+        let first = load_registry(&f.root("private")).unwrap();
+        let library = &first.libraries[0];
+        assert_eq!(first.default_library_id.as_ref(), Some(&library.id));
+        assert_eq!(
+            library.root,
+            home.join("Innote Meetings").canonicalize().unwrap()
+        );
+        let registry = std::fs::read(f.root("private/meeting-storage.json")).unwrap();
+        assert!(
+            !initialize_default_library(&f.root("private"), &home, &f.root("runtime")).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(f.root("private/meeting-storage.json")).unwrap(),
+            registry
+        );
+        assert_eq!(
+            std::fs::read(f.root("private/ai-profiles.json")).unwrap(),
+            b"keep credentials"
+        );
+        assert!(!library.root.join(".innote/meetings.sqlite").exists());
+    }
+    #[test]
+    fn startup_preserves_custom_choice_even_when_its_drive_is_offline() {
+        let f = Fixture::new();
+        let library = f.library("b");
+        let mut registry = StorageRegistry::default();
+        registry.select(library).unwrap();
+        save_registry(&f.root("private"), &registry).unwrap();
+        let before = std::fs::read(f.root("private/meeting-storage.json")).unwrap();
+        std::fs::rename(f.root("b"), f.root("offline-b")).unwrap();
+        let home = f.root("home");
+        std::fs::create_dir(&home).unwrap();
+        assert!(
+            !initialize_default_library(&f.root("private"), &home, &f.root("runtime")).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(f.root("private/meeting-storage.json")).unwrap(),
+            before
+        );
+        assert!(!home.join("Innote Meetings").exists());
+    }
+    #[test]
+    fn corrupt_registry_cannot_be_reset_to_home_default() {
+        let f = Fixture::new();
+        let home = f.root("home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(f.root("private/meeting-storage.json"), b"corrupt preserve").unwrap();
+        assert!(initialize_default_library(&f.root("private"), &home, &f.root("runtime")).is_err());
+        assert!(!home.join("Innote Meetings").exists());
+        assert_eq!(
+            std::fs::read(f.root("private/meeting-storage.json")).unwrap(),
+            b"corrupt preserve"
+        );
+    }
+    #[test]
+    fn unusable_home_reports_error_without_fallback_or_overwrite() {
+        let f = Fixture::new();
+        assert!(initialize_default_library(
+            &f.root("private"),
+            &f.root("missing-home"),
+            &f.root("runtime")
+        )
+        .is_err());
+        assert!(!f.root("missing-home").exists());
+        assert!(!f.root("private/meeting-storage.json").exists());
+        let home = f.root("home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(home.join("Innote Meetings"), b"existing file").unwrap();
+        assert!(initialize_default_library(&f.root("private"), &home, &f.root("runtime")).is_err());
+        assert_eq!(
+            std::fs::read(home.join("Innote Meetings")).unwrap(),
+            b"existing file"
+        );
+        assert!(!f.root("private/meeting-storage.json").exists());
+    }
+    #[test]
     fn missing_root_does_not_create_database() {
         let f = Fixture::new();
         let missing = f.root("missing");
@@ -452,7 +573,10 @@ mod tests {
             std::fs::read(f.root("private/ai-profiles.json")).unwrap(),
             b"PRIVATE SENTINEL"
         );
-        assert!(library.root.join(crate::meeting_file_guide::LIBRARY_GUIDE).is_file());
+        assert!(library
+            .root
+            .join(crate::meeting_file_guide::LIBRARY_GUIDE)
+            .is_file());
         assert_eq!(std::fs::read_dir(library.root).unwrap().count(), 2);
     }
     #[test]

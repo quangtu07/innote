@@ -2300,6 +2300,7 @@ fn meeting_storage_status(may: State<May>) -> std::result::Result<serde_json::Va
     let registry=storage_paths::load_registry(&may.root).map_err(err)?;
     let default=registry.libraries.iter().find(|l|Some(&l.id)==registry.default_library_id.as_ref());
     let mut issues=Vec::new();
+    if registry.default_library_id.is_none(){issues.push("Chưa tạo được thư mục mặc định Innote Meetings trong thư mục cá nhân. Hãy chọn thư mục có quyền ghi.".to_owned());}
     for l in &registry.libraries {
         if !l.root.is_dir() { issues.push(format!("Ổ lưu chưa kết nối: {}",l.root.display())); }
         else if meeting_store::validate_registered(l).is_err() { issues.push(format!("Thư mục không khớp thư viện đã đăng ký: {}",l.root.display())); }
@@ -2313,7 +2314,7 @@ fn meeting_storage_status(may: State<May>) -> std::result::Result<serde_json::Va
 }
 #[tauri::command]
 async fn choose_meetings_directory(app:tauri::AppHandle)->std::result::Result<Option<String>,String> {
-    let suggested=app.path().document_dir().map_err(err)?;
+    let suggested=app.path().home_dir().map_err(err)?;
     tauri::async_runtime::spawn_blocking(move ||rfd::FileDialog::new().set_title("Chọn thư mục lưu cuộc họp mới").set_directory(suggested).pick_folder().map(|p|p.to_string_lossy().into_owned())).await.map_err(err)
 }
 #[tauri::command]
@@ -3213,6 +3214,16 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(may)
+        .setup(|app| {
+            let state=app.state::<May>();
+            let initialized=(|| -> Result<()> {
+                storage_paths::initialize_default_library(&state.root,&app.path().home_dir()?,&app.path().resource_dir()?)?;
+                state.lock_libraries()?;
+                Ok(())
+            })();
+            if initialized.is_err(){eprintln!("Chưa khởi tạo được nơi lưu mặc định; có thể chọn nơi khác trong Cài đặt");}
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             snapshot,
             meeting_storage_status, choose_meetings_directory, set_meetings_directory, open_meetings_directory, open_meeting_directory, meeting_files_status, retry_meeting_bundle, rescan_meeting_libraries,
