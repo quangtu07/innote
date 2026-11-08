@@ -37,12 +37,14 @@ API profiles, khóa cũ, xác nhận đã nhập key, model/config, tùy chọn 
 Ví dụ người dùng chọn `D:/Innote Meetings`:
 
     D:/Innote Meetings/
+      00 - HƯỚNG DẪN THƯ VIỆN INNOTE.txt
       .innote/
         library.json                 # library_id + schema_version
         meetings.sqlite              # nguồn dữ liệu chuẩn của thư viện này
         operations/                  # journal cho tạo/đổi tên, không có API key
         audio-tests/                 # kiểm tra âm thanh do app tạo, không ghi ở C
       2026-11-07_09-30-00 - Họp kế hoạch/
+        00 - ĐỌC TÔI TRƯỚC.txt        # hướng dẫn tiếng Việt + trạng thái file thực tế
         meeting.json                 # snapshot UTF-8 cho agent, có revision
         original.md
         original.srt

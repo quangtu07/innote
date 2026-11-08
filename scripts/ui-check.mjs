@@ -145,7 +145,7 @@ async function setup(options = {}) {
         if(cmd==='choose_meetings_directory')return options.cancelStoragePicker?null:'D:\\Meetings';
         if(cmd==='set_meetings_directory'){if(options.failStorage||qa.snapshot.active_id)throw Error('Hãy kết thúc phiên trước khi đổi nơi lưu');localStorage.setItem('qa.storagePath',args.path);return;}
         if(cmd==='meeting_files_status'&&qa.storageReadFailed)throw Error('Ổ thư viện tạm thời chưa kết nối');
-        if(cmd==='meeting_files_status')return {path:'D:\\Meetings\\2026-11-07 - Họp',legacy:false,revision:2,published_revision:options.bundleFailed?1:2,error:options.bundleFailed?'Đã lưu trong Innote, chưa cập nhật xong tệp cuộc họp':null};
+        if(cmd==='meeting_files_status')return {path:'D:\\Meetings\\2026-11-07 - Họp',legacy:!!options.legacyStorage,revision:2,published_revision:options.bundleFailed?1:2,error:options.bundleFailed?'Đã lưu trong Innote, chưa cập nhật xong tệp cuộc họp':null};
         if(['open_meetings_directory','open_meeting_directory','retry_meeting_bundle'].includes(cmd))return;
         if(cmd==='rescan_meeting_libraries')return 0;
 
@@ -447,6 +447,29 @@ async function check(name, options, fn) {
   }
 }
 try {
+  await check('Meeting storage legacy guide explains database and safe export',{legacyStorage:true},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');const guide=p.locator('.meeting-files + .file-guide');await guide.locator('summary').click();
+    assert((await guide.innerText()).includes('chưa phải các file Markdown riêng'));
+    assert((await guide.innerText()).includes('Không cấp quyền toàn bộ nơi lưu cũ'));
+    assert.equal(await guide.locator('table').count(),0);
+  });
+  for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
+    await check(`Meeting storage file guide explains every output ${viewport.width}`,{viewport},async p=>{
+      await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
+      const library=p.locator('.meeting-storage .file-guide');await library.locator('summary').click();
+      for(const name of ['recording.wav','original.md','corrected.md / corrected.srt','meeting.json','.innote/work/','.innote-identity.json'])assert((await library.innerText()).includes(name));
+      assert((await library.innerText()).includes('meetings.sqlite'));
+      assert((await library.innerText()).includes('Bản ghi âm'));
+      assert((await library.innerText()).includes('Bản chép gốc'));
+      assert((await library.innerText()).includes('Bản hiệu chỉnh'));
+      assert.equal(await library.evaluate(el=>el.scrollWidth>el.clientWidth),false);
+      await library.screenshot({path:join(output,`meeting-file-guide-${viewport.width}.png`)});
+      await openMeeting(p,'Cuộc họp Alpha');
+      const meeting=p.locator('.meeting-files + .file-guide');await meeting.locator('summary').click();
+      assert((await meeting.innerText()).includes('Sửa file bên ngoài không cập nhật ngược vào Innote'));
+      assert.equal(await meeting.evaluate(el=>el.scrollWidth>el.clientWidth),false);
+    });
+  }
   for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
     await check(`Meeting storage explicit confirmation and restart ${viewport.width}`,{viewport},async p=>{
       await p.getByRole('button',{name:'Cài đặt',exact:true}).click();

@@ -225,6 +225,7 @@ pub fn open_or_create_library(root: &ValidatedRoot) -> Result<LibraryRef> {
         "Phiên bản thư viện chưa được hỗ trợ"
     );
     uuid::Uuid::parse_str(&metadata.library_id)?;
+    crate::meeting_file_guide::ensure_library_guide(&root.path)?;
     Ok(LibraryRef {
         id: metadata.library_id,
         root: root.path.clone(),
@@ -451,7 +452,8 @@ mod tests {
             std::fs::read(f.root("private/ai-profiles.json")).unwrap(),
             b"PRIVATE SENTINEL"
         );
-        assert_eq!(std::fs::read_dir(library.root).unwrap().count(), 1);
+        assert!(library.root.join(crate::meeting_file_guide::LIBRARY_GUIDE).is_file());
+        assert_eq!(std::fs::read_dir(library.root).unwrap().count(), 2);
     }
     #[test]
     fn writer_lease_is_exclusive_and_released() {

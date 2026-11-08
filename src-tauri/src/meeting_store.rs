@@ -585,6 +585,11 @@ mod tests {
         assert!(l.folder.join("original.md").exists());
         assert!(l.folder.join("corrected.md").exists());
         assert!(l.folder.join("translations/en.md").exists());
+        let guide=std::fs::read_to_string(l.folder.join(crate::meeting_file_guide::MEETING_GUIDE)).unwrap();
+        for label in ["BẢN CHÉP GỐC","BẢN HIỆU CHỈNH","BẢN GHI ÂM","CÁC BẢN DỊCH","Nguồn tóm tắt: Bản gốc","[ĐÃ CÓ] corrected.md","[CHƯA CÓ] recording.wav"]{assert!(guide.contains(label),"Missing guide explanation: {label}");}
+        for secret in ["PROFILE_SENTINEL","PRIVATE_PROMPT_SENTINEL"]{assert!(!guide.contains(secret));}
+        assert!(std::fs::read_to_string(l.folder.join("original.md")).unwrap().starts_with("> BẢN CHÉP GỐC"));
+        assert!(std::fs::read_to_string(l.folder.join("corrected.md")).unwrap().starts_with("> BẢN HIỆU CHỈNH"));
         std::fs::write(l.folder.join("agent-analysis.md"), b"keep agent work").unwrap();
         let locked = std::fs::OpenOptions::new()
             .read(true)
@@ -617,6 +622,25 @@ mod tests {
         assert!(!l.folder.join("summary.md").exists());
         assert!(!l.folder.join("corrected.md").exists());
         assert!(!l.folder.join("translations/en.md").exists());
+        let guide=std::fs::read_to_string(l.folder.join(crate::meeting_file_guide::MEETING_GUIDE)).unwrap();
+        assert!(guide.contains("[CHƯA CÓ] corrected.md"));assert!(guide.contains("[CHƯA CÓ] summary.md"));
+    }
+    #[test]
+    fn empty_meeting_guide_never_claims_missing_outputs_or_creates_fake_transcript() {
+        let f=Fixture::new();f.select("a");let mut s=session("Chưa có lời nói");s.segments.clear();s.notes.clear();s.status="recording".into();
+        let l=create(&f.private,&s).unwrap();crate::meeting_bundle::publish(&f.private,&s.id).unwrap();
+        let guide=std::fs::read_to_string(l.folder.join(crate::meeting_file_guide::MEETING_GUIDE)).unwrap();
+        for name in ["original.md","original.srt","corrected.md","summary.md","notes.md","recording.wav"]{assert!(guide.contains(&format!("[CHƯA CÓ] {name}")));assert!(!l.folder.join(name).exists());}
+        assert!(guide.contains("Trạng thái trong Innote: Đang ghi"));
+        let manifest:serde_json::Value=serde_json::from_slice(&std::fs::read(l.folder.join("meeting.json")).unwrap()).unwrap();assert!(manifest["manifest"][crate::meeting_file_guide::MEETING_GUIDE].is_string());
+    }
+    #[test]
+    fn installing_missing_guide_does_not_rewrite_existing_meeting_files() {
+        let f=Fixture::new();f.select("a");let s=session("Cũ có file người dùng sửa");let l=create(&f.private,&s).unwrap();
+        std::fs::write(l.folder.join("original.md"),"Bản người dùng đã sửa riêng").unwrap();
+        crate::meeting_file_guide::ensure_meeting_guide(&l.folder,&s).unwrap();
+        assert_eq!(std::fs::read_to_string(l.folder.join("original.md")).unwrap(),"Bản người dùng đã sửa riêng");
+        assert!(l.folder.join(crate::meeting_file_guide::MEETING_GUIDE).is_file());
     }
     #[test]
     fn external_folder_rename_rescans_without_importing_agent_content() {

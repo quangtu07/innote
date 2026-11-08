@@ -15,6 +15,7 @@ mod local_stream_caption;
 mod meeting_groq;
 mod meeting_store;
 mod meeting_bundle;
+mod meeting_file_guide;
 mod meeting_soniox;
 mod models;
 mod moonshine;
@@ -3188,6 +3189,8 @@ fn main() {
             if may.ensure_library(&s.id).is_err(){continue;}
             if let Ok(l)=meeting_store::locate(&may.root,&s.id) {
                 if l.modern {
+                    if let Some(root)=l.folder.parent(){let _=meeting_file_guide::ensure_library_guide(root);}
+                    let _=meeting_file_guide::ensure_meeting_guide(&l.folder,&s);
                     let pending=meeting_store::connection(&l.database).and_then(|c|Ok(c.query_row::<Option<String>,_,_>("SELECT pending_folder_name FROM session_paths WHERE session_id=?1",[&s.id],|r|r.get(0))?));
                     if matches!(pending,Ok(Some(_))){let _=meeting_store::rename(&may.root,&s.id,false);}
                     if meeting_store::revision(&l,&s.id).is_ok_and(|(r,p,e)|r>p||e.is_some()){meeting_bundle::changed(&may.root,&s.id,false);}

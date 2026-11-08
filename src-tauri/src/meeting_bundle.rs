@@ -47,11 +47,12 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
     let s = store::load(&location, id)?;
     let result = (|| -> Result<()> {
         storage_paths::reject_reparse(&location.folder)?;
+        crate::meeting_file_guide::ensure_library_guide(location.folder.parent().ok_or_else(||anyhow::anyhow!("Thiếu thư mục thư viện"))?)?;
         let mut outputs = std::collections::BTreeMap::new();
         if !s.segments.is_empty() || !s.live.is_empty() {
             outputs.insert(
                 "original.md".to_owned(),
-                crate::storage::export_version(&s, "md", "original"),
+                format!("> BẢN CHÉP GỐC — lời nhận dạng trong phiên ghi và sửa tay đã lưu; hãy nghe audio để đối chiếu khi cần.\n\n{}",crate::storage::export_version(&s, "md", "original")),
             );
             outputs.insert(
                 "original.srt".to_owned(),
@@ -61,7 +62,7 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
         if s.corrected.is_some() {
             outputs.insert(
                 "corrected.md".into(),
-                crate::storage::export_version(&s, "md", "corrected"),
+                format!("> BẢN HIỆU CHỈNH — kết quả model nghe lại bản ghi âm; bản chép gốc được giữ riêng.\n\n{}",crate::storage::export_version(&s, "md", "corrected")),
             );
             outputs.insert(
                 "corrected.srt".into(),
@@ -71,11 +72,11 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
         if let Some(summary) = &s.summary {
             outputs.insert(
                 "summary.md".into(),
-                format!("# {}\n\n{}\n", s.title, summary.text),
+                format!("# Tóm tắt — {}\n\n{}\n", s.title, summary.text),
             );
         }
         if !s.notes.is_empty() {
-            outputs.insert("notes.md".into(), s.notes.clone());
+            outputs.insert("notes.md".into(), format!("# Ghi chú — {}\n\n{}\n",s.title,s.notes));
         }
         let langs: std::collections::BTreeSet<_> =
             s.translations.iter().map(|t| t.language.as_str()).collect();
@@ -141,6 +142,9 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
             storage_paths::atomic_write(&path, text.as_bytes())?;
             manifest.insert(name.clone(), hex::encode(Sha256::digest(text.as_bytes())));
         }
+        let guide=crate::meeting_file_guide::meeting_guide(&s,&location.folder);
+        storage_paths::atomic_write(&location.folder.join(crate::meeting_file_guide::MEETING_GUIDE),guide.as_bytes())?;
+        manifest.insert(crate::meeting_file_guide::MEETING_GUIDE.to_owned(),hex::encode(Sha256::digest(guide.as_bytes())));
         let mut value = snapshot(
             &s,
             revision,

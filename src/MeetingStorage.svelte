@@ -2,6 +2,7 @@
   import {onMount} from 'svelte';
   import {invoke} from '@tauri-apps/api/core';
   import {FolderOpen,FolderInput,RefreshCw} from '@lucide/svelte';
+  import MeetingFileGuide from './MeetingFileGuide.svelte';
   export let mode:'settings'|'meeting'|'hint'='settings';
   export let id:string|null=null;
   export let desktop=true;
@@ -45,6 +46,7 @@
   <p class="storage-meta">Chỉ áp dụng cho cuộc họp tạo từ bây giờ. Các cuộc họp đã có không bị chuyển.</p>
   <details><summary>Cấu hình và dữ liệu cũ</summary><p>Cấu hình/API key vẫn ở thư mục riêng: <span class="storage-path">{info?.private_path??''}</span>. Dữ liệu cuộc họp cũ vẫn chiếm dung lượng tại nơi cũ. Model local và bộ cài không chuyển theo cài đặt này.</p><button class="text-button" disabled={busy} on:click={()=>run(async()=>{const count=await invoke<number>('rescan_meeting_libraries');message=`Đã quét thư viện, cập nhật ${count} đường dẫn cuộc họp`;})}><RefreshCw size={16}/>Quét lại thư viện</button></details>
   {#each info?.issues??[] as issue}<p class="test-error" role="status">{issue}</p>{/each}
+  <MeetingFileGuide library={true}/>
 </section>
 {:else if mode==='hint'}
 <div class="storage-hint"><span>Lưu tại: <span title={displayPath(info?.path)}>{info?.path?displayPath(info.path):'Chưa chọn thư mục'}</span></span><button class="text-button" on:click={openSettings}>Đổi trong Cài đặt</button></div>
@@ -55,6 +57,7 @@
   <button class="text-button" disabled={busy} on:click={()=>run(async()=>{await invoke('open_meeting_directory',{id});})}><FolderOpen size={16}/>Mở thư mục</button>
   {#if !files.legacy&&files.error}<button class="text-button" disabled={busy} on:click={()=>run(async()=>{await invoke('retry_meeting_bundle',{id});})}><RefreshCw size={16}/>Thử lại</button>{/if}
 </div>
+<MeetingFileGuide legacy={!!files.legacy}/>
 {/if}
 {#if error||loadError}<p class="test-error" role="alert">{error||loadError}</p>{/if}
 {#if message}<p class="storage-success" role="status">{message}</p>{/if}
