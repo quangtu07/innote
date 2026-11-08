@@ -27,3 +27,5 @@ Rust assertions bao gồm: guide/checksum tồn tại kể cả meeting chưa c�
 Ảnh/bằng chứng: `test-results/meeting-file-guide-ui/`, `test-results/meeting-file-guide-layout/`, `test-results/meeting-storage-native/file-guide-results.json`. Ảnh element screenshot có thể bị clip bởi vùng scroll nội bộ; assertions kiểm tra cả nội dung DOM và không tràn ngang, cùng các test layout riêng.
 
 Chưa push/release hoặc nâng version. Bộ cài test 0.8.8 cùng đường dẫn được build lại; đây không phải bản cập nhật khách hàng đã phát hành ngày trước.
+
+Bộ cài test ngày 08/11: `src-tauri/target/release/bundle/nsis/Innote_0.8.8_x64-setup.exe`, **79,349,544 bytes**, SHA256 `83c21cd7fedf84a3cde3971562f414066cb2e54ec6acba7747f708537155564b`. NSIS retry đã PASS và native checker chạy lại trên exe/resources cuối cũng PASS. Lượt NSIS đầu gặp os error 32 vì exe test đang mở khi bundler còn làm việc; đã đóng riêng test app rồi build lại, không thay app người dùng.

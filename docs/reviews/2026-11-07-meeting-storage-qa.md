@@ -1,5 +1,7 @@
 # Kiểm thử lưu trữ cuộc họp riêng — 07/11/2026
 
+Bổ sung ngày 08/11: đã thêm hướng dẫn tiếng Việt cho file/folder; bộ cài test cùng đường dẫn được build lại. Hash/kết quả mới trong [QA hướng dẫn thư mục](2026-11-08-meeting-file-guide-qa.md); hash ngày 07/11 bên dưới là bản test lịch sử, không phải file hiện tại.
+
 ## Kết quả hiện tại — thay thế kết luận checkpoint bên dưới
 
 Đã tích hợp backend, UI và kiểm thử Windows trên nhánh `codex/meeting-storage`. Bản test vẫn mang version 0.8.8, chưa phát hành/updater, chưa push. Các phần “chưa triển khai” ở lịch sử bên dưới là trạng thái **trước lần hoàn thiện**, không phải kết luận hiện tại.
