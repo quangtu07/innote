@@ -2826,6 +2826,9 @@ button.caption-on {
 .preset-launch p { flex:1; font-size:12px; line-height:1.7; color:var(--muted); margin:0; }
 .session-caption-style { margin:0 0 24px; padding:20px 24px; border:1px solid #d9e5df; border-radius:14px; background:#fff; }
 .session-caption-style h3 { margin:0 0 12px; font-size:14px; }
+.session-caption-style-header { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:12px; }
+.session-caption-style-header h3 { margin:0; }
+.session-caption-style-header button { flex-shrink:0; }
 .session-caption-style .quality-hint { margin:0; }
 .meeting-caption-appearance { margin-top:24px; padding-top:24px; border-top:1px solid var(--line); }
 .meeting-caption-appearance h3 { margin:0 0 12px; font-size:14px; }
