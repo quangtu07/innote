@@ -87,6 +87,8 @@ async function setup(options = {}) {
           },
         ],
         active_id: null,
+        has_microphone: false,
+        mic_muted: false,
         data_dir: "C:\\QA\\Innote",
       },
       exports: [],
@@ -105,6 +107,8 @@ async function setup(options = {}) {
     }
     if (options.active) {
       window.qa.snapshot.active_id = ids[2];
+      window.qa.snapshot.has_microphone = true;
+      window.qa.snapshot.mic_muted = false;
       window.qa.snapshot.sessions.push({
         ...make(ids[2], "Phiên đang ghi", ""),
         status: "recording",
@@ -312,6 +316,8 @@ async function setup(options = {}) {
           if(args.options.transcribe && args.options.provider==='soniox' && !qa.snapshot.soniox_configured && !qa.profiles.some(p=>p.id===args.options.profileId&&p.provider==='soniox'))throw Error('Chưa chọn cấu hình Soniox hợp lệ');
           if (options.failStart)
             throw new Error("Không mở được thiết bị âm thanh thử nghiệm");
+          qa.snapshot.has_microphone = !!args.options.microphone;
+          qa.snapshot.mic_muted = false;
           const s = {
             ...make(ids[2], args.options.title || "Cuộc họp mới", ""),
             language: args.options.language,
@@ -344,6 +350,11 @@ async function setup(options = {}) {
             (s) => s.id === qa.snapshot.active_id,
           );
           s.status = args.paused ? "paused" : "recording";
+          return;
+        }
+        if (cmd === "set_mic_muted") {
+          if (!qa.snapshot.has_microphone) throw Error("Phiên này không thu micro của bạn");
+          qa.snapshot.mic_muted = !!args.muted;
           return;
         }
         if (cmd === "stop") {
@@ -888,6 +899,49 @@ try {
     assert.equal(await p.locator('.transcript .segment').count(),2);
     assert.deepEqual(await p.evaluate(id=>window.qa.snapshot.sessions.find(s=>s.id===id).segments,ids[2]),stored);
     await p.screenshot({path:join(output,'ended-segmented-transcript.png')});
+  });
+  await check("Microphone can be muted during a meeting without stopping capture",{active:true},async p=>{
+    await openMeeting(p,'Phiên đang ghi');
+    const mute=p.getByRole('button',{name:'Tắt mic',exact:true});
+    assert(await mute.isVisible());
+    assert(await mute.getAttribute('aria-pressed')==='false');
+    await mute.click();
+    await p.getByText('Micro đang tắt',{exact:true}).waitFor();
+    assert.equal(await p.evaluate(()=>window.qa.snapshot.mic_muted),true);
+    const call=await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='set_mic_muted').at(-1));
+    assert.equal(call.args.muted,true);
+    assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='stop'||c.cmd==='pause')),'Muting must not stop or pause the meeting');
+    assert(await p.getByRole('button',{name:'Bật mic',exact:true}).isVisible());
+    await p.screenshot({path:join(output,'meeting-mic-muted.png')});
+    await p.getByRole('button',{name:'Bật mic',exact:true}).click();
+    await p.getByText('Micro đang tắt',{exact:true}).waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>window.qa.snapshot.mic_muted),false);
+    const again=await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='set_mic_muted').at(-1));
+    assert.equal(again.args.muted,false);
+  });
+  await check("Microphone can be turned off before a meeting starts",{},async p=>{
+    const mic=p.getByLabel('Micro của bạn',{exact:true});
+    assert.equal(await mic.inputValue(),'mic');
+    await p.getByRole('button',{name:'Tắt mic',exact:true}).click();
+    assert.equal(await mic.inputValue(),'');
+    await p.getByRole('button',{name:'Bật mic',exact:true}).click();
+    assert.equal(await mic.inputValue(),'mic');
+    await p.getByRole('button',{name:'Tắt mic',exact:true}).click();
+    assert.equal(await mic.inputValue(),'');
+    assert(await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).isEnabled());
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    const options=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start').args.options);
+    assert.equal(options.microphone,null);
+    assert.equal(options.system,'speaker');
+  });
+  await check("Recording header keeps the mic mute control visible at 900x640",{active:true,viewport:{width:900,height:640}},async p=>{
+    await openMeeting(p,'Phiên đang ghi');
+    for (const name of ['Tắt mic','Tạm dừng','Kết thúc']) {
+      const box=await p.getByRole('button',{name,exact:true}).boundingBox();
+      assert(box && box.x>=0 && box.x+box.width<=900 && box.y+box.height<=640,`${name} must stay inside 900x640`);
+    }
+    assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await p.screenshot({path:join(output,'meeting-mic-mute-900x640.png')});
   });
   await check("API profile dialog contains keyboard focus and Escape restores its trigger", {viewport:{width:900,height:640}},async p=>{
     await p.getByRole('button',{name:'Cài đặt',exact:true}).click();

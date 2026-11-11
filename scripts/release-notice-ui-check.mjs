@@ -32,9 +32,13 @@ try{
   await p.getByRole('button',{name:'Đã hiểu',exact:true}).click();await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);
  });
  await check('Downgrade does not show old release notes',{state:{version:'99.0.0',pending:null}},absent);
- await check('Upgrade from 0.8.8 shows storage notes and remembers dismissal',{state:{version:'0.8.8',pending:null}},async p=>{
-  const dialog=p.getByRole('dialog');await dialog.waitFor();assert((await dialog.innerText()).includes('Innote Meetings'));
+ await check('Upgrade from 0.8.9 shows microphone notes and remembers dismissal',{state:{version:'0.8.9',pending:null}},async p=>{
+  const dialog=p.getByRole('dialog');await dialog.waitFor();const text=await dialog.innerText();assert(text.includes('Tắt micro'));assert(text.includes('v'+version));
   await p.getByRole('button',{name:'Đóng thông báo cập nhật',exact:true}).click();await absent(p);await p.reload();await p.waitForTimeout(200);await absent(p);
+ });
+ await check('Upgrade from 0.8.8 shows the current release notes',{state:{version:'0.8.8',pending:null}},async p=>{
+  const dialog=p.getByRole('dialog');await dialog.waitFor();assert((await dialog.innerText()).includes('Tắt micro'));
+  await p.getByRole('button',{name:'Đóng thông báo cập nhật',exact:true}).click();await absent(p);
  });
  await check('Development preview does not change real upgrade history',{query:'version=0.8.4&existing=1'},async p=>{
   await absent(p);const before=await p.evaluate(key=>localStorage.getItem(key),key);

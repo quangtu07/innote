@@ -622,6 +622,39 @@ main {
   gap: 8px;
   padding-top: 5px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.button.secondary.mic-runtime-toggle.muted {
+  background: #fff3f1;
+  border-color: #e7c5c1;
+  color: #9e3e36;
+}
+.mic-muted-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #9e3e36;
+  font-size: 12px;
+  font-weight: 550;
+}
+.mic-source-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 1000px) {
+  /* Keep the meeting title readable when live controls need a second row. */
+  .meeting-page.recording-active .meeting-header {
+    flex-wrap: wrap;
+  }
+  .meeting-page.recording-active .record-controls {
+    width: 100%;
+    padding-top: 0;
+  }
 }
 .processing-label {
   display: inline-flex;

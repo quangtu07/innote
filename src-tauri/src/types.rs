@@ -122,6 +122,12 @@ pub struct Snapshot {
     pub models: Vec<ModelInfo>,
     pub data_dir: String,
     pub active_id: Option<String>,
+    /// True when the current meeting captured the user's microphone at all.
+    #[serde(default)]
+    pub has_microphone: bool,
+    /// The user muted only their microphone; meeting audio keeps recording.
+    #[serde(default)]
+    pub mic_muted: bool,
     pub soniox_configured: bool,
     #[serde(default)]
     pub llm_configured: bool,

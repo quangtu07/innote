@@ -63,6 +63,9 @@ struct Run {
     epoch: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    /// Mutes only the user's microphone; meeting audio keeps capturing.
+    mic_muted: Arc<AtomicBool>,
+    has_microphone: bool,
     capture_done: AtomicBool,
     cancel: AtomicBool,
     duration: Mutex<f64>,
@@ -507,6 +510,8 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         epoch: audio::clock_hns(),
         stop: Arc::new(AtomicBool::new(false)),
         paused: Arc::new(AtomicBool::new(false)),
+        mic_muted: Arc::new(AtomicBool::new(false)),
+        has_microphone: options.microphone.is_some(),
         capture_done: AtomicBool::new(false),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
@@ -531,6 +536,11 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
             let run = run.clone();
             let path = dir.join(format!("{kind}.pcm"));
             let tx = tx.clone();
+            let mute = if kind == "microphone" {
+                run.mic_muted.clone()
+            } else {
+                Arc::new(AtomicBool::new(false))
+            };
             handles.push(std::thread::spawn(move || {
                 if let Err(e) = audio::capture_resilient(
                     &device,
@@ -539,6 +549,7 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                     run.epoch,
                     run.stop.clone(),
                     run.paused.clone(),
+                    mute,
                     tx.clone(),
                 ) {
                     let _ = tx.send(audio::AudioEvent::Error(kind.into(), format!(
@@ -1166,7 +1177,13 @@ fn report_live_paint(
 #[tauri::command]
 fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
     let may = may.inner();
-    let active_id = may.current().map(|r| r.id.clone());
+    let active = may.current();
+    let active_id = active.as_ref().map(|r| r.id.clone());
+    let has_microphone = active.as_ref().map(|r| r.has_microphone).unwrap_or(false);
+    let mic_muted = active
+        .as_ref()
+        .map(|r| r.mic_muted.load(Ordering::Acquire))
+        .unwrap_or(false);
     let mut sessions = storage::list(&may.root).map_err(err)?;
     for s in &mut sessions {
         session_logic::reconcile_visible_state(s, active_id.as_deref());
@@ -1179,12 +1196,14 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
             .values()
             .map(|job| job.progress.lock().unwrap().clone())
             .collect(),
-        translation_preview: may.current().and_then(|r| r.speech.preview()),
+        translation_preview: active.as_ref().and_then(|r| r.speech.preview()),
         sessions,
         devices: may.devices.lock().unwrap().clone(),
         models: models::list(&may.root),
         data_dir: may.root.to_string_lossy().into(),
         active_id,
+        has_microphone,
+        mic_muted,
         soniox_configured: !may.soniox_key.lock().unwrap().is_empty(),
         llm_configured: !may.llm_key.lock().unwrap().is_empty(),
     })
@@ -2120,6 +2139,18 @@ fn pause(may: State<May>, paused: bool) -> std::result::Result<(), String> {
     Ok(())
 }
 #[tauri::command]
+fn set_mic_muted(may: State<May>, muted: bool) -> std::result::Result<(), String> {
+    let r = may.current().ok_or("Không có phiên đang ghi")?;
+    if r.stop.load(Ordering::Relaxed) {
+        return Err("Phiên đã kết thúc".into());
+    }
+    if !r.has_microphone {
+        return Err("Phiên này không thu micro của bạn".into());
+    }
+    r.mic_muted.store(muted, Ordering::Release);
+    Ok(())
+}
+#[tauri::command]
 fn stop(may: State<May>) -> std::result::Result<(), String> {
     let r = may.current().ok_or("Không có phiên đang ghi")?;
     r.stop_now();
@@ -2465,6 +2496,8 @@ async fn resume_transcript(
         epoch: audio::clock_hns(),
         stop: Arc::new(AtomicBool::new(true)),
         paused: Arc::new(AtomicBool::new(false)),
+        mic_muted: Arc::new(AtomicBool::new(false)),
+        has_microphone: false,
         capture_done: AtomicBool::new(true),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(s.duration),
@@ -2539,6 +2572,8 @@ async fn test_audio(
         epoch: audio::clock_hns(),
         stop: Arc::new(AtomicBool::new(false)),
         paused: Arc::new(AtomicBool::new(false)),
+        mic_muted: Arc::new(AtomicBool::new(false)),
+        has_microphone: false,
         capture_done: AtomicBool::new(false),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
@@ -2572,6 +2607,7 @@ async fn test_audio(
                             r.epoch,
                             r.stop.clone(),
                             r.paused.clone(),
+                            Arc::new(AtomicBool::new(false)),
                             tx,
                         )
                     }));
@@ -2690,6 +2726,8 @@ mod controller_tests {
             epoch: audio::clock_hns(),
             stop: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            mic_muted: Arc::new(AtomicBool::new(false)),
+            has_microphone: false,
             capture_done: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             duration: Mutex::new(0.),
@@ -3253,6 +3291,7 @@ fn main() {
             refresh_devices,
             start,
             pause,
+            set_mic_muted,
             stop,
             cancel_processing,
             download_model,

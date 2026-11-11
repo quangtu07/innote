@@ -6,7 +6,7 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 
 ## Tính năng
 
-- Ghi đồng thời **âm thanh cuộc họp** (WASAPI loopback) và **micro**.
+- Ghi đồng thời **âm thanh cuộc họp** (WASAPI loopback) và **micro**; có thể tắt/bật micro của bạn giữa cuộc họp mà vẫn ghi âm thanh cuộc họp và phụ đề.
 - Moonshine có sẵn để chép lời local Việt/Anh; Nemotron là model tùy chọn cho Việt/Anh/Hàn/Trung xen kẽ.
 - Phụ đề lời gốc hoặc bản dịch từ âm thanh loa/tai nghe, với hộp nổi kéo/đổi kích thước và tùy chỉnh ngay tại màn hình sử dụng, lưu được trong mẫu cấu hình.
 - Lưu nhiều cấu hình API, chọn model và dự phòng cho chép lời/phụ đề. Soniox v6 dùng chung chép lời và dịch phụ đề trong cuộc họp; Groq Whisper dùng chung chép lời và phụ đề gốc theo đoạn, hoặc dùng riêng cho Chỉ phụ đề.

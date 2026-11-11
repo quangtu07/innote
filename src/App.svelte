@@ -21,6 +21,7 @@
     Search,
     Settings,
     Mic,
+    MicOff,
     Headphones,
     Circle,
     Play,
@@ -87,6 +88,8 @@
     models: [],
     data_dir: "",
     active_id: null,
+    has_microphone: false,
+    mic_muted: false,
   };
   let selected: string | null = null;
   let sidebarCollapsed=false;
@@ -108,6 +111,7 @@
   let searchText = "";
   let system = "";
   let microphone = "";
+  let lastMicDevice = "";
   let language = "vi";
   const model = "moonshine-vi";
   let localMeetingModels: Record<string,string> = {};
@@ -1157,6 +1161,32 @@
       await action(async () => {
         await invoke("pause", { paused: active!.status !== "paused" });
       });
+  }
+  async function toggleMicMute() {
+    if (!active) return;
+    await action(async () => {
+      await invoke("set_mic_muted", { muted: !data.mic_muted });
+    });
+  }
+  // Before recording starts, toggling the microphone simply selects/no longer
+  // selects a capture device. Existing dropdown choices stay untouched.
+  function toggleMicSource() {
+    if (microphone) {
+      lastMicDevice = microphone;
+      microphone = "";
+    } else {
+      const remembered = data.devices.some(
+        (d) => d.kind === "microphone" && d.id === lastMicDevice,
+      )
+        ? lastMicDevice
+        : "";
+      microphone =
+        remembered ||
+        data.devices.find((d) => d.kind === "microphone" && d.default)?.id ||
+        "";
+    }
+    clearTest();
+    markPresetCustom("meeting");
   }
   async function download(id = effectiveModel) {
     const m = data.models.find((m) => m.id === id);
@@ -2763,7 +2793,7 @@
 
         </section>
       {:else}
-        <section class="meeting-page" class:preparing={!meeting}>
+        <section class="meeting-page" class:preparing={!meeting} class:recording-active={recording}>
           <div class="meeting-header">
             <div class="title-block">
               <input
@@ -2789,7 +2819,8 @@
                     ><span></span>{states[meeting.status] ??
                       meeting.status}</span
                   ><span class="time">{clock(meeting.duration)}</span
-                  >{:else if transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)}<button class="text-button setup-recovery" onclick={()=>document.getElementById("meeting-shared-model")?.focus()}>{tr.readyTranslationModel}</button>{:else}<span>{readyMessage}</span>{/if}
+                  >{#if data.mic_muted}<span class="mic-muted-status"><MicOff size={13}/>{tr.micMutedStatus}</span>{/if}
+                  {:else if transcribe && meetingTranslate && (provider !== "soniox" || !transcriptionProfileId)}<button class="text-button setup-recovery" onclick={()=>document.getElementById("meeting-shared-model")?.focus()}>{tr.readyTranslationModel}</button>{:else}<span>{readyMessage}</span>{/if}
               </div>
             </div>
             <div class="record-controls">
@@ -2801,7 +2832,16 @@
                   onclick={() => toggleMeetingCaption()}
                   ><Captions size={17} />
                   {captionRunning ? tr.captionOn : tr.captionOff}</button
-                ><button
+                >{#if data.has_microphone}<button
+                  class="button secondary mic-runtime-toggle"
+                  class:muted={data.mic_muted}
+                  disabled={busy}
+                  title={data.mic_muted ? tr.unmuteMicTitle : tr.muteMicTitle}
+                  aria-label={data.mic_muted ? tr.unmuteMic : tr.muteMic}
+                  aria-pressed={data.mic_muted}
+                  onclick={toggleMicMute}
+                  >{#if data.mic_muted}<MicOff size={17} />{tr.unmuteMic}{:else}<Mic size={17} />{tr.muteMic}{/if}</button
+                >{/if}<button
                   class="button secondary"
                   disabled={busy}
                   onclick={togglePause}
@@ -2928,6 +2968,15 @@
                 <div class="level" title={tr.micLevel}>
                   <span style:width={`${busy ? micLevel : 0}%`}></span>
                 </div>
+                <button
+                  class="text-button mic-source-toggle"
+                  disabled={busy || !!data.active_id || !desktop}
+                  title={microphone ? tr.muteMicTitle : tr.unmuteMicTitle}
+                  aria-label={microphone ? tr.muteMic : tr.unmuteMic}
+                  aria-pressed={!microphone}
+                  onclick={toggleMicSource}
+                  >{#if microphone}<MicOff size={15} />{tr.muteMic}{:else}<Mic size={15} />{tr.unmuteMic}{/if}</button
+                >
                 <button
                   class="button secondary source-test"
                   disabled={busy ||

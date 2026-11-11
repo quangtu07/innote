@@ -265,4 +265,26 @@ releaseNotes["0.8.9"]={
     {title:"录音时可收起字幕设置",detail:"再次点击字幕设置或使用 × 收起按钮。外观设置仍会保留，会议录音继续进行。"},
   ]},
 };
-export const previewReleaseVersion = "0.8.9";
+releaseNotes["0.8.10"]={
+  vi:{title:"Có gì mới trong Innote?",subtitle:"Tắt micro của bạn, vẫn ghi trọn cuộc họp.",close:"Đóng thông báo cập nhật",done:"Đã hiểu",once:"Chỉ tự động hiện một lần cho phiên bản này.",items:[
+    {title:"Tắt micro khi đang họp",detail:"Bấm Tắt mic cạnh Phụ đề và Tạm dừng. Giọng bạn không vào bản thu và bản chép, nhưng âm thanh cuộc họp và phụ đề vẫn tiếp tục. Trạng thái Micro đang tắt hiện cạnh đồng hồ."},
+    {title:"Tắt micro trước khi bắt đầu",detail:"Nút Tắt mic cạnh tên micro giúp bỏ ghi micro ngay từ đầu; bấm Bật mic để chọn lại đúng thiết bị cũ. Cách chọn Không thu trong danh sách vẫn giữ nguyên."},
+    {title:"Bản thu không bị lệch",detail:"Khoảng tắt micro được ghi im lặng cùng độ dài, nên âm thanh cuộc họp, phụ đề và mốc thời gian sau khi bật lại vẫn khớp."},
+  ]},
+  en:{title:"What’s new in Innote?",subtitle:"Mute your microphone while the meeting keeps recording.",close:"Close update notes",done:"Got it",once:"Shown automatically once for this version.",items:[
+    {title:"Mute your mic during a meeting",detail:"Click Mute mic next to Captions and Pause. Your voice stays out of the recording and transcript while meeting audio and captions continue. A Microphone muted label appears beside the timer."},
+    {title:"Turn the mic off before starting",detail:"The Mute mic button beside the microphone name skips mic capture from the start; click Unmute mic to restore the previous device. The Do not capture choice remains available."},
+    {title:"Audio stays aligned",detail:"Muted time is written as silence of the same length, so meeting audio, captions and timestamps line up again after you unmute."},
+  ]},
+  ko:{title:"Innote의 새로운 기능",subtitle:"회의 녹음은 계속하면서 내 마이크만 끌 수 있습니다.",close:"업데이트 안내 닫기",done:"확인",once:"이 버전에서 한 번만 자동으로 표시됩니다.",items:[
+    {title:"회의 중 마이크 끄기",detail:"자막과 일시정지 옆의 마이크 끄기를 누르세요. 내 목소리는 녹음과 전사에서 빠지지만 회의 오디오와 자막은 계속됩니다. 타이머 옆에 마이크 꺼짐이 표시됩니다."},
+    {title:"시작 전에 마이크 끄기",detail:"마이크 이름 옆의 마이크 끄기 버튼으로 처음부터 마이크를 녹음하지 않습니다. 마이크 켜기를 누르면 이전 장치로 돌아갑니다. 목록의 녹음 안 함 선택도 그대로입니다."},
+    {title:"오디오 싱크 유지",detail:"마이크를 끈 구간은 같은 길이의 무음으로 기록되어 다시 켠 뒤에도 회의 오디오, 자막과 시간이 맞습니다."},
+  ]},
+  zh:{title:"Innote 更新了什么？",subtitle:"关闭你的麦克风，会议录音继续进行。",close:"关闭更新说明",done:"知道了",once:"此版本仅自动显示一次。",items:[
+    {title:"会议中关闭麦克风",detail:"点击字幕和暂停旁的关闭麦克风。你的声音不会进入录音和转写，会议音频与字幕仍会继续。计时旁会显示麦克风已关闭。"},
+    {title:"开始前关闭麦克风",detail:"麦克风名称旁的关闭麦克风按钮可从一开始就不录制麦克风；点击打开麦克风可恢复之前的设备。列表中的不录制选项仍然保留。"},
+    {title:"录音不会错位",detail:"关闭麦克风的时段以相同时长的静音写入，因此重新打开后会议音频、字幕和时间轴仍然对齐。"},
+  ]},
+};
+export const previewReleaseVersion = "0.8.10";

@@ -66,6 +66,8 @@ export interface Snapshot {
   models: Model[];
   data_dir: string;
   active_id: string | null;
+  has_microphone?: boolean;
+  mic_muted?: boolean;
   soniox_configured?: boolean;
   llm_configured?: boolean;
 }

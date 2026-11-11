@@ -131,6 +131,7 @@ pub fn capture_test(dir: &Path, seconds: f64, source: &str) -> Result<CaptureRep
                 epoch,
                 flag,
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
                 sender,
             )
         }));
@@ -195,6 +196,7 @@ pub fn capture_resilient(
     epoch: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
     tx: Sender<AudioEvent>,
 ) -> Result<()> {
     for attempt in 0..3 {
@@ -208,6 +210,7 @@ pub fn capture_resilient(
             epoch,
             stop.clone(),
             paused.clone(),
+            muted.clone(),
             tx.clone(),
         ) {
             Ok(()) => return Ok(()),
@@ -236,6 +239,7 @@ pub fn capture(
     epoch: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
     tx: Sender<AudioEvent>,
 ) -> Result<()> {
     initialize_mta().ok()?;
@@ -298,16 +302,20 @@ pub fn capture(
                         }
                     })
                     .collect();
-                let pcm: Vec<u8> = samples
-                    .iter()
-                    .flat_map(|x| ((x.clamp(-1., 1.) * 32767.) as i16).to_le_bytes())
-                    .collect();
+                // A muted source still advances the shared timeline with silence, so
+                // the other source, live captions and the saved mix stay aligned.
+                let is_muted = muted.load(Ordering::Relaxed);
+                let pcm = encode_pcm(&samples, is_muted);
                 file.write_all(&pcm)?;
                 position += samples.len();
                 if last_level.elapsed() > Duration::from_millis(100) {
-                    let rms = (samples.iter().map(|x| x * x).sum::<f32>()
-                        / samples.len().max(1) as f32)
-                        .sqrt();
+                    let rms = if is_muted {
+                        0.
+                    } else {
+                        (samples.iter().map(|x| x * x).sum::<f32>()
+                            / samples.len().max(1) as f32)
+                            .sqrt()
+                    };
                     let _ = tx.send(AudioEvent::Level(kind.into(), rms));
                     last_level = std::time::Instant::now();
                 }
@@ -319,6 +327,21 @@ pub fn capture(
     let _ = client.stop_stream();
     file.sync_data()?;
     outcome
+}
+/// PCM16 bytes for one captured packet. When the source is muted, the packet
+/// keeps its exact length but carries silence so every consumer stays aligned.
+fn encode_pcm(samples: &[f32], muted: bool) -> Vec<u8> {
+    samples
+        .iter()
+        .flat_map(|x| {
+            if muted {
+                0i16
+            } else {
+                (x.clamp(-1., 1.) * 32767.) as i16
+            }
+            .to_le_bytes()
+        })
+        .collect()
 }
 pub fn capture_frames(
     id: &str,
@@ -514,6 +537,40 @@ mod tests {
         drop(file);
         assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3, 4, 5, 6]);
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn muted_packets_keep_length_and_become_silence() {
+        let samples = [0.5_f32, -0.25, 1.2, -1.2];
+        let live = encode_pcm(&samples, false);
+        let muted = encode_pcm(&samples, true);
+        assert_eq!(live.len(), samples.len() * 2);
+        assert_eq!(muted.len(), live.len(), "Mute must not shift the timeline");
+        assert!(muted.iter().all(|byte| *byte == 0));
+        assert_ne!(live, muted);
+    }
+    #[test]
+    fn muted_microphone_packets_do_not_reach_the_saved_mix() {
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("system.pcm"),
+            [10000i16, 20000i16, 30000i16]
+                .iter()
+                .flat_map(|x| x.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("microphone.pcm"),
+            encode_pcm(&[0.9, 0.9, 0.9], true),
+        )
+        .unwrap();
+        let mixed = mix(&dir, 0., 3. / RATE as f64).unwrap();
+        assert_eq!(mixed.len(), 3);
+        for (value, expected) in mixed.iter().zip([10000., 20000., 30000.]) {
+            assert!((value - expected / 32768.).abs() < 1e-6);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn separate_channels_and_missing_tail() {
