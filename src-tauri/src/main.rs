@@ -4,6 +4,7 @@ mod caption;
 mod caption_window;
 mod config;
 mod correction;
+mod diarization;
 mod engine;
 mod fallback;
 mod groq;
@@ -25,6 +26,7 @@ mod secure;
 mod session_logic;
 mod soniox;
 mod speech_quality;
+mod speaker;
 mod storage;
 mod storage_paths;
 mod types;
@@ -57,6 +59,11 @@ struct May {
     caption_done: Arc<AtomicBool>,
     verified_ai: Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>,
     corrections: Arc<Mutex<std::collections::HashMap<String, Arc<correction::Control>>>>,
+    speaker_jobs: Arc<Mutex<std::collections::HashMap<String, Arc<SpeakerJob>>>>,
+}
+struct SpeakerJob {
+    cancel: Arc<AtomicBool>,
+    child: Arc<Mutex<Option<Child>>>,
 }
 struct Run {
     id: String,
@@ -65,7 +72,11 @@ struct Run {
     paused: Arc<AtomicBool>,
     /// Mutes only the user's microphone; meeting audio keeps capturing.
     mic_muted: Arc<AtomicBool>,
-    has_microphone: bool,
+    has_microphone: Arc<AtomicBool>,
+    system_device: Arc<Mutex<Option<String>>>,
+    microphone_device: Arc<Mutex<Option<String>>>,
+    system_reopen: Arc<AtomicBool>,
+    microphone_reopen: Arc<AtomicBool>,
     capture_done: AtomicBool,
     cancel: AtomicBool,
     duration: Mutex<f64>,
@@ -84,6 +95,12 @@ impl Run {
         *self.failure.lock().unwrap() = Some(message);
         self.stop_now();
         self.cancel.store(true, Ordering::Release);
+    }
+    fn source_device(&self, kind: &str) -> &Arc<Mutex<Option<String>>> {
+        if kind == "microphone" { &self.microphone_device } else { &self.system_device }
+    }
+    fn source_reopen(&self, kind: &str) -> &Arc<AtomicBool> {
+        if kind == "microphone" { &self.microphone_reopen } else { &self.system_reopen }
     }
 }
 impl May {
@@ -505,13 +522,19 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
     let dir = location.capture();
     meeting_bundle::changed(&may.root,&id,false);
     drop(_writing);
+    let system_device = options.system.clone();
+    let microphone_device = options.microphone.clone();
     let run = Arc::new(Run {
         id: id.clone(),
         epoch: audio::clock_hns(),
         stop: Arc::new(AtomicBool::new(false)),
         paused: Arc::new(AtomicBool::new(false)),
         mic_muted: Arc::new(AtomicBool::new(false)),
-        has_microphone: options.microphone.is_some(),
+        has_microphone: Arc::new(AtomicBool::new(microphone_device.is_some())),
+        system_device: Arc::new(Mutex::new(system_device.clone())),
+        microphone_device: Arc::new(Mutex::new(microphone_device.clone())),
+        system_reopen: Arc::new(AtomicBool::new(false)),
+        microphone_reopen: Arc::new(AtomicBool::new(false)),
         capture_done: AtomicBool::new(false),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
@@ -528,42 +551,22 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
         .store(options.captions_enabled, Ordering::Release);
     let (tx, rx) = std::sync::mpsc::channel();
     let mut handles = vec![];
-    for (kind, device) in [
-        ("system", options.system),
-        ("microphone", options.microphone),
-    ] {
-        if let Some(device) = device {
-            let run = run.clone();
-            let path = dir.join(format!("{kind}.pcm"));
-            let tx = tx.clone();
-            let mute = if kind == "microphone" {
-                run.mic_muted.clone()
-            } else {
-                Arc::new(AtomicBool::new(false))
-            };
-            handles.push(std::thread::spawn(move || {
-                if let Err(e) = audio::capture_resilient(
-                    &device,
-                    kind,
-                    &path,
-                    run.epoch,
-                    run.stop.clone(),
-                    run.paused.clone(),
-                    mute,
-                    tx.clone(),
-                ) {
-                    let _ = tx.send(audio::AudioEvent::Error(kind.into(), format!(
-                        "Nguồn âm thanh đã ngắt. Kiểm tra tai nghe/micro và chọn lại thiết bị. Chi tiết ({kind}): {e}"
-                    )));
-                }
-            }));
-        }
+    let initial_ready_needed =
+        usize::from(run.system_device.lock().unwrap().is_some())
+            + usize::from(run.microphone_device.lock().unwrap().is_some());
+    for kind in ["system", "microphone"] {
+        let run = run.clone();
+        let path = dir.join(format!("{kind}.pcm"));
+        let tx = tx.clone();
+        handles.push(std::thread::spawn(move || {
+            capture_manager(run, kind, path, tx);
+        }));
     }
     // Do not claim to record until every requested source has opened successfully.
     let mut ready = std::collections::HashSet::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     let mut startup_error = None;
-    while ready.len() < handles.len() {
+    while ready.len() < initial_ready_needed {
         if std::time::Instant::now() > deadline {
             startup_error = Some("Mở thiết bị âm thanh quá lâu".to_string());
             break;
@@ -770,10 +773,19 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
     let monitor_id = id.clone();
     let monitor_app = app.clone();
     let monitor = std::thread::spawn(move || {
-        let mut healthy = session_logic::Sources::new(ready);
         while !monitor_run.capture_done.load(Ordering::Relaxed) {
             for event in rx.try_iter() {
                 match event {
+                    audio::AudioEvent::Ready(kind) => {
+                        let _ = monitor_may.edit(&monitor_id, |s| {
+                            if s.error.as_deref().is_some_and(|e| e.contains("Nguồn âm thanh đã ngắt") || e.contains("nguồn")) {
+                                s.error = None;
+                            }
+                            if !s.warnings.iter().any(|w| w.contains(&format!("Đã kết nối lại nguồn {kind}"))) {
+                                s.warnings.push(format!("Đã kết nối lại nguồn {kind}."));
+                            }
+                        });
+                    }
                     audio::AudioEvent::Level(kind, value) => {
                         let _ = monitor_app.emit(
                             "audio-level",
@@ -787,25 +799,23 @@ fn start_recording(may: May, app: tauri::AppHandle, options: StartOptions) -> Re
                             }
                         });
                     }
-                    audio::AudioEvent::Error(kind, message) => {
-                        let all_lost = healthy.failed(&kind);
-                        if all_lost {
-                            monitor_run.stop_now();
-                        }
+                    audio::AudioEvent::DeviceChanged(kind, device, message) => {
                         let _ = monitor_may.edit(&monitor_id, |s| {
-                            s.error = Some(message);
-                            if !all_lost {
-                                s.error = s
-                                    .error
-                                    .take()
-                                    .map(|e| format!("{e}. Nguồn còn lại vẫn đang được thu."));
-                            }
-                            if all_lost {
-                                s.status = "processing".into();
+                            s.error = None;
+                            if !s.warnings.contains(&message) {
+                                s.warnings.push(message.clone());
                             }
                         });
+                        let _ = monitor_app.emit(
+                            "audio-device-changed",
+                            serde_json::json!({"kind":kind,"device":device,"message":message}),
+                        );
                     }
-                    _ => {}
+                    audio::AudioEvent::Error(_kind, message) => {
+                        let _ = monitor_may.edit(&monitor_id, |s| {
+                            s.error = Some(message);
+                        });
+                    }
                 }
             }
             if !monitor_run.stop.load(Ordering::Relaxed) {
@@ -1179,11 +1189,20 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
     let may = may.inner();
     let active = may.current();
     let active_id = active.as_ref().map(|r| r.id.clone());
-    let has_microphone = active.as_ref().map(|r| r.has_microphone).unwrap_or(false);
+    let has_microphone = active
+        .as_ref()
+        .map(|r| r.has_microphone.load(Ordering::Acquire))
+        .unwrap_or(false);
     let mic_muted = active
         .as_ref()
         .map(|r| r.mic_muted.load(Ordering::Acquire))
         .unwrap_or(false);
+    let system_device = active
+        .as_ref()
+        .and_then(|r| r.system_device.lock().unwrap().clone());
+    let microphone_device = active
+        .as_ref()
+        .and_then(|r| r.microphone_device.lock().unwrap().clone());
     let mut sessions = storage::list(&may.root).map_err(err)?;
     for s in &mut sessions {
         session_logic::reconcile_visible_state(s, active_id.as_deref());
@@ -1202,6 +1221,8 @@ fn snapshot(may: State<May>) -> std::result::Result<Snapshot, String> {
         models: models::list(&may.root),
         data_dir: may.root.to_string_lossy().into(),
         active_id,
+        system_device,
+        microphone_device,
         has_microphone,
         mic_muted,
         soniox_configured: !may.soniox_key.lock().unwrap().is_empty(),
@@ -1295,6 +1316,7 @@ async fn summarize_transcript(
     key: Option<String>,
     profile_id: Option<String>,
     fallback: Option<config::ModelChoice>,
+    with_speakers: Option<bool>,
 ) -> std::result::Result<Session, String> {
     let m = may.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Session> {
@@ -1303,25 +1325,43 @@ async fn summarize_transcript(
             !["recording", "paused", "processing"].contains(&session.status.as_str()),
             "Hãy đợi bản chép lời hoàn tất trước khi tóm tắt"
         );
+        let labels = if with_speakers.unwrap_or(false) {
+            speaker::export_labels(&m.root, &id, &source).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+        let labelled = |segments: &[crate::types::Segment]| -> String {
+            segments
+                .iter()
+                .map(|segment| {
+                    let text = segment.text.trim();
+                    match labels.get(&segment.id) {
+                        Some(label) if !text.is_empty() => format!("[{label}] {text}"),
+                        _ => text.to_string(),
+                    }
+                })
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         let (transcript, source_name) = if source == "corrected" {
             let corrected = session
                 .corrected
                 .as_ref()
                 .context("Chưa có bản hiệu chỉnh để tóm tắt")?;
-            (corrected.text.clone(), "corrected".to_string())
+            let text = if corrected.segments.is_empty() || labels.is_empty() {
+                corrected.text.clone()
+            } else {
+                labelled(&corrected.segments)
+            };
+            (text, "corrected".to_string())
         } else if source == "smoothed" {
             match session.smoothed.as_ref() {
                 Some(smoothed) => (smoothed.text.clone(), "smoothed".to_string()),
                 None => anyhow::bail!("Chưa có bản làm mịn để tóm tắt"),
             }
         } else {
-            let text = session
-                .segments
-                .iter()
-                .map(|segment| segment.text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let text = labelled(&session.segments);
             anyhow::ensure!(!text.is_empty(), "Chưa có bản chép lời để tóm tắt");
             (text, "original".to_string())
         };
@@ -2113,6 +2153,81 @@ async fn close_caption_window(app: tauri::AppHandle) -> std::result::Result<(), 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+fn capture_manager(
+    run: Arc<Run>,
+    kind: &'static str,
+    path: PathBuf,
+    tx: std::sync::mpsc::Sender<audio::AudioEvent>,
+) {
+    let mut last_error: Option<std::time::Instant> = None;
+    let mut last_probe: Option<std::time::Instant> = None;
+    while !run.stop.load(Ordering::Acquire) {
+        let device = run.source_device(kind).lock().unwrap().clone();
+        let Some(device) = device else {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            continue;
+        };
+        run.source_reopen(kind).store(false, Ordering::Release);
+        let mute = if kind == "microphone" {
+            run.mic_muted.clone()
+        } else {
+            Arc::new(AtomicBool::new(false))
+        };
+        let result = audio::capture(
+            &device,
+            kind,
+            &path,
+            run.epoch,
+            run.stop.clone(),
+            run.paused.clone(),
+            mute,
+            run.source_reopen(kind).clone(),
+            tx.clone(),
+        );
+        if run.stop.load(Ordering::Acquire) {
+            break;
+        }
+        match result {
+            Ok(()) => {
+                last_error = None;
+                last_probe = None;
+            }
+            Err(e) => {
+                let should_probe = last_probe
+                    .map(|at| at.elapsed() >= std::time::Duration::from_secs(2))
+                    .unwrap_or(true);
+                if should_probe {
+                    last_probe = Some(std::time::Instant::now());
+                    if let Some(fallback) = audio::fallback_device(kind, &device) {
+                        *run.source_device(kind).lock().unwrap() = Some(fallback.id.clone());
+                        if kind == "microphone" {
+                            run.has_microphone.store(true, Ordering::Release);
+                        }
+                        last_error = None;
+                        let label = if kind == "microphone" { "micro" } else { "loa/tai nghe" };
+                        let _ = tx.send(audio::AudioEvent::DeviceChanged(
+                            kind.into(),
+                            fallback.id,
+                            format!("Thiết bị {label} đã ngắt; Innote tự chuyển sang “{}”.", fallback.name),
+                        ));
+                        continue;
+                    }
+                }
+                let should_report = last_error
+                    .map(|at| at.elapsed() >= std::time::Duration::from_secs(5))
+                    .unwrap_or(true);
+                if should_report {
+                    let _ = tx.send(audio::AudioEvent::Error(
+                        kind.into(),
+                        format!("Nguồn âm thanh đã ngắt. Chọn lại thiết bị bên dưới để tiếp tục. Chi tiết ({kind}): {e}"),
+                    ));
+                    last_error = Some(std::time::Instant::now());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(350));
+            }
+        }
+    }
+}
 #[tauri::command]
 async fn start(
     app: tauri::AppHandle,
@@ -2144,10 +2259,435 @@ fn set_mic_muted(may: State<May>, muted: bool) -> std::result::Result<(), String
     if r.stop.load(Ordering::Relaxed) {
         return Err("Phiên đã kết thúc".into());
     }
-    if !r.has_microphone {
+    if !r.has_microphone.load(Ordering::Acquire) {
         return Err("Phiên này không thu micro của bạn".into());
     }
     r.mic_muted.store(muted, Ordering::Release);
+    Ok(())
+}
+#[tauri::command]
+fn switch_audio_device(
+    may: State<May>,
+    kind: String,
+    device: Option<String>,
+) -> std::result::Result<(), String> {
+    if !["system", "microphone"].contains(&kind.as_str()) {
+        return Err("Nguồn âm thanh không hợp lệ".into());
+    }
+    let run = may.current().ok_or("Không có phiên đang ghi")?;
+    if run.stop.load(Ordering::Acquire) {
+        return Err("Phiên đã kết thúc".into());
+    }
+    let device = device.and_then(|id| {
+        let id = id.trim().to_string();
+        (!id.is_empty() && id.len() <= 1024).then_some(id)
+    });
+    if kind == "system" {
+        *run.system_device.lock().unwrap() = device.clone();
+        run.system_reopen.store(true, Ordering::Release);
+    } else {
+        *run.microphone_device.lock().unwrap() = device.clone();
+        run.microphone_reopen.store(true, Ordering::Release);
+        run.has_microphone.store(device.is_some(), Ordering::Release);
+    }
+    let label = if kind == "microphone" { "micro" } else { "loa/tai nghe" };
+    let _ = may.edit(&run.id, |s| {
+        s.error = None;
+        let message = if device.is_some() {
+            format!("Đã yêu cầu chuyển {label} đang ghi; âm thanh trước đó vẫn được giữ.")
+        } else {
+            format!("Đã tắt {label} đang ghi; âm thanh trước đó vẫn được giữ.")
+        };
+        if !s.warnings.contains(&message) {
+            s.warnings.push(message);
+        }
+    });
+    Ok(())
+}
+#[tauri::command]
+fn speaker_engine_status() -> serde_json::Value {
+    diarization::status()
+}
+#[tauri::command]
+fn get_speaker_analysis(
+    may: State<May>,
+    id: String,
+    transcript_version: String,
+) -> std::result::Result<speaker::SpeakerAnalysis, String> {
+    speaker::load_analysis(&may.root, &id, &transcript_version).map_err(err)
+}
+#[tauri::command]
+fn start_speaker_analysis(
+    app: tauri::AppHandle,
+    may: State<May>,
+    id: String,
+    transcript_version: String,
+    sources: Vec<String>,
+    num_speakers: Option<u32>,
+    model: Option<String>,
+    provider: Option<String>,
+    profile_id: Option<String>,
+) -> std::result::Result<String, String> {
+    let num_speakers = num_speakers.filter(|n| *n > 0);
+    if let Some(n) = num_speakers {
+        if !(1..=12).contains(&n) {
+            return Err("Số người nói phải từ 1 đến 12, hoặc chọn Tự động".into());
+        }
+    }
+    let provider = provider.unwrap_or_else(|| "local".into());
+    if !["local", "soniox"].contains(&provider.as_str()) {
+        return Err("Cách phân biệt người nói không hợp lệ".into());
+    }
+    let profile = if provider == "soniox" {
+        let profile = if let Some(pid) = profile_id.as_deref() {
+            let p = may.profile(pid).map_err(err)?;
+            if p.provider != "soniox" {
+                return Err("Cấu hình phân người nói phải thuộc Soniox".into());
+            }
+            p
+        } else {
+            config::AiProfile {
+                id: "soniox-default".into(), name: "Soniox".into(), provider: "soniox".into(),
+                base_url: "https://api.soniox.com/v1".into(),
+                key: may.soniox_key.lock().unwrap().clone(),
+                created: String::new(), import_tag: String::new(),
+            }
+        };
+        if profile.key.trim().is_empty() {
+            return Err("Chưa có API key Soniox cho phân biệt người nói".into());
+        }
+        Some(profile)
+    } else {
+        None
+    };
+    let model = model.unwrap_or_else(|| if provider == "soniox" { correction::SONIOX_ASYNC.into() } else { "sherpa-pyannote-3.0-campplus".into() });
+    if provider == "soniox" {
+        if model != correction::SONIOX_ASYNC {
+            return Err("Model Soniox phân biệt người nói không được hỗ trợ".into());
+        }
+    } else if model != "sherpa-pyannote-3.0-campplus" {
+        return Err("Model phân biệt người nói không được hỗ trợ".into());
+    }
+    let sources: Vec<String> = if provider == "soniox" {
+        vec!["soniox".into()]
+    } else {
+        let mut values: Vec<String> = sources
+            .into_iter()
+            .filter(|s| ["system", "microphone"].contains(&s.as_str()))
+            .collect();
+        values.sort();
+        values.dedup();
+        values
+    };
+    if sources.is_empty() {
+        return Err("Chọn ít nhất một nguồn âm thanh".into());
+    }
+    let session = storage::load(&may.root, &id).map_err(err)?;
+    if ["recording", "paused", "processing", "stopping"].contains(&session.status.as_str()) {
+        return Err("Hãy kết thúc cuộc họp trước khi phân biệt người nói".into());
+    }
+    let hash = speaker::transcript_hash(&session, &transcript_version).map_err(err)?;
+    let location = meeting_store::locate(&may.root, &id).map_err(err)?;
+    if provider == "soniox" {
+        if !storage::recording_path(&may.root, &id).map_err(err)?.is_file() {
+            return Err("Phiên này chưa có file ghi âm để gửi Soniox".into());
+        }
+    } else {
+        let mut existing = 0;
+        for source in &sources {
+            let pcm = location.capture().join(format!("{source}.pcm"));
+            if pcm.is_file() {
+                existing += 1;
+            }
+        }
+        if existing == 0 {
+            return Err("Phiên này không có nguồn âm thanh để phân tích".into());
+        }
+    }
+    if !may.speaker_jobs.lock().unwrap().is_empty() {
+        return Err("Đang có tác vụ phân tích người nói khác; hãy đợi hoặc hủy trước".into());
+    }
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let control = Arc::new(SpeakerJob {
+        cancel: Arc::new(AtomicBool::new(false)),
+        child: Arc::new(Mutex::new(None)),
+    });
+    let finished = Arc::new(AtomicBool::new(false));
+    let watchdog = control.clone();
+    let watchdog_done = finished.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(30 * 60));
+        if !watchdog_done.load(Ordering::Acquire) {
+            watchdog.cancel.store(true, Ordering::Release);
+            if let Some(mut child) = watchdog.child.lock().unwrap().take() {
+                let _ = child.kill();
+            }
+        }
+    });
+    may.speaker_jobs
+        .lock()
+        .unwrap()
+        .insert(job_id.clone(), control.clone());
+    let m = may.inner().clone();
+    let job = job_id.clone();
+    let version = transcript_version.clone();
+    std::thread::spawn(move || {
+        let result = run_speaker_job(
+            &m,
+            &app,
+            &id,
+            &version,
+            &hash,
+            &job,
+            &sources,
+            num_speakers,
+            &model,
+            &provider,
+            profile.as_ref(),
+            &control,
+        );
+        let terminal = match &result {
+            Ok(()) => "ready",
+            Err(_) if control.cancel.load(Ordering::Acquire) => "canceled",
+            Err(_) => "error",
+        };
+        let message = result.as_ref().err().map(|e| e.to_string());
+        let _ = app.emit(
+            "speaker-analysis",
+            serde_json::json!({
+                "job_id": job, "session_id": id, "phase": "finished",
+                "terminal_state": terminal, "message": message,
+            }),
+        );
+        m.speaker_jobs.lock().unwrap().remove(&job);
+        finished.store(true, Ordering::Release);
+    });
+    Ok(job_id)
+}
+#[tauri::command]
+fn cancel_speaker_analysis(may: State<May>, job_id: String) -> std::result::Result<(), String> {
+    let job = may
+        .speaker_jobs
+        .lock()
+        .unwrap()
+        .get(&job_id)
+        .cloned()
+        .ok_or("Không tìm thấy tác vụ phân tích")?;
+    job.cancel.store(true, Ordering::Release);
+    if let Some(mut child) = job.child.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+#[tauri::command]
+fn rename_speaker(
+    may: State<May>,
+    id: String,
+    participant_id: String,
+    name: String,
+    expected_revision: u64,
+) -> std::result::Result<speaker::SpeakerAnalysis, String> {
+    speaker::rename(&may.root, &id, &participant_id, &name, expected_revision).map_err(err)
+}
+#[tauri::command]
+fn merge_speakers(
+    may: State<May>,
+    id: String,
+    from_ids: Vec<String>,
+    into_id: String,
+    expected_revision: u64,
+) -> std::result::Result<speaker::SpeakerAnalysis, String> {
+    speaker::merge(&may.root, &id, &from_ids, &into_id, expected_revision).map_err(err)
+}
+#[tauri::command]
+fn reassign_speaker(
+    may: State<May>,
+    id: String,
+    segment_id: String,
+    state: String,
+    participant_ids: Vec<String>,
+    expected_revision: u64,
+) -> std::result::Result<speaker::SpeakerAnalysis, String> {
+    speaker::reassign(&may.root, &id, &segment_id, &state, &participant_ids, expected_revision)
+        .map_err(err)
+}
+#[tauri::command]
+fn undo_speaker_edit(
+    may: State<May>,
+    id: String,
+    expected_revision: u64,
+) -> std::result::Result<speaker::SpeakerAnalysis, String> {
+    speaker::undo(&may.root, &id, expected_revision).map_err(err)
+}
+fn run_speaker_job(
+    may: &May,
+    app: &tauri::AppHandle,
+    id: &str,
+    version: &str,
+    hash: &str,
+    analysis_id: &str,
+    sources: &[String],
+    num_speakers: Option<u32>,
+    model: &str,
+    provider: &str,
+    profile: Option<&config::AiProfile>,
+    control: &SpeakerJob,
+) -> Result<()> {
+    if provider == "soniox" {
+        let profile = match profile {
+            Some(profile) => profile,
+            None => anyhow::bail!("Thiếu cấu hình Soniox cho phân biệt người nói"),
+        };
+        let path = storage::recording_path(&may.root, id)?;
+        let (_, audio_hash) = correction::audio_info(&path)?;
+        let _ = app.emit(
+            "speaker-analysis",
+            serde_json::json!({
+                "job_id": analysis_id, "session_id": id, "phase": "source_started",
+                "source": "soniox", "completed_sources": 0, "total_sources": 1
+            }),
+        );
+        let session = storage::load(&may.root, id)?;
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        let intervals = runtime.block_on(correction::soniox_diarize(
+            profile, &session.language, &path, &control.cancel,
+        ))?;
+        if control.cancel.load(Ordering::Acquire) {
+            anyhow::bail!("Đã hủy phân tích người nói");
+        }
+        let _ = app.emit(
+            "speaker-analysis",
+            serde_json::json!({
+                "job_id": analysis_id, "session_id": id, "phase": "source_done",
+                "source": "soniox", "completed_sources": 1, "total_sources": 1
+            }),
+        );
+        let status = if intervals.is_empty() { "empty" } else { "ready" };
+        speaker::save_analysis(&may.root, id, &speaker::AnalysisInput {
+            analysis_id: analysis_id.into(),
+            transcript_version: version.into(),
+            transcript_hash: hash.into(),
+            sources: vec![speaker::SourceInput {
+                source: "soniox".into(), status: status.into(), error: None,
+                intervals, audio_hash, model: format!("Soniox async · {model}"),
+            }],
+        })?;
+        return Ok(());
+    }
+    let location = meeting_store::locate(&may.root, id)?;
+    let capture = location.capture();
+    let temp = std::env::temp_dir().join("innote-diarization").join(analysis_id);
+    std::fs::create_dir_all(&temp)?;
+    let total = sources.len();
+    let mut inputs = Vec::new();
+    for (index, source) in sources.iter().enumerate() {
+        if control.cancel.load(Ordering::Acquire) {
+            anyhow::bail!("Đã hủy phân tích người nói");
+        }
+        let _ = app.emit(
+            "speaker-analysis",
+            serde_json::json!({
+                "job_id": analysis_id, "session_id": id, "phase": "source_started",
+                "source": source, "completed_sources": index, "total_sources": total
+            }),
+        );
+        let pcm = capture.join(format!("{source}.pcm"));
+        if !pcm.is_file() {
+            inputs.push(speaker::SourceInput {
+                source: source.clone(),
+                status: "missing".into(),
+                error: Some(format!("Phiên này không có nguồn {source}")),
+                intervals: Vec::new(),
+                audio_hash: String::new(),
+                model: String::new(),
+            });
+            let _ = app.emit(
+                "speaker-analysis",
+                serde_json::json!({
+                    "job_id": analysis_id, "session_id": id, "phase": "source_done",
+                    "source": source, "completed_sources": index + 1, "total_sources": total
+                }),
+            );
+            continue;
+        }
+        let wav = temp.join(format!("{analysis_id}-{source}.wav"));
+        let (duration, audio_hash) = match diarization::write_source_wav(&pcm, &wav) {
+            Ok(value) => value,
+            Err(e) => {
+                let _ = std::fs::remove_file(&wav);
+                let size = std::fs::metadata(&pcm).map(|m| m.len()).unwrap_or(0);
+                inputs.push(speaker::SourceInput {
+                    source: source.clone(),
+                    status: if size == 0 { "empty".into() } else { "error".into() },
+                    error: Some(e.to_string()),
+                    intervals: Vec::new(),
+                    audio_hash: String::new(),
+                    model: String::new(),
+                });
+                let _ = app.emit(
+                    "speaker-analysis",
+                    serde_json::json!({
+                        "job_id": analysis_id, "session_id": id, "phase": "source_done",
+                        "source": source, "completed_sources": index + 1, "total_sources": total
+                    }),
+                );
+                continue;
+            }
+        };
+        let intervals =
+            diarization::analyze_source(&wav, duration, num_speakers, control.child.clone(), control.cancel.clone());
+        let _ = std::fs::remove_file(&wav);
+        let (status, error, intervals) = match intervals {
+            Ok(intervals) if intervals.is_empty() => ("empty".to_string(), None, intervals),
+            Ok(intervals) => ("ready".to_string(), None, intervals),
+            Err(_) if control.cancel.load(Ordering::Acquire) => {
+                anyhow::bail!("Đã hủy phân tích người nói")
+            }
+            Err(e) => ("error".to_string(), Some(e.to_string()), Vec::new()),
+        };
+        inputs.push(speaker::SourceInput {
+            source: source.clone(),
+            status,
+            error,
+            intervals,
+            audio_hash,
+            model: format!("{model} · {}", if let Some(n) = num_speakers { format!("{n} người") } else { "tự động".into() }),
+        });
+        let _ = app.emit(
+            "speaker-analysis",
+            serde_json::json!({
+                "job_id": analysis_id, "session_id": id, "phase": "source_done",
+                "source": source, "completed_sources": index + 1, "total_sources": total
+            }),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&temp);
+    if control.cancel.load(Ordering::Acquire) {
+        anyhow::bail!("Đã hủy phân tích người nói");
+    }
+    if inputs.iter().all(|s| s.status != "ready" && s.status != "empty") {
+        let message = inputs
+            .iter()
+            .filter_map(|s| s.error.as_ref())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow::bail!(if message.is_empty() {
+            "Không phân tích được nguồn âm thanh".into()
+        } else {
+            message
+        });
+    }
+    speaker::save_analysis(
+        &may.root,
+        id,
+        &speaker::AnalysisInput {
+            analysis_id: analysis_id.into(),
+            transcript_version: version.into(),
+            transcript_hash: hash.into(),
+            sources: inputs,
+        },
+    )?;
     Ok(())
 }
 #[tauri::command]
@@ -2274,22 +2814,32 @@ fn export_session(
     format: String,
     path: Option<String>,
     version: Option<String>,
+    with_speakers: Option<bool>,
 ) -> std::result::Result<String, String> {
     let s = storage::load(&may.root, &id).map_err(err)?;
     let version = version.as_deref().unwrap_or("original");
+    let labels = if with_speakers.unwrap_or(false) {
+        speaker::export_labels(&may.root, &id, version).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
     if let Some(path) = path.filter(|p| !p.trim().is_empty()) {
         let mut path = PathBuf::from(path);
         path.set_extension(&format);
-        return Ok(storage::export_file_version(&path, &s, &format, version)
-            .map_err(err)?
-            .to_string_lossy()
-            .into());
+        let written = storage::export_file_version(&path, &s, &format, version).map_err(err)?;
+        if !labels.is_empty() {
+            std::fs::write(&written, storage::export_version_with_labels(&s, &format, version, &labels))
+                .map_err(err)?;
+        }
+        return Ok(written.to_string_lossy().into());
     }
-    let folder = storage::meeting_folder(&may.root,&id).map_err(err)?.join("exports");
-    Ok(storage::export_to_version(&folder, &s, &format, version)
-        .map_err(err)?
-        .to_string_lossy()
-        .into())
+    let folder = storage::meeting_folder(&may.root, &id).map_err(err)?.join("exports");
+    let path = storage::export_to_version(&folder, &s, &format, version).map_err(err)?;
+    if !labels.is_empty() {
+        std::fs::write(&path, storage::export_version_with_labels(&s, &format, version, &labels))
+            .map_err(err)?;
+    }
+    Ok(path.to_string_lossy().into())
 }
 #[tauri::command]
 fn open_exports_folder(path:String) -> std::result::Result<(), String> {
@@ -2497,7 +3047,11 @@ async fn resume_transcript(
         stop: Arc::new(AtomicBool::new(true)),
         paused: Arc::new(AtomicBool::new(false)),
         mic_muted: Arc::new(AtomicBool::new(false)),
-        has_microphone: false,
+        has_microphone: Arc::new(AtomicBool::new(false)),
+        system_device: Arc::new(Mutex::new(None)),
+        microphone_device: Arc::new(Mutex::new(None)),
+        system_reopen: Arc::new(AtomicBool::new(false)),
+        microphone_reopen: Arc::new(AtomicBool::new(false)),
         capture_done: AtomicBool::new(true),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(s.duration),
@@ -2573,7 +3127,11 @@ async fn test_audio(
         stop: Arc::new(AtomicBool::new(false)),
         paused: Arc::new(AtomicBool::new(false)),
         mic_muted: Arc::new(AtomicBool::new(false)),
-        has_microphone: false,
+        has_microphone: Arc::new(AtomicBool::new(false)),
+        system_device: Arc::new(Mutex::new(None)),
+        microphone_device: Arc::new(Mutex::new(None)),
+        system_reopen: Arc::new(AtomicBool::new(false)),
+        microphone_reopen: Arc::new(AtomicBool::new(false)),
         capture_done: AtomicBool::new(false),
         cancel: AtomicBool::new(false),
         duration: Mutex::new(0.),
@@ -2607,6 +3165,7 @@ async fn test_audio(
                             r.epoch,
                             r.stop.clone(),
                             r.paused.clone(),
+                            Arc::new(AtomicBool::new(false)),
                             Arc::new(AtomicBool::new(false)),
                             tx,
                         )
@@ -2727,7 +3286,11 @@ mod controller_tests {
             stop: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             mic_muted: Arc::new(AtomicBool::new(false)),
-            has_microphone: false,
+            has_microphone: Arc::new(AtomicBool::new(false)),
+            system_device: Arc::new(Mutex::new(None)),
+            microphone_device: Arc::new(Mutex::new(None)),
+            system_reopen: Arc::new(AtomicBool::new(false)),
+            microphone_reopen: Arc::new(AtomicBool::new(false)),
             capture_done: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             duration: Mutex::new(0.),
@@ -2750,6 +3313,7 @@ mod controller_tests {
             caption_done: Arc::new(AtomicBool::new(true)),
             verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
             corrections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            speaker_jobs: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
     #[test]
@@ -3218,6 +3782,7 @@ fn main() {
         caption_done: Arc::new(AtomicBool::new(true)),
         verified_ai: Arc::new(Mutex::new(std::collections::HashMap::new())),
         corrections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        speaker_jobs: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
     match may.lock_libraries() {
         Ok(()) => {if let Err(e)=storage::recover_where(&may.root,|id|may.ensure_library(id).is_ok()) {eprintln!("Recovery: {e:#}");}}
@@ -3292,6 +3857,15 @@ fn main() {
             start,
             pause,
             set_mic_muted,
+            switch_audio_device,
+            speaker_engine_status,
+            get_speaker_analysis,
+            start_speaker_analysis,
+            cancel_speaker_analysis,
+            rename_speaker,
+            merge_speakers,
+            reassign_speaker,
+            undo_speaker_edit,
             stop,
             cancel_processing,
             download_model,

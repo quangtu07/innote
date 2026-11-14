@@ -30,11 +30,12 @@ pub fn changed(root: &Path, id: &str, flush: bool) {
     });
     let _ = sender.send((root.to_owned(), id.to_owned()));
 }
-pub fn snapshot(s: &Session, revision: u64, audio: bool) -> serde_json::Value {
-    serde_json::json!({"schema_version":1,"revision":revision,"id":s.id,"title":s.title,"created":s.created,"status":s.status,"duration":s.duration,"language":s.language,
+pub fn snapshot(s: &Session, revision: u64, audio: bool, speakers: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"schema_version":2,"revision":revision,"id":s.id,"title":s.title,"created":s.created,"status":s.status,"duration":s.duration,"language":s.language,
         "original":{"segments":s.segments,"live":s.live}, "translations":s.translations,
         "corrected":s.corrected.as_ref().map(|c|serde_json::json!({"text":c.text,"segments":c.segments,"provider":c.provider,"model":c.model,"created":c.created})),
         "summary":s.summary.as_ref().map(|c|serde_json::json!({"text":c.text,"source":c.source,"provider":c.provider,"model":c.model,"created":c.created})),
+        "speakers":speakers,
         "notes":s.notes,"audio":{"available":audio,"path":if audio {Some("recording.wav")} else {None}}})
 }
 pub fn publish(root: &Path, id: &str) -> Result<()> {
@@ -45,6 +46,22 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
     }
     let (revision, _, _) = store::revision(&location, id)?;
     let s = store::load(&location, id)?;
+    let speakers = ["original", "corrected"]
+        .iter()
+        .find_map(|version| {
+            crate::speaker::load_analysis(root, id, version)
+                .ok()
+                .filter(|a| a.status == "ready")
+        })
+        .map(|a| serde_json::json!({
+            "transcript_version": a.transcript_version,
+            "revision": a.revision,
+            "participants": a.participants,
+            "segments": a.segments,
+        }))
+        .unwrap_or(serde_json::Value::Null);
+    let original_labels = crate::speaker::export_labels(root, id, "original").unwrap_or_default();
+    let corrected_labels = crate::speaker::export_labels(root, id, "corrected").unwrap_or_default();
     let result = (|| -> Result<()> {
         storage_paths::reject_reparse(&location.folder)?;
         crate::meeting_file_guide::ensure_library_guide(location.folder.parent().ok_or_else(||anyhow::anyhow!("Thiếu thư mục thư viện"))?)?;
@@ -52,21 +69,21 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
         if !s.segments.is_empty() || !s.live.is_empty() {
             outputs.insert(
                 "original.md".to_owned(),
-                format!("> BẢN CHÉP GỐC — lời nhận dạng trong phiên ghi và sửa tay đã lưu; hãy nghe audio để đối chiếu khi cần.\n\n{}",crate::storage::export_version(&s, "md", "original")),
+                format!("> BẢN CHÉP GỐC — lời nhận dạng trong phiên ghi và sửa tay đã lưu; hãy nghe audio để đối chiếu khi cần.\n\n{}",crate::storage::export_version_with_labels(&s,"md","original",&original_labels)),
             );
             outputs.insert(
                 "original.srt".to_owned(),
-                crate::storage::export_version(&s, "srt", "original"),
+                crate::storage::export_version_with_labels(&s, "srt", "original", &original_labels),
             );
         }
         if s.corrected.is_some() {
             outputs.insert(
                 "corrected.md".into(),
-                format!("> BẢN HIỆU CHỈNH — kết quả model nghe lại bản ghi âm; bản chép gốc được giữ riêng.\n\n{}",crate::storage::export_version(&s, "md", "corrected")),
+                format!("> BẢN HIỆU CHỈNH — kết quả model nghe lại bản ghi âm; bản chép gốc được giữ riêng.\n\n{}",crate::storage::export_version_with_labels(&s, "md", "corrected", &corrected_labels)),
             );
             outputs.insert(
                 "corrected.srt".into(),
-                crate::storage::export_version(&s, "srt", "corrected"),
+                crate::storage::export_version_with_labels(&s, "srt", "corrected", &corrected_labels),
             );
         }
         if let Some(summary) = &s.summary {
@@ -149,6 +166,7 @@ pub fn publish(root: &Path, id: &str) -> Result<()> {
             &s,
             revision,
             location.folder.join("recording.wav").is_file(),
+            speakers,
         );
         value["manifest"] = serde_json::to_value(&manifest)?;
         storage_paths::atomic_write(

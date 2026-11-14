@@ -191,6 +191,30 @@ fn validate_translation_export(s: &Session, format: &str, version: &str) -> Resu
     }
     Ok(())
 }
+pub fn export_version_with_labels(
+    s: &Session,
+    format: &str,
+    version: &str,
+    labels: &std::collections::HashMap<String, String>,
+) -> String {
+    if labels.is_empty() || !["original", "corrected"].contains(&version) {
+        return export_version(s, format, version);
+    }
+    let mut copy = s.clone();
+    for segment in &mut copy.segments {
+        if let Some(label) = labels.get(&segment.id) {
+            segment.text = format!("[{label}] {}", segment.text);
+        }
+    }
+    if let Some(corrected) = copy.corrected.as_mut() {
+        for segment in &mut corrected.segments {
+            if let Some(label) = labels.get(&segment.id) {
+                segment.text = format!("[{label}] {}", segment.text);
+            }
+        }
+    }
+    export_version(&copy, format, version)
+}
 pub fn export_version(s: &Session, format: &str, version: &str) -> String {
     if version == "corrected" {
         if let Some(corrected) = s.corrected.as_ref() {

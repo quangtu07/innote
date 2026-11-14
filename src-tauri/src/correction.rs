@@ -510,6 +510,106 @@ async fn soniox_file(
     }
     result
 }
+pub async fn soniox_diarize(
+    profile: &AiProfile,
+    language: &str,
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<Vec<crate::speaker::SpeakerInterval>> {
+    ensure!(!profile.key.trim().is_empty(), "Cấu hình Soniox chưa có API key");
+    let (total, _) = audio_info(path)?;
+    let duration = total as f64 / RATE as f64;
+    let client = reqwest::Client::new();
+    let base = if profile.base_url.trim().is_empty() {
+        "https://api.soniox.com/v1"
+    } else {
+        profile.base_url.trim_end_matches('/')
+    };
+    let mut file_id = None;
+    let mut job_id = None;
+    let result = async {
+        let boundary = format!("innote-{}", uuid::Uuid::new_v4());
+        let prefix=format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
+        let suffix = format!("\r\n--{boundary}--\r\n").into_bytes();
+        let file = std::fs::File::open(path)?;
+        let length = file.metadata()?.len() + prefix.len() as u64 + suffix.len() as u64;
+        let stream = futures_util::stream::unfold(
+            (file, Some(prefix), Some(suffix)),
+            |(mut file, mut prefix, mut suffix)| async move {
+                if let Some(bytes) = prefix.take() {
+                    return Some((Ok::<Vec<u8>, std::io::Error>(bytes), (file, prefix, suffix)));
+                }
+                let mut bytes = vec![0; 65536];
+                match file.read(&mut bytes) {
+                    Ok(0) => suffix.take().map(|bytes| (Ok(bytes), (file, prefix, suffix))),
+                    Ok(n) => { bytes.truncate(n); Some((Ok(bytes), (file, prefix, suffix))) }
+                    Err(e) => Some((Err(e), (file, None, None))),
+                }
+            },
+        );
+        let response = client.post(format!("{base}/files")).bearer_auth(&profile.key)
+            .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+            .header("Content-Length", length)
+            .body(reqwest::Body::wrap_stream(stream)).send().await
+            .map_err(|_| anyhow::anyhow!("Không tải được bản thu lên Soniox; kiểm tra mạng hoặc hạn mức"))?;
+        let uploaded = json_response(response).await?;
+        let file = identifier(&uploaded)?;
+        file_id = Some(file.clone());
+        let mut body = json!({"model":SONIOX_ASYNC,"file_id":file,"enable_language_identification":true,"enable_speaker_diarization":true});
+        if ["vi", "en", "ko", "zh", "ja"].contains(&language) { body["language_hints"] = json!([language]); }
+        let job = request(&client, profile, reqwest::Method::POST, &format!("{base}/transcriptions"), Some(body)).await?;
+        let id = identifier(&job)?;
+        job_id = Some(id.clone());
+        loop {
+            check(cancel)?;
+            let status = request(&client, profile, reqwest::Method::GET, &format!("{base}/transcriptions/{id}"), None).await?;
+            match status["status"].as_str() {
+                Some("completed") => break,
+                Some("error" | "failed") => return Err(match status["error_type"].as_str(){Some("insufficient_credits"|"budget_exceeded"|"spending_limit_exceeded")=>http_error(402),Some("rate_limit_exceeded"|"quota_exceeded")=>http_error(429),_=>anyhow::anyhow!("Soniox không phân tích được bản thu; kiểm tra định dạng audio hoặc quyền dùng model")}),
+                Some("queued" | "downloading" | "transcribing" | "processing") => {}
+                _ => anyhow::bail!("Soniox trả trạng thái công việc không hợp lệ"),
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let value = request(&client, profile, reqwest::Method::GET, &format!("{base}/transcriptions/{id}/transcript"), None).await?;
+        intervals_from_soniox(&value, duration)
+    };
+    let result = tokio::time::timeout(Duration::from_secs(1800), result).await.context("Soniox phân tích người nói quá 30 phút")?;
+    if let Some(file) = file_id {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            cleanup(client.clone(), profile.clone(), base.into(), file, job_id),
+        )
+        .await;
+    }
+    result
+}
+fn intervals_from_soniox(value: &Value, duration: f64) -> Result<Vec<crate::speaker::SpeakerInterval>> {
+    use crate::speaker::SpeakerInterval;
+    let tokens = value["tokens"].as_array().context("Soniox chưa trả token có mốc thời gian")?;
+    let mut ids: Vec<String> = Vec::new();
+    let mut result: Vec<SpeakerInterval> = Vec::new();
+    for token in tokens {
+        if token["translation_status"].as_str() == Some("translation") { continue; }
+        let text = token["text"].as_str().unwrap_or("");
+        if matches!(text, "<end>" | "<fin>") { continue; }
+        let start = token["start_ms"].as_f64().context("Soniox thiếu mốc bắt đầu")? / 1000.;
+        let end = token["end_ms"].as_f64().context("Soniox thiếu mốc kết thúc")? / 1000.;
+        ensure!(start.is_finite() && end.is_finite() && start >= 0. && end >= start && end <= duration + 1., "Soniox trả mốc thời gian không hợp lệ");
+        let speaker = token["speaker"].as_str().map(|s| s.to_string())
+            .or_else(|| token["speaker"].as_i64().map(|n| n.to_string()))
+            .unwrap_or_else(|| "0".into());
+        let cluster = match ids.iter().position(|id| id == &speaker) { Some(i) => i as i32, None => { ids.push(speaker); ids.len() as i32 - 1 } };
+        let start = start.min(duration);
+        let end = end.min(duration);
+        if let Some(last) = result.last_mut().filter(|i| i.cluster == cluster && start - i.end <= 0.9) {
+            last.end = last.end.max(end);
+        } else if end > start {
+            result.push(SpeakerInterval { start, end, cluster, confidence: None });
+        }
+    }
+    Ok(result)
+}
 pub async fn transcribe(
     profile: &AiProfile,
     model: &str,
@@ -665,6 +765,21 @@ mod tests {
     }
     fn respond(socket: &mut std::net::TcpStream, code: u16, body: &str) {
         write!(socket,"HTTP/1.1 {code} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+    }
+    #[test]
+    fn soniox_diarization_tokens_keep_speaker_turns() {
+        let value = json!({"tokens":[
+            {"text":"Hello","start_ms":100,"end_ms":500,"speaker":"1"},
+            {"text":" there","start_ms":500,"end_ms":900,"speaker":"1"},
+            {"text":"Hi","start_ms":1200,"end_ms":1500,"speaker":"2"}
+        ]});
+        let intervals = intervals_from_soniox(&value, 2.).unwrap();
+        assert_eq!(intervals.len(), 2);
+        assert_eq!(intervals[0].cluster, 0);
+        assert!((intervals[0].start - 0.1).abs() < 0.001);
+        assert!((intervals[0].end - 0.9).abs() < 0.001);
+        assert_eq!(intervals[1].cluster, 1);
+        assert!((intervals[1].start - 1.2).abs() < 0.001);
     }
     #[test]
     fn audio_models_fingerprint_and_timestamps_are_not_text_polishing() {

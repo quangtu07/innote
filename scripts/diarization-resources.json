@@ -1,0 +1,31 @@
+{
+  "version": "sherpa-onnx 2.0.1 + pyannote-segmentation-3.0 + CAM++",
+  "archives": [
+    {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-no-tts.tar.bz2",
+      "file": "sherpa-win64.tar.bz2",
+      "extract": "sherpa"
+    },
+    {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+      "file": "segmentation.tar.bz2",
+      "extract": "segmentation"
+    }
+  ],
+  "files": [
+    {
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+      "file": "campplus.onnx",
+      "sha256": "AA3CFC16963A10586A9393F5035D6D6B57E98D358B347F80C2A30BF4F00CEBA2",
+      "bytes": 28281164
+    }
+  ],
+  "outputs": [
+    { "file": "sherpa-onnx-offline-speaker-diarization.exe", "sha256": "812AF169E79BA87EAD097129D736C439EA95C687B98AA5699AB6E6EDFEEB710F", "bytes": 683008 },
+    { "file": "sherpa-onnx-c-api.dll", "sha256": "71728FB12B3A15A9AB7C4961FCEAFC6DD802F7FC038F461F5EA59E07D7104BEC", "bytes": 3301376 },
+    { "file": "onnxruntime.dll", "sha256": "422D776AB0E3218260F7F628FCB84606AAA5C21116F720C8619A6DA5E0B2E0F9", "bytes": 17136128 },
+    { "file": "onnxruntime_providers_shared.dll", "sha256": "0190137DEE4933261C065C5D030C3568A68C7AA43CAD942B4726A07011738BC2", "bytes": 10752 },
+    { "file": "segmentation.int8.onnx", "sha256": "D582F4B4C6B48205DE7E0643C57DF0DF5615A3C176189BE3FC461E9D18827B5D", "bytes": 1540506 },
+    { "file": "campplus.onnx", "sha256": "AA3CFC16963A10586A9393F5035D6D6B57E98D358B347F80C2A30BF4F00CEBA2", "bytes": 28281164 }
+  ]
+}

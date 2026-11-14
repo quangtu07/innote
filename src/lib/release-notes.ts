@@ -287,4 +287,30 @@ releaseNotes["0.8.10"]={
     {title:"录音不会错位",detail:"关闭麦克风的时段以相同时长的静音写入，因此重新打开后会议音频、字幕和时间轴仍然对齐。"},
   ]},
 };
-export const previewReleaseVersion = "0.8.10";
+releaseNotes["0.8.11"]={
+  vi:{title:"Có gì mới trong Innote?",subtitle:"Biết ai nói gì, vẫn tiếp tục làm việc trong lúc phân tích.",close:"Đóng thông báo cập nhật",done:"Đã hiểu",once:"Chỉ tự động hiện một lần cho phiên bản này.",items:[
+    {title:"Biết ai nói đoạn nào",detail:"Bật Phân biệt người nói trước khi ghi hoặc chạy sau cuộc họp. Innote tách từng người trên máy, gán màu riêng; bạn có thể đổi tên, gộp, gán lại và hoàn tác."},
+    {title:"Vẫn dùng được khi phân tích",detail:"Phân biệt người nói, tóm tắt và hiệu chỉnh chạy trong Tác vụ nền. Bạn có thể xem hoặc xuất bản gốc; kết quả người nói hiện trong Bản người nói riêng."},
+    {title:"Xuất theo cách bạn cần",detail:"Chuyển giữa Bản gốc và Bản người nói trước khi tải. Tệp .md/.txt/.srt có thể kèm tên người nói; bản gốc và dữ liệu cũ vẫn được giữ nguyên."},
+    {title:"Đổi thiết bị, không dừng cuộc họp",detail:"Đổi loa/tai nghe hoặc micro khi đang ghi. Nếu thiết bị bị rút, Innote báo và tự chuyển sang thiết bị còn dùng được khi có thể; âm thanh và transcript trước đó vẫn được giữ."},
+  ]},
+  en:{title:"What’s new in Innote?",subtitle:"Know who said what while analysis continues in the background.",close:"Close update notes",done:"Got it",once:"Shown automatically once for this version.",items:[
+    {title:"Know who said what",detail:"Turn on Speaker labels before recording or run it after a meeting. Innote separates voices on your device and gives each person a color; rename, merge, reassign or undo labels."},
+    {title:"Keep working while analysis runs",detail:"Speaker labels, summaries and corrections run in Background tasks. You can keep reading or exporting the original; speaker results open in a separate Speaker version."},
+    {title:"Export the version you need",detail:"Switch between Original and Speaker versions before export. .md/.txt/.srt exports can include speaker names; the original and existing data stay unchanged."},
+    {title:"Switch devices without ending the meeting",detail:"Change the speaker/headphones or microphone while recording. If a device is removed, Innote warns you and falls back to an available device when possible; earlier audio and transcript are kept."},
+  ]},
+  ko:{title:"Innote의 새로운 기능",subtitle:"누가 말했는지 확인하고 분석은 백그라운드에서 계속하세요.",close:"업데이트 안내 닫기",done:"확인",once:"이 버전에서 한 번만 자동으로 표시됩니다.",items:[
+    {title:"누가 말했는지 구분",detail:"녹음 전에 화자 구분을 켜거나 회의 후 실행하세요. 기기에서 목소리를 분리하고 화자마다 색상을 지정합니다. 이름 변경, 병합, 재지정, 실행 취소가 가능합니다."},
+    {title:"분석 중에도 계속 사용",detail:"화자 구분, 요약, 교정은 백그라운드 작업에서 실행됩니다. 원본을 계속 보거나 내보낼 수 있으며 화자 결과는 별도의 화자 버전으로 열립니다."},
+    {title:"필요한 버전으로 내보내기",detail:"내보내기 전에 원본과 화자 버전을 전환하세요. .md/.txt/.srt에 화자 이름을 포함할 수 있으며 원본과 기존 데이터는 유지됩니다."},
+    {title:"회의를 멈추지 않고 기기 전환",detail:"녹음 중 스피커/헤드폰 또는 마이크를 변경하세요. 기기가 제거되면 알림 후 가능한 경우 사용 가능한 기기로 자동 전환하며 이전 오디오와 기록은 유지됩니다."},
+  ]},
+  zh:{title:"Innote 更新了什么？",subtitle:"了解每段是谁说的，分析在后台继续。",close:"关闭更新说明",done:"知道了",once:"此版本仅自动显示一次。",items:[
+    {title:"知道每段是谁说的",detail:"录音前开启说话人区分，或在会议结束后运行。Innote 在本机分离声音，为每个人分配颜色；可重命名、合并、重新分配或撤销。"},
+    {title:"分析时仍可继续使用",detail:"说话人区分、摘要和校正在后台任务中运行。你可以继续查看或导出原始版本；说话人结果在单独的说话人版本中打开。"},
+    {title:"按需导出",detail:"导出前可在原始版本和说话人版本之间切换。.md/.txt/.srt 可包含说话人姓名；原始内容和已有数据保持不变。"},
+    {title:"切换设备不结束会议",detail:"录音时可更换扬声器/耳机或麦克风。设备被拔出时会提示，并在可能时自动切换到可用设备；之前的音频和转录仍会保留。"},
+  ]},
+};
+export const previewReleaseVersion = "0.8.11";

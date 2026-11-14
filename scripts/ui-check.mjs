@@ -94,6 +94,18 @@ async function setup(options = {}) {
       exports: [],
       delayAudio: !!options.delayAudio,
     };
+    if (options.speakerAnalysis) {
+      window.qa.speaker = {
+        session_id: ids[0], transcript_version: "original", transcript_hash: "qa-hash", revision: 1,
+        status: "ready", sources: [{source:"system",status:"ready",intervals:[]},{source:"microphone",status:"ready",intervals:[]}],
+        participants: [
+          {id:"speaker-p1",name:"Bạn?",source:"microphone",segments:1},
+          {id:"speaker-p2",name:"Người nói 1",source:"system",segments:1},
+        ],
+        segments: {"segment-one":{state:"single",participant_ids:["speaker-p2"],source:"system",label:"Người nói 1",manual:false}},
+        updated_at: "2026-11-11T00:00:00Z",
+      };
+    }
     if(options.captionStatus)window.qa.caption={running:!["idle","error"].includes(options.captionStatus.state)};
     window.qa.snapshot.models.push({id:"moonshine-en",name:"Moonshine · English · Có sẵn",bytes:32309045,installed:!options.missingBundled});
     window.qa.snapshot.models.push({id:"nemotron-3.5-q8",name:"Nemotron · Chép lời local đa ngôn ngữ",bytes:741548352,installed:!options.missingModels&&!options.missingMultilingual});
@@ -152,6 +164,30 @@ async function setup(options = {}) {
         if(cmd==='meeting_files_status')return {path:'D:\\Meetings\\2026-11-07 - Họp',legacy:!!options.legacyStorage,revision:2,published_revision:options.bundleFailed?1:2,error:options.bundleFailed?'Đã lưu trong Innote, chưa cập nhật xong tệp cuộc họp':null};
         if(['open_meetings_directory','open_meeting_directory','retry_meeting_bundle'].includes(cmd))return;
         if(cmd==='rescan_meeting_libraries')return 0;
+        if(cmd==='speaker_engine_status')return options.speakerEngineMissing?{available:false,error:'Chưa có bộ phân tích người nói'}:{available:true,path:'D:\\\\Innote\\\\diarization'};
+        if(cmd==='get_speaker_analysis')return qa.speaker?structuredClone(qa.speaker):{session_id:args.id,transcript_version:args.transcriptVersion,transcript_hash:'qa-hash',revision:0,status:'none',sources:[],participants:[],segments:{},updated_at:null};
+        if(cmd==='start_speaker_analysis'){
+          qa.speaker={
+            session_id:args.id,transcript_version:args.transcriptVersion,transcript_hash:'qa-hash',revision:1,status:'ready',
+            sources:args.sources.map(source=>({source,status:'ready',intervals:[]})),
+            participants:[{id:'speaker-p1',name:'Bạn?',source:'microphone',segments:1},{id:'speaker-p2',name:'Người nói 1',source:'system',segments:1}],
+            segments:{'segment-one':{state:'single',participant_ids:['speaker-p2'],source:'system',label:'Người nói 1',manual:false}},
+            updated_at:'2026-11-11T00:00:00Z',
+          };
+          qa.speakerUndo=null;
+          return 'speaker-job-1';
+        }
+        if(cmd==='cancel_speaker_analysis'){qa.speakerCanceled=true;return;}
+        if(['rename_speaker','merge_speakers','reassign_speaker'].includes(cmd)){
+          if(!qa.speaker)throw Error('Chưa có kết quả phân biệt người nói');
+          qa.speakerUndo=structuredClone(qa.speaker);
+          if(cmd==='rename_speaker'){const p=qa.speaker.participants.find(p=>p.id===args.participantId);if(!p)throw Error('Không tìm thấy người nói');p.name=args.name;for(const s of Object.values(qa.speaker.segments)){if(s.participant_ids.includes(p.id)&&s.state==='single')s.label=args.name;}}
+          if(cmd==='merge_speakers'){for(const from of args.fromIds){qa.speaker.participants=qa.speaker.participants.filter(p=>p.id!==from);for(const s of Object.values(qa.speaker.segments))s.participant_ids=s.participant_ids.map(id=>id===from?args.intoId:id);}}
+          if(cmd==='reassign_speaker'){const p=qa.speaker.participants.find(p=>p.id===args.participantIds[0]);qa.speaker.segments[args.segmentId]={state:args.state,participant_ids:args.participantIds,source:args.state==='unassigned'?null:(p?.source??'system'),label:args.state==='unassigned'?'Chưa xác định':(p?.name??'Người nói 1'),manual:true};}
+          qa.speaker.revision+=1;
+          return structuredClone(qa.speaker);
+        }
+        if(cmd==='undo_speaker_edit'){if(!qa.speakerUndo)throw Error('Không còn thao tác để hoàn tác');qa.speaker=qa.speakerUndo;qa.speakerUndo=null;return structuredClone(qa.speaker);}
 
         if (cmd === "plugin:updater|check") {
           if (!options.updateAvailable) return null;
@@ -244,6 +280,7 @@ async function setup(options = {}) {
           return structuredClone(s);
         }
         if (cmd === "summarize_transcript") {
+          if(options.delaySummary)await new Promise(r=>setTimeout(r,options.delaySummary));
           if(options.summaryError)throw Error(options.summaryError);
           const s = qa.snapshot.sessions.find((s) => s.id === args.id);
           s.summary = {
@@ -364,6 +401,7 @@ async function setup(options = {}) {
           return;
         }
         if (cmd === "refresh_devices") return;
+        if(cmd === "switch_audio_device"){qa.switchDevice={kind:args.kind,device:args.device};return;}
         if (cmd === "delete_session") {
           qa.snapshot.sessions = qa.snapshot.sessions.filter(
             (s) => s.id !== args.id,
@@ -458,24 +496,27 @@ async function check(name, options, fn) {
   }
 }
 try {
-  await check('Meeting storage legacy guide explains database and safe export',{legacyStorage:true},async p=>{
-    await openMeeting(p,'Cuộc họp Alpha');const guide=p.locator('.meeting-files + .file-guide');await guide.locator('summary').click();
-    assert((await guide.innerText()).includes('chưa phải các file Markdown riêng'));
-    assert((await guide.innerText()).includes('Không cấp quyền toàn bộ nơi lưu cũ'));
-    assert.equal(await guide.locator('table').count(),0);
+  await check('Meeting view hides the long file guide and keeps folder actions',{legacyStorage:true},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    const files=p.locator('.meeting-files');
+    await files.waitFor();
+    assert.equal(await p.locator('.file-guide').count(),0);
+    assert((await files.innerText()).includes('Nơi lưu cũ'));
+    assert(await files.getByRole('button',{name:'Mở thư mục',exact:true}).isVisible());
   });
   for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
-    await check(`Meeting storage file guide explains every output ${viewport.width}`,{viewport},async p=>{
+    await check(`Meeting storage stays compact without the file guide ${viewport.width}`,{viewport},async p=>{
       await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
       const panel=p.locator('.meeting-storage');
       assert.equal(await panel.locator('details').count(),0);
       assert.equal(await panel.evaluate(el=>el.scrollWidth>el.clientWidth),false);
       await panel.screenshot({path:join(output,`storage-simple-${viewport.width}.png`)});
       await openMeeting(p,'Cuộc họp Alpha');
-      const meeting=p.locator('.meeting-files + .file-guide');await meeting.locator('summary').click();
-      for(const name of ['recording.wav','original.md','corrected.md / corrected.srt','meeting.json','.innote/work/','.innote-identity.json'])assert((await meeting.innerText()).includes(name));
-      assert((await meeting.innerText()).includes('Sửa file bên ngoài không cập nhật ngược vào Innote'));
-      assert.equal(await meeting.evaluate(el=>el.scrollWidth>el.clientWidth),false);
+      const files=p.locator('.meeting-files');
+      await files.waitFor();
+      assert.equal(await p.locator('.file-guide').count(),0);
+      assert(await files.getByRole('button',{name:'Mở thư mục',exact:true}).isVisible());
+      assert.equal(await files.evaluate(el=>el.scrollWidth>el.clientWidth),false);
     });
   }
   for(const viewport of [{width:900,height:640},{width:1180,height:800}]) {
@@ -750,8 +791,15 @@ try {
   });
   for(const viewport of [{width:900,height:640},{width:1180,height:800}])await check(`Sidebar collapse persists and navigation remains usable ${viewport.width}x${viewport.height}`,{profiles:mockProfiles,viewport},async p=>{
     const side=p.getByRole('complementary');
-    const expanded=await side.boundingBox();
+    await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).waitFor();
+    assert((await side.boundingBox()).width<90,'Sidebar defaults to collapsed');
+    assert(await p.evaluate(()=>localStorage.getItem('innote.sidebar.collapsed')!=='false'));
+    await p.screenshot({path:join(output,`sidebar-default-collapsed-${viewport.width}.png`)});
+    await p.getByRole('button',{name:'Mở rộng thanh bên',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.sidebar')?.getBoundingClientRect().width>200);
+    assert.equal(await p.getByRole('button',{name:'Thu gọn thanh bên',exact:true}).getAttribute('aria-expanded'),'true');
     await p.screenshot({path:join(output,`sidebar-expanded-${viewport.width}.png`)});
+    const expanded=await side.boundingBox();
     const toggle=p.getByRole('button',{name:'Thu gọn thanh bên',exact:true});
     await toggle.focus();await p.keyboard.press('Enter');
     await p.waitForFunction(()=>document.querySelector('.sidebar')?.getBoundingClientRect().width<90);
@@ -943,6 +991,146 @@ try {
     assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await p.screenshot({path:join(output,'meeting-mic-mute-900x640.png')});
   });
+await check("Audio devices can be switched while recording",{active:true},async p=>{
+    await openMeeting(p,'Phiên đang ghi');
+    const panel=p.locator('.live-audio-devices');
+    await panel.waitFor();
+    await panel.getByLabel('Đổi micro đang ghi').selectOption('');
+    await p.waitForFunction(()=>window.qa.switchDevice?.kind==='microphone');
+    assert.equal(await p.evaluate(()=>window.qa.switchDevice.device),null);
+    await p.evaluate(async()=>{
+      const {emit}=await import('/node_modules/@tauri-apps/api/event.js');
+      await emit('audio-device-changed',{kind:'microphone',device:'mic',message:'Đã tự chuyển micro sang thiết bị mặc định.'});
+    });
+    await p.waitForFunction(()=>document.querySelector('select[aria-label="Đổi micro đang ghi"]')?.value==='mic');
+    assert(await p.getByText('Đã tự chuyển micro sang thiết bị mặc định.').isVisible());
+    await panel.getByRole('button',{name:'Làm mới thiết bị',exact:true}).click();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='refresh_devices'));
+    assert(await panel.isVisible());
+  });
+await check("Speaker analysis shows badges, renames, reassigns and undoes",{speakerAnalysis:true},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    const badge=p.locator('.speaker-badge');
+    await badge.waitFor();
+    assert((await badge.innerText()).includes('Người nói 1'));
+    assert.equal(await badge.evaluate((node)=>getComputedStyle(node).color),'rgb(47, 93, 138)');
+    await p.getByRole('button',{name:'Chỉnh người nói',exact:true}).click();
+    const panel=p.locator('.speaker-panel');
+    await panel.waitFor();
+    assert.equal(await panel.locator('.speaker-row').count(),2);
+    const dotColors=await panel.locator('.speaker-dot').evaluateAll((nodes)=>nodes.map((n)=>getComputedStyle(n).backgroundColor));
+    assert.equal(new Set(dotColors).size,2,"Each speaker must have a distinct color");
+    const row=panel.locator('.speaker-row').filter({hasText:'Người nói 1'});
+    await row.getByRole('button',{name:'Đổi tên',exact:true}).click();
+    const input=panel.getByLabel('Tên người nói');
+    await input.fill('Tôi');
+    await input.press('Enter');
+    await panel.getByText('Tôi',{exact:true}).waitFor();
+    await p.waitForFunction(()=>document.querySelector('.speaker-badge')?.textContent?.includes('Tôi'));
+    await badge.click();
+    await p.getByLabel('Chọn người nói cho đoạn này').selectOption('single|speaker-p1');
+    await p.waitForFunction(()=>document.querySelector('.speaker-badge')?.textContent?.includes('Bạn?'));
+assert((await badge.innerText()).includes('Mic'));
+    await panel.getByRole('button',{name:'Hoàn tác',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.speaker-badge')?.textContent?.includes('Tôi'));
+    assert.equal(await panel.locator('.speaker-row').count(),2);
+    assert.equal(await p.evaluate(()=>window.qa.speaker.segments['segment-one'].manual),false);
+    const rename=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='rename_speaker'));
+    assert.equal(rename.args.participantId,'speaker-p2');assert.equal(rename.args.name,'Tôi');
+    await p.getByRole('button',{name:'Bản gốc',exact:true}).click();
+    await badge.waitFor({state:'detached'});
+    await p.getByRole('button',{name:'Tải .txt',exact:true}).click();
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='export_session').at(-1).args.withSpeakers),false);
+    await p.getByRole('button',{name:'Bản người nói',exact:true}).click();
+    await badge.waitFor();
+    await p.getByRole('button',{name:'Tải .txt',exact:true}).click();
+    assert.equal(await p.evaluate(()=>window.qa.calls.filter(c=>c.cmd==='export_session').at(-1).args.withSpeakers),true);
+    await p.screenshot({path:join(output,'speaker-diarization-panel.png')});
+  });
+  await check("Speaker plan is opt-in and auto-runs in the background after a meeting",{},async p=>{
+    const plan=p.getByLabel(/Phân biệt người nói sau khi kết thúc cuộc họp/);
+    assert.equal(await plan.isChecked(),false);
+    await plan.check();
+    assert(await p.getByText(/xử lý thêm vài phút/).isVisible());
+    const planBox=await p.locator('.meeting-speaker-plan').boundingBox();
+    const sourceBox=await p.locator('.setup-heading').boundingBox();
+    assert(planBox && sourceBox && planBox.y < sourceBox.y,"Speaker plan must sit above the source setup");
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    await p.waitForFunction(()=>!!window.qa.snapshot.active_id);
+    const id=await p.evaluate(()=>window.qa.snapshot.active_id);
+    const stored=await p.evaluate((id)=>JSON.parse(localStorage.getItem(`innote.speaker.plan.${id}`)),id);
+    assert.equal(stored.enabled,true);assert.equal(stored.provider,'local');
+    await p.evaluate((id)=>{
+      const s=window.qa.snapshot.sessions.find(s=>s.id===id);
+      s.status='completed';
+      s.segments=[{id:'auto-segment',start:0,end:2,text:'Đoạn tự động.',edited:false}];
+      window.qa.snapshot.active_id=null;
+    },id);
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='start_speaker_analysis'),null,{timeout:6000});
+    const call=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start_speaker_analysis').args);
+    assert.equal(call.id,id);assert.equal(call.provider,'local');
+    assert(await p.getByRole('button',{name:/tác vụ nền/}).isVisible());
+  });
+await check("Speaker plan defaults to local even when transcription is Soniox",{profiles:mockProfiles},async p=>{
+    await p.evaluate(()=>{window.qa.snapshot.soniox_configured=true;});
+    await p.getByLabel('Cách chép lời',{exact:true}).selectOption('soniox');
+    const plan=p.getByLabel(/Phân biệt người nói sau khi kết thúc cuộc họp/);
+    assert.equal(await plan.isChecked(),false);
+    await plan.check();
+    assert.equal(await p.getByLabel('Xử lý bằng').inputValue(),'local');
+    assert(await p.getByText(/Sau khi bấm Kết thúc/).isVisible());
+    await p.getByLabel('Xử lý bằng').selectOption('soniox');
+    assert(await p.getByText(/gửi file ghi âm lên cloud/).isVisible());
+    await p.getByLabel('Xử lý bằng').selectOption('local');
+    await p.getByRole('button',{name:'Bắt đầu ghi',exact:true}).click();
+    await p.waitForFunction(()=>!!window.qa.snapshot.active_id);
+    const id=await p.evaluate(()=>window.qa.snapshot.active_id);
+    const stored=await p.evaluate((id)=>JSON.parse(localStorage.getItem(`innote.speaker.plan.${id}`)),id);
+    assert.equal(stored.provider,'local');
+  });
+await check("Speaker analysis starts from the selected sources and refreshes on completion",{},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    await p.getByRole('button',{name:'Phân biệt người nói',exact:true}).click();
+    const dialog=p.getByRole('dialog',{name:/Phân biệt người nói/});
+    await dialog.waitFor();
+    await dialog.getByLabel('Số người nói').selectOption('3');
+    await p.getByRole('button',{name:'Bắt đầu phân tích',exact:true}).click();
+    const call=await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='start_speaker_analysis'));
+    assert.deepEqual(call.args.sources,['system','microphone']);
+    assert.equal(call.args.transcriptVersion,'original');
+    assert.equal(call.args.numSpeakers,3);
+    assert.equal(call.args.model,'sherpa-pyannote-3.0-campplus');
+    await p.evaluate(async()=>{
+      const {emit}=await import('/node_modules/@tauri-apps/api/event.js');
+      await emit('speaker-analysis',{job_id:'speaker-job-1',session_id:window.qa.snapshot.sessions[0].id,phase:'source_started',source:'system',completed_sources:0,total_sources:2});
+      await emit('speaker-analysis',{job_id:'speaker-job-1',session_id:window.qa.snapshot.sessions[0].id,phase:'source_done',source:'system',completed_sources:1,total_sources:2});
+      await emit('speaker-analysis',{job_id:'speaker-job-1',session_id:window.qa.snapshot.sessions[0].id,phase:'source_started',source:'microphone',completed_sources:1,total_sources:2});
+      await emit('speaker-analysis',{job_id:'speaker-job-1',session_id:window.qa.snapshot.sessions[0].id,phase:'source_done',source:'microphone',completed_sources:2,total_sources:2});
+      await emit('speaker-analysis',{job_id:'speaker-job-1',session_id:window.qa.snapshot.sessions[0].id,phase:'finished',terminal_state:'ready'});
+    });
+    await p.locator('.speaker-panel').waitFor();
+    await p.locator('.speaker-badge').waitFor();
+  });
+  await check("Speaker setup explains a missing local engine and blocks start",{speakerEngineMissing:true},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    await p.getByRole('button',{name:'Phân biệt người nói',exact:true}).click();
+    const dialog=p.getByRole('dialog',{name:/Phân biệt người nói/});
+    await dialog.waitFor();
+    await dialog.getByText('Chưa có bộ phân tích người nói').waitFor();
+    assert(await dialog.getByRole('button',{name:'Bắt đầu phân tích',exact:true}).isDisabled());
+  });
+  await check("Speaker panel keeps badges and controls inside 900x640",{speakerAnalysis:true,viewport:{width:900,height:640}},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    const badge=p.locator('.speaker-badge');
+    await badge.waitFor();
+    await p.getByRole('button',{name:'Chỉnh người nói',exact:true}).click();
+    const panel=p.locator('.speaker-panel');
+    await panel.waitFor();
+    const box=await panel.boundingBox();
+    assert(box && box.width>0 && box.x>=0 && box.width<=900);
+    assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await p.screenshot({path:join(output,'speaker-diarization-900x640.png')});
+  });
   await check("API profile dialog contains keyboard focus and Escape restores its trigger", {viewport:{width:900,height:640}},async p=>{
     await p.getByRole('button',{name:'Cài đặt',exact:true}).click();
     const trigger=p.getByRole('button',{name:'Thêm cấu hình',exact:true});await trigger.click();
@@ -1024,6 +1212,8 @@ try {
     assert.equal(await p.getByText("Đã có bản Innote 0.6.3",{exact:true}).count(),0);
   });
   await check("Author card exposes Zalo LinkedIn and website links", {viewport:{width:900,height:640}}, async p=>{
+    await p.getByRole('button',{name:"Mở rộng thanh bên",exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.sidebar')?.getBoundingClientRect().width>200);
     assert(await p.getByText("Alex Linh",{exact:true}).isVisible());
     assert(await p.getByText("Tác giả",{exact:true}).isVisible());
     for (const [name, kind] of [
@@ -1173,6 +1363,9 @@ try {
             .readyState >= 1,
       );
       await p.getByRole("button", { name: "00:01", exact: true }).click();
+      const timestampBox = await p.getByRole("button", { name: "00:01", exact: true }).boundingBox();
+      const segmentBox = await p.locator(".segment").filter({ has: p.getByRole("button", { name: "00:01", exact: true }) }).boundingBox();
+      assert(timestampBox && segmentBox && timestampBox.x > segmentBox.x + segmentBox.width / 2);
       await p.waitForFunction(
         () =>
           document.querySelector('audio[aria-label="Nghe lại cuộc họp"]')
@@ -1315,6 +1508,20 @@ try {
   );
   for(const viewport of [{width:900,height:640},{width:1180,height:800}])await check(`Post-session summary model picker layout ${viewport.width}`,{viewport,profiles:mockProfiles},async p=>{
     await openMeeting(p,'Cuộc họp Alpha');await p.getByRole('button',{name:'Tóm tắt',exact:true}).click();const d=p.locator('dialog.summary-dialog');await d.getByLabel('Cấu hình AI tóm tắt').selectOption('prof-openai');assert(await d.getByRole('button',{name:'Tạo tóm tắt',exact:true}).isDisabled());await d.getByLabel('Model tóm tắt',{exact:true}).selectOption('gpt-4o');const box=await d.boundingBox(),b=await d.getByRole('button',{name:'Tạo tóm tắt',exact:true}).boundingBox();assert(box.x>=0&&box.x+box.width<=viewport.width+1);assert(b.y>=0&&b.y+b.height<=viewport.height+1);await d.screenshot({path:join(output,`summary-picker-${viewport.width}.png`)});await d.getByRole('button',{name:'Hủy',exact:true}).click();assert(!await p.evaluate(()=>window.qa.calls.some(c=>c.cmd==='test_ai_connection'||c.cmd==='summarize_transcript')));
+  });
+  await check("Summary runs in the background without locking meeting navigation",{profiles:mockProfiles,delaySummary:700},async p=>{
+    await openMeeting(p,'Cuộc họp Alpha');
+    await p.getByRole('button',{name:'Tóm tắt',exact:true}).click();
+    const d=p.locator('dialog.summary-dialog');
+    await d.getByLabel('Cấu hình AI tóm tắt').selectOption('prof-openai');
+    await d.getByLabel('Model tóm tắt',{exact:true}).selectOption('gpt-4o');
+    await d.getByRole('button',{name:'Tạo tóm tắt',exact:true}).click();
+    await d.waitFor({state:'detached'});
+    assert(await p.getByRole('button',{name:/tác vụ nền/}).isVisible());
+    await openMeeting(p,'Cuộc họp Beta');
+    await p.getByRole('button',{name:'Tải .txt',exact:true}).click();
+    await p.waitForFunction(()=>window.qa.calls.some(c=>c.cmd==='export_session'));
+    assert.equal(await p.evaluate(()=>window.qa.snapshot.sessions.find(s=>s.title==='Cuộc họp Beta').segments[0].text),'Nội dung thử tiếng Việt.');
   });
   await check("Post-session summary resets hidden fallback and keeps failure inline",{profiles:mockProfiles,summaryError:'OpenAI 429: hết hạn mức',taskAssignMeeting:{summary:{profileId:'prof-openai',model:'gpt-4o-mini',fallback:{profileId:'missing',model:'old'}}}},async p=>{
     await openMeeting(p,'Cuộc họp Alpha');await p.getByRole('button',{name:'Tóm tắt',exact:true}).click();const d=p.locator('dialog.summary-dialog');assert.equal(await d.getByLabel('Cấu hình AI tóm tắt').inputValue(),'');await d.getByLabel('Cấu hình AI tóm tắt').selectOption('prof-openai');await d.getByLabel('Model tóm tắt',{exact:true}).selectOption('gpt-4o');await d.locator('summary').click();const backup=d.getByLabel('Model tóm tắt dự phòng');await backup.selectOption(JSON.stringify({profileId:'prof-gemini',model:'gemini-2.5-flash'}));await d.getByLabel('Model tóm tắt',{exact:true}).selectOption('gpt-4o-mini');assert.equal(await backup.inputValue(),'');await d.getByRole('button',{name:'Tạo tóm tắt',exact:true}).click();await d.getByRole('alert').waitFor();assert((await d.getByRole('alert').innerText()).includes('429'));assert(await d.getByRole('button',{name:'Tạo tóm tắt',exact:true}).isEnabled());assert.equal(await p.evaluate(()=>window.qa.calls.find(c=>c.cmd==='summarize_transcript').args.fallback),null);assert.equal(await p.evaluate(()=>window.qa.snapshot.sessions[0].summary),undefined);assert.equal(await p.evaluate(()=>window.qa.snapshot.sessions[0].segments[0].text),'Nội dung thử tiếng Việt.');

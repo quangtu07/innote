@@ -5,9 +5,11 @@
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, emit } from "@tauri-apps/api/event";
   import { check, type Update } from "@tauri-apps/plugin-updater";
-  import type { Segment } from "./types";
+  import type { Segment, SpeakerAnalysis } from "./types";
+  import { speakerColorFor } from "./speaker-colors";
   import Logo from "./Logo.svelte";
   import MeetingStorage from "./MeetingStorage.svelte";
+  import SpeakerPanel from "./SpeakerPanel.svelte";
   import SpeechQualityControl from "./SpeechQualityControl.svelte";
   import WhatsNewDialog from "./WhatsNewDialog.svelte";
   import {SPEECH_LEVELS_KEY,parseProcessingLevels,qualityKey,qualitySupported,type SpeechQuality} from "./lib/speech-quality";
@@ -42,6 +44,7 @@
     Globe,
     Sparkles,
     List,
+    Users,
     ClipboardList,
     Copy,
     Captions,
@@ -92,13 +95,14 @@
     mic_muted: false,
   };
   let selected: string | null = null;
-  let sidebarCollapsed=false;
-  try{sidebarCollapsed=localStorage.getItem("innote.sidebar.collapsed")==="true";}catch{}
+  let sidebarCollapsed=true;
+  try{const saved=localStorage.getItem("innote.sidebar.collapsed");if(saved!==null)sidebarCollapsed=saved==="true";}catch{}
   function toggleSidebar(){sidebarCollapsed=!sidebarCollapsed;try{localStorage.setItem("innote.sidebar.collapsed",String(sidebarCollapsed));}catch{}}
   let page = "meeting";
   $: captionNavLabel=uiLocale === "en" ? "Captions only" : uiLocale === "ko" ? "자막만" : uiLocale === "zh" ? "仅字幕" : "Chỉ phụ đề";
   let pendingActions = 0;
   $: busy = pendingActions > 0;
+  let switchingAudio = false;
   let pendingEdits: Promise<unknown> = Promise.resolve();
   let audioRequest = 0;
   let audioLoadingFor = "";
@@ -112,6 +116,41 @@
   let system = "";
   let microphone = "";
   let lastMicDevice = "";
+  let speakerAnalysis: SpeakerAnalysis | null = null;
+  let speakerOpen = false;
+  let speakerSetupOpen = false;
+  let speakerBusy = false;
+  let speakerError = "";
+  let speakerJobId = "";
+  let speakerSetupDialog: HTMLDialogElement;
+  let speakerProgress = "";
+  let speakerEngineAvailable = true;
+  let speakerEngineError = "";
+  let speakerEditSegment = "";
+  let speakerLoadedKey = "";
+  let speakerExport = true;
+  let speakerView = false;
+  let speakerPlanEnabled = false;
+  let speakerPlanModel = "sherpa-pyannote-3.0-campplus";
+  let speakerPlanNum = 0;
+  let speakerPlanProvider = "local";
+  let speakerPlanProfileId = "";
+  let summaryBusy = false;
+  let jobsOpen = false;
+  type BackgroundJob = { id: string; kind: "speaker" | "summary" | "correction"; label: string; detail: string; cancellable: boolean };
+  let backgroundJobs: BackgroundJob[] = [];
+  let speakerAutoStarted = new Set<string>();
+  let speakerAutoStarting = false;
+  let speakerModel = "sherpa-pyannote-3.0-campplus";
+  let speakerNumSpeakers = 0;
+  let speakerProvider = "local";
+  let speakerProfileId = "";
+  try {
+    speakerModel = localStorage.getItem("innote.speaker.model") || speakerModel;
+    speakerNumSpeakers = Number(localStorage.getItem("innote.speaker.num_speakers")) || 0;
+    speakerProvider = localStorage.getItem("innote.speaker.provider") || "local";
+    speakerProfileId = localStorage.getItem("innote.speaker.profile") || "";
+  } catch {}
   let language = "vi";
   const model = "moonshine-vi";
   let localMeetingModels: Record<string,string> = {};
@@ -436,11 +475,27 @@
   let testAudio: HTMLAudioElement;
   let lastCount = 0;
   const desktop = "__TAURI_INTERNALS__" in window;
+  $: if (speakerSetupOpen && speakerSetupDialog && !speakerSetupDialog.open) speakerSetupDialog.showModal();
   $: meeting = data.sessions.find((s) => s.id === selected);
+  $: if (!speakerPlanEnabled && (speakerPlanProvider !== "local" || speakerPlanProfileId || speakerPlanModel !== "sherpa-pyannote-3.0-campplus")) {
+    speakerPlanProvider = "local";
+    speakerPlanProfileId = "";
+    speakerPlanModel = "sherpa-pyannote-3.0-campplus";
+  }
   $: canSummarize =
     !!meeting &&
     (meeting.segments.length > 0 || !!meeting.corrected) &&
     !["recording", "paused", "processing"].includes(meeting.status);
+  $: {
+    const version = currentSpeakerVersion();
+    const key = meeting ? `${meeting.id}:${version}` : "";
+    if (key !== speakerLoadedKey) {
+      speakerLoadedKey = key;
+      speakerEditSegment = "";
+      if (key) void loadSpeakerAnalysis(meeting!.id, version);
+      else speakerAnalysis = null;
+    }
+  }
   $: llmConfigSignature = JSON.stringify([
     summaryOpen ? summaryProfileId : smoothProfileId,
     summaryOpen ? summaryModel : smoothModel,
@@ -462,11 +517,14 @@
   }
   $: summaryCurrentHash = (() => {
     if (!meeting || !meeting.summary) return "";
+    const useSpeakers = speakerExport && speakerAnalysis?.status === "ready" && speakerAnalysis.transcript_version === meeting.summary.source;
     const source =
       meeting.summary.source === "corrected"
-        ? (meeting.corrected?.text ?? "")
+        ? (meeting.corrected?.segments?.length && useSpeakers
+            ? labelledSummaryText(meeting.corrected.segments)
+            : (meeting.corrected?.text ?? ""))
         : meeting.summary.source === "smoothed" ? (meeting.smoothed?.text ?? "")
-        : meeting.segments.map((s) => s.text).join("\n");
+        : (useSpeakers ? labelledSummaryText(meeting.segments) : meeting.segments.map((s) => s.text.trim()).filter(Boolean).join("\n"));
     return summaryHash(source);
   })();
   $: summaryStale =
@@ -530,6 +588,10 @@
   }
   $: active = data.sessions.find((s) => s.id === data.active_id);
   $: recording = !!active && ["recording", "paused"].includes(active.status);
+  $: if (active && recording) {
+    if (data.system_device !== undefined) system = data.system_device ?? "";
+    if (data.microphone_device !== undefined) microphone = data.microphone_device ?? "";
+  }
   const multilingualModel = "nemotron-3.5-q8";
   const authorUrls = {
     zalo: "https://zalo.me/0962239818",
@@ -737,6 +799,12 @@
       if (request < snapshotApplied) return;
       snapshotApplied = request;
       data = snapshot;
+      for (const s of data.sessions) void maybeAutoSpeaker(s);
+      const activeCorrections = new Set((snapshot.corrections ?? []).map((c) => `correction-${c.id}`));
+      backgroundJobs = backgroundJobs.filter((j) => j.kind !== "correction" || activeCorrections.has(j.id));
+      for (const c of snapshot.corrections ?? []) {
+        upsertJob({ id: `correction-${c.id}`, kind: "correction", label: "Hiệu chỉnh bản chép", detail: `${c.stage} · ${Math.round(c.processed)}/${Math.round(c.total)}`, cancellable: false });
+      }
       if(previewRevision === translationPreviewRevision) meetingTranslationPreview=snapshot.translation_preview ?? null;
       if (!sourcesInitialized && data.devices.length) {
         system =
@@ -857,6 +925,10 @@
     audioLoadingFor = "";
     lastExport = "";
     selected = s.id;
+    speakerView = false;
+    speakerBusy = false;
+    speakerProgress = "";
+    speakerJobId = "";
     page = "meeting";
     meetingsOpen = false;
     renamingId = "";
@@ -944,6 +1016,20 @@
         },
       });
       selected = s.id;
+      try {
+        if (speakerPlanEnabled) {
+          localStorage.setItem(speakerPlanKey(s.id), JSON.stringify({
+            enabled: true,
+            model: speakerPlanModel,
+            num: speakerPlanNum || 0,
+            provider: speakerPlanProvider,
+            profileId: speakerPlanProfileId,
+          }));
+        } else {
+          localStorage.removeItem(speakerPlanKey(s.id));
+        }
+      } catch {}
+      speakerPlanEnabled = false;
       await refresh();
       if (transcribe && meetingCaptions) {
         try {
@@ -1080,24 +1166,31 @@
     }
   }
   async function createSummary() {
-    if (!meeting || !canSummarize || busy) return;
+    if (!meeting || !canSummarize || summaryBusy) return;
     summaryError="";
     const profile = profileOf(summaryProfileId, aiProfiles);
     if(!summaryReady || !profile){summaryError="Hãy chọn cấu hình AI và model tóm tắt.";return;}
     const id=meeting.id;
-    pendingActions++;
+    const jobId=`summary-${id}`;
+    const title=meeting.title;
+    summaryBusy=true;
+    summaryOpen=false;
+    upsertJob({id:jobId,kind:"summary",label:`Tóm tắt · ${title}`,detail:"Đang tạo bản tóm tắt…",cancellable:false});
     try {
       const updated = await invoke<Meeting>("summarize_transcript", {
         id, provider:profile.provider,model:summaryModel.trim(),baseUrl:profile.base_url,
         prompt:summaryPrompt,style:summaryStyle,source:summarySource,key:null,
         profileId:profile.id,fallback:summaryFallback??null,
+        withSpeakers: speakerView && speakerExport && speakerAnalysis?.status === "ready",
       });
       if(id===meeting?.id){
         data={...data,sessions:data.sessions.map(s=>s.id===id?updated:s)};
         transcriptTab="summary";summaryOpen=false;summaryPrompt="";notify(tr.notifySummaryCreated);
+      } else {
+        await refresh();
       }
-    } catch(e){summaryError=String(e);}
-    finally{pendingActions--;}
+    } catch(e){summaryError=String(e);if(id===meeting?.id)summaryOpen=true;notify(summaryError);}
+    finally{summaryBusy=false;removeJob(jobId);}
   }
   async function deleteSummary() {
     if (!meeting?.summary) return;
@@ -1162,6 +1255,244 @@
         await invoke("pause", { paused: active!.status !== "paused" });
       });
   }
+  function currentSpeakerVersion() {
+    return (transcriptView === "corrected" || !meeting?.segments.length) && meeting?.corrected ? "corrected" : "original";
+  }
+  function speakerTextLabel(segmentId: string) {
+    const badge = speakerAnalysis?.segments[segmentId];
+    if (!badge) return "";
+    let label = badge.state === "multiple" ? "Nhiều người" : badge.state === "unassigned" ? "Chưa xác định" : badge.label;
+    if (badge.source === "microphone") label = `Mic · ${label}`;
+    else if (badge.source === "soniox") label = `Cuộc họp · ${label}`;
+    return label;
+  }
+  function speakerBadgeStyle(badge: { state: string; participant_ids: string[] } | null) {
+    if (!badge || badge.state !== "single" || !badge.participant_ids[0]) return "";
+    const color = speakerColorFor(speakerAnalysis?.participants ?? [], badge.participant_ids[0]);
+    return `--speaker-color:${color.fg};--speaker-bg:${color.bg};--speaker-border:${color.border}`;
+  }
+  function labelledSummaryText(segments: Segment[]) {
+    return segments
+      .map((segment) => {
+        const text = segment.text.trim();
+        const label = speakerTextLabel(segment.id);
+        return label && text ? `[${label}] ${text}` : text;
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  function speakerPlanKey(id: string) {
+    return `innote.speaker.plan.${id}`;
+  }
+  function readSpeakerPlan(id: string) {
+    try {
+      const raw = localStorage.getItem(speakerPlanKey(id));
+      if (!raw) return null;
+      const plan = JSON.parse(raw);
+      return plan?.enabled ? plan : null;
+    } catch {
+      return null;
+    }
+  }
+  function upsertJob(job: BackgroundJob) {
+    backgroundJobs = [...backgroundJobs.filter((j) => j.id !== job.id), job];
+  }
+  function updateJob(id: string, detail: string) {
+    backgroundJobs = backgroundJobs.map((j) => (j.id === id ? { ...j, detail } : j));
+  }
+  function removeJob(id: string) {
+    backgroundJobs = backgroundJobs.filter((j) => j.id !== id);
+  }
+  async function maybeAutoSpeaker(s: Meeting) {
+    if (speakerAutoStarted.has(s.id) || !["completed", "recorded"].includes(s.status) || !s.segments.length) return;
+    if (speakerAutoStarting || backgroundJobs.some((j) => j.kind === "speaker")) return;
+    const plan = readSpeakerPlan(s.id);
+    if (!plan) return;
+    speakerAutoStarted.add(s.id);
+    speakerAutoStarting = true;
+    try {
+      const current = await invoke<SpeakerAnalysis>("get_speaker_analysis", { id: s.id, transcriptVersion: "original" });
+      if (current.status !== "none" && current.status !== "stale") return;
+      const job = await invoke<string>("start_speaker_analysis", {
+        id: s.id,
+        transcriptVersion: "original",
+        sources: ["system", "microphone"],
+        numSpeakers: plan.num || null,
+        model: plan.model || "sherpa-pyannote-3.0-campplus",
+        provider: plan.provider || "local",
+        profileId: plan.profileId || null,
+      });
+      upsertJob({ id: job, kind: "speaker", label: `Phân biệt người nói · ${s.title}`, detail: "Đang chuẩn bị…", cancellable: true });
+      try { localStorage.removeItem(speakerPlanKey(s.id)); } catch {}
+    } catch (e) {
+      if (selected === s.id) notify(`Không tự chạy phân biệt người nói: ${e}`);
+      /* Auto-run is best effort; keep the meeting usable. */
+    } finally {
+      speakerAutoStarting = false;
+    }
+  }
+  async function loadSpeakerAnalysis(id = meeting?.id, version = currentSpeakerVersion()) {
+    if (!desktop || !id) return;
+    const hasTranscript = !!meeting && (meeting.segments.length > 0 || !!meeting.corrected?.segments?.length);
+    if (!hasTranscript) {
+      speakerAnalysis = null;
+      return;
+    }
+    try {
+      speakerAnalysis = await invoke<SpeakerAnalysis>("get_speaker_analysis", { id, transcriptVersion: version });
+      if (speakerAnalysis.status === "ready") speakerView = true;
+      speakerError = "";
+    } catch (e) {
+      speakerAnalysis = null;
+      if (speakerOpen) speakerError = String(e);
+    }
+  }
+  async function openSpeakerSetup() {
+    if (speakerBusy) return;
+    speakerError = "";
+    try {
+      const engine = await invoke<{ available: boolean; error?: string }>("speaker_engine_status");
+      speakerEngineAvailable = engine.available;
+      speakerEngineError = engine.error ?? "";
+    } catch (e) {
+      speakerEngineAvailable = false;
+      speakerEngineError = String(e);
+    }
+    await loadSpeakerAnalysis();
+    speakerSetupOpen = true;
+  }
+  async function openSpeakerPanel() {
+    await loadSpeakerAnalysis();
+    speakerOpen = true;
+    speakerView = true;
+    speakerSetupOpen = false;
+    await tick();
+    document.querySelector(".speaker-panel")?.scrollIntoView({ block: "nearest" });
+  }
+  async function startSpeakerAnalysis() {
+    if (!meeting || speakerBusy) return;
+    const sources = ["system", "microphone"];
+    speakerBusy = true;
+    speakerError = "";
+    speakerProgress = "Đang chuẩn bị…";
+    speakerOpen = true;
+    speakerView = true;
+    await tick();
+    document.querySelector(".speaker-panel")?.scrollIntoView({ block: "nearest" });
+    try {
+      speakerJobId = await invoke<string>("start_speaker_analysis", {
+        id: meeting.id,
+        transcriptVersion: currentSpeakerVersion(),
+        sources,
+        numSpeakers: speakerNumSpeakers || null,
+        model: speakerModel,
+        provider: speakerProvider,
+        profileId: speakerProfileId || null,
+      });
+      upsertJob({ id: speakerJobId, kind: "speaker", label: `Phân biệt người nói · ${meeting.title}`, detail: "Đang chuẩn bị…", cancellable: true });
+      try {
+        localStorage.setItem("innote.speaker.model", speakerModel);
+        localStorage.setItem("innote.speaker.num_speakers", String(speakerNumSpeakers));
+        localStorage.setItem("innote.speaker.provider", speakerProvider);
+        localStorage.setItem("innote.speaker.profile", speakerProfileId);
+      } catch {}
+      speakerSetupOpen = false;
+    } catch (e) {
+      speakerBusy = false;
+      speakerProgress = "";
+      speakerError = String(e);
+    }
+  }
+  async function cancelSpeakerAnalysis() {
+    if (!speakerJobId) return;
+    try {
+      await invoke("cancel_speaker_analysis", { jobId: speakerJobId });
+    } catch (e) {
+      speakerError = String(e);
+    }
+  }
+  async function cancelBackgroundJob(id: string) {
+    try {
+      await invoke("cancel_speaker_analysis", { jobId: id });
+      updateJob(id, "Đang hủy…");
+    } catch (e) {
+      notify(String(e));
+    }
+  }
+  async function renameSpeaker(id: string, name: string) {
+    if (!meeting || !speakerAnalysis) return;
+    speakerBusy = true;
+    speakerError = "";
+    try {
+      speakerAnalysis = await invoke<SpeakerAnalysis>("rename_speaker", {
+        id: meeting.id, participantId: id, name, expectedRevision: speakerAnalysis.revision,
+      });
+    } catch (e) {
+      speakerError = String(e);
+    } finally {
+      speakerBusy = false;
+    }
+  }
+  async function mergeSpeaker(from: string, into: string) {
+    if (!meeting || !speakerAnalysis) return;
+    speakerBusy = true;
+    speakerError = "";
+    try {
+      speakerAnalysis = await invoke<SpeakerAnalysis>("merge_speakers", {
+        id: meeting.id, fromIds: [from], intoId: into, expectedRevision: speakerAnalysis.revision,
+      });
+    } catch (e) {
+      speakerError = String(e);
+    } finally {
+      speakerBusy = false;
+    }
+  }
+  async function reassignSpeakerSegment(segmentId: string, value: string) {
+    if (!meeting || !speakerAnalysis) return;
+    const [state, ids = ""] = value.split("|");
+    speakerBusy = true;
+    speakerError = "";
+    try {
+      speakerAnalysis = await invoke<SpeakerAnalysis>("reassign_speaker", {
+        id: meeting.id,
+        segmentId,
+        state,
+        participantIds: ids ? ids.split(",").filter(Boolean) : [],
+        expectedRevision: speakerAnalysis.revision,
+      });
+      speakerEditSegment = "";
+    } catch (e) {
+      speakerError = String(e);
+    } finally {
+      speakerBusy = false;
+    }
+  }
+  async function undoSpeaker() {
+    if (!meeting || !speakerAnalysis) return;
+    speakerBusy = true;
+    speakerError = "";
+    try {
+      speakerAnalysis = await invoke<SpeakerAnalysis>("undo_speaker_edit", {
+        id: meeting.id, expectedRevision: speakerAnalysis.revision,
+      });
+    } catch (e) {
+      speakerError = String(e);
+    } finally {
+      speakerBusy = false;
+    }
+  }
+  function previewSpeaker(participantId: string) {
+    const segments = currentSpeakerVersion() === "corrected" && meeting?.corrected
+      ? meeting.corrected.segments
+      : meeting?.segments ?? [];
+    const first = segments.find((segment) => speakerAnalysis?.segments[segment.id]?.participant_ids.includes(participantId));
+    if (first) seek(first.start, first.end);
+    else notify("Chưa có đoạn nghe được cho người này");
+  }
+  function speakerOptions(segment: Segment) {
+    const current = speakerAnalysis?.segments[segment.id];
+    return (speakerAnalysis?.participants ?? []).filter((p) => p.id !== current?.participant_ids[0]);
+  }
   async function toggleMicMute() {
     if (!active) return;
     await action(async () => {
@@ -1187,6 +1518,43 @@
     }
     clearTest();
     markPresetCustom("meeting");
+  }
+  async function refreshActiveDevices() {
+    if (!desktop || switchingAudio) return;
+    switchingAudio = true;
+    try {
+      await invoke("refresh_devices");
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      switchingAudio = false;
+    }
+  }
+  async function switchActiveDevice(
+    kind: "system" | "microphone",
+    device: string,
+    select?: HTMLSelectElement,
+  ) {
+    if (!desktop || !active || selected !== active.id || !recording || switchingAudio) return;
+    const previous = kind === "system" ? system : microphone;
+    switchingAudio = true;
+    try {
+      await invoke("switch_audio_device", { kind, device: device || null });
+      if (kind === "system") {
+        system = device;
+      } else {
+        microphone = device;
+        if (device) lastMicDevice = device;
+      }
+      await refresh();
+      notify(device ? "Đã chuyển thiết bị; cuộc họp vẫn tiếp tục." : "Đã tắt nguồn âm thanh này; cuộc họp vẫn tiếp tục.");
+    } catch (e) {
+      if (select) select.value = previous;
+      error = String(e);
+    } finally {
+      switchingAudio = false;
+    }
   }
   async function download(id = effectiveModel) {
     const m = data.models.find((m) => m.id === id);
@@ -1236,6 +1604,7 @@
         format,
         path: destination,
         version: exportingVersion,
+        withSpeakers: speakerView && speakerExport && speakerAnalysis?.status === "ready",
       });
       if (selected === id) {
         lastExport = path;
@@ -1563,6 +1932,15 @@
           if (e.payload.kind === "system") systemLevel = value;
           else micLevel = value;
         }),
+        listen<{ kind: string; device: string; message: string }>(
+          "audio-device-changed",
+          (e) => {
+            if (e.payload.kind === "system") system = e.payload.device;
+            else microphone = e.payload.device;
+            notify(e.payload.message);
+            void refresh();
+          },
+        ),
         listen<{ id: string; bytes: number; total: number }>(
           "model-progress",
           (e) => {
@@ -1574,6 +1952,50 @@
         }),
         listen<string>("storage-error", (e) => {
           error = e.payload;
+        }),
+        listen<{
+          job_id: string;
+          session_id: string;
+          phase: string;
+          source?: string;
+          completed_sources?: number;
+          total_sources?: number;
+          terminal_state?: string;
+          message?: string | null;
+        }>("speaker-analysis", (e) => {
+          const p = e.payload;
+          const current = p.session_id === meeting?.id;
+          if (p.phase === "source_started") {
+            const detail = `Đang phân tích ${p.source === "microphone" ? "micro" : p.source === "soniox" ? "Soniox" : "âm thanh cuộc họp"} (${(p.completed_sources ?? 0) + 1}/${p.total_sources ?? 2})…`;
+            updateJob(p.job_id, detail);
+            if (current) {
+              speakerBusy = true;
+              speakerProgress = detail;
+            }
+          } else if (p.phase === "source_done") {
+            const detail = `Đã xong ${p.completed_sources ?? 0}/${p.total_sources ?? 2} nguồn…`;
+            updateJob(p.job_id, detail);
+            if (current) speakerProgress = detail;
+          } else if (p.phase === "finished") {
+            removeJob(p.job_id);
+            if (current) {
+              speakerBusy = false;
+              speakerJobId = "";
+              speakerProgress = "";
+              if (p.terminal_state === "ready") {
+                void loadSpeakerAnalysis();
+                notify("Đã phân tích người nói");
+              } else if (p.terminal_state === "canceled") {
+                speakerError = "Đã hủy phân tích; nhãn cũ được giữ nguyên";
+              } else {
+                speakerError = p.message || "Không phân tích được người nói";
+                notify(speakerError);
+              }
+            } else {
+              if (p.terminal_state !== "ready" && p.terminal_state !== "canceled") notify(p.message || "Không phân tích được người nói");
+              void refresh();
+            }
+          }
         }),
       ]).then((fns) => {
         if (alive) unlisten = fns;
@@ -2308,6 +2730,7 @@
                 : tr.meetingSpace}
         </div>
         <div class="local-label">
+          {#if backgroundJobs.length}<button class="jobs-button" aria-label={`${backgroundJobs.length} tác vụ nền`} onclick={() => (jobsOpen = !jobsOpen)}><RefreshCw size={15} /> {backgroundJobs.length} tác vụ nền</button>{/if}
           <CheckCheck size={16} />
           {captionRunning && captionProvider && captionProvider !== "local"
             ? fill(tr.processingCloud, { provider: captionProvider === "groq" ? "Groq" : captionProvider === "soniox" ? "Soniox" : captionProvider === "openai" ? "OpenAI" : "Gemini" })
@@ -2322,6 +2745,21 @@
               : tr.processingLocal}
         </div>
       </header>
+      {#if jobsOpen}
+        <button type="button" class="jobs-backdrop" aria-label="Đóng tác vụ nền" onclick={() => (jobsOpen = false)}></button>
+        <aside class="jobs-panel" aria-label="Tác vụ nền">
+          <div class="jobs-panel-head"><strong>Tác vụ nền</strong><button class="text-button" onclick={() => (jobsOpen = false)}>Đóng</button></div>
+          {#if backgroundJobs.length}
+            {#each backgroundJobs as job (job.id)}
+              <div class="job-row">
+                <div><strong>{job.label}</strong><small>{job.detail}</small></div>
+                {#if job.cancellable}<button class="text-button" onclick={() => void cancelBackgroundJob(job.id)}>Hủy</button>{/if}
+              </div>
+            {/each}
+          {:else}<p class="quality-hint">Không có tác vụ nào đang chạy.</p>{/if}
+          <p class="quality-hint">Bạn có thể chuyển cuộc họp, xem bản gốc hoặc xuất file trong lúc chờ.</p>
+        </aside>
+      {/if}
       {#if !desktop}<div class="notice warning">
           <AlertCircle size={18} /><span>{tr.previewNotice}</span>
         </div>{/if}
@@ -2888,6 +3326,31 @@
           </div>
 
           {#if meeting}<MeetingStorage mode="meeting" id={meeting.id} {desktop}/>{:else}<MeetingStorage mode="hint" {desktop} openSettings={()=>page="settings"}/>{/if}
+          {#if active && selected === active.id && recording}<section class="live-audio-devices" aria-label="Thiết bị âm thanh đang ghi">
+            <div class="live-audio-head">
+              <strong>Thiết bị đang ghi</strong>
+              <button class="text-button" disabled={switchingAudio || !desktop} onclick={() => void refreshActiveDevices()}><RefreshCw size={14} /> Làm mới thiết bị</button>
+            </div>
+            <div class="live-audio-grid">
+              <label><span><Headphones size={15} /> Loa/tai nghe</span>
+                <select aria-label="Đổi loa/tai nghe đang ghi" value={system} disabled={switchingAudio || !desktop} onchange={(e) => void switchActiveDevice("system", e.currentTarget.value, e.currentTarget)}>
+                  <option value="">Tắt nguồn</option>
+                  {#if systemMissing}<option value={system} disabled>Thiết bị đã ngắt — chọn thiết bị khác</option>{/if}
+                  {#each data.devices.filter((d) => d.kind === "system") as d}<option value={d.id}>{d.name}{d.default ? " · Mặc định" : ""}</option>{/each}
+                </select>
+              </label>
+              <div class="level live-level" title={tr.systemLevel}><span style:width={`${systemLevel}%`}></span></div>
+              <label><span><Mic size={15} /> Micro</span>
+                <select aria-label="Đổi micro đang ghi" value={microphone} disabled={switchingAudio || !desktop} onchange={(e) => void switchActiveDevice("microphone", e.currentTarget.value, e.currentTarget)}>
+                  <option value="">Tắt micro</option>
+                  {#if microphoneMissing}<option value={microphone} disabled>Thiết bị đã ngắt — chọn thiết bị khác</option>{/if}
+                  {#each data.devices.filter((d) => d.kind === "microphone") as d}<option value={d.id}>{d.name}{d.default ? " · Mặc định" : ""}</option>{/each}
+                </select>
+              </label>
+              <div class="level live-level" title={tr.micLevel}><span style:width={`${micLevel}%`}></span></div>
+            </div>
+            <p class="quality-hint">Đổi thiết bị được ngay khi đang ghi; transcript và phần audio trước đó vẫn được giữ. Nếu thiết bị vừa rút, bấm Làm mới rồi chọn thiết bị mới.</p>
+          </section>{/if}
           {#if active && selected === active.id && recording}<div class="meeting-caption-controls">
             <CaptionWindowToggle />
             <label class="checkbox"><input type="checkbox" aria-label="Dịch sang khi bật phụ đề" checked={meetingTranslate} onchange={e=>{const input=e.currentTarget;void changeMeetingTranslation(input.checked).finally(()=>input.checked=meetingTranslate);}} disabled={busy || !active.speech || active.speech.local_fallback || active.provider === "groq"} /> Dịch sang</label>
@@ -2906,6 +3369,42 @@
           {#if !meeting}
             <div class="preset-launch"><label class="ai-field">Mẫu cấu hình cuộc họp<select aria-label="Mẫu cấu hình cuộc họp" value={pendingPresets.meeting} disabled={busy || !!data.active_id || captionRunning} onchange={e=>{pendingPresets={...pendingPresets,meeting:e.currentTarget.value};if(!e.currentTarget.value)selectedPresets={...selectedPresets,meeting:""};}}><option value="">Tùy chỉnh</option>{#each workflowPresets.filter(p=>p.mode==="meeting") as preset}<option value={preset.id}>{preset.name}</option>{/each}</select></label><button class="button primary" disabled={busy || !!data.active_id || captionRunning || !pendingPresets.meeting} onclick={()=>applyPendingPreset("meeting")}>Áp mẫu</button>{#if pendingPresets.meeting}<p aria-live="polite">{pendingPresets.meeting ? selectedPresets.meeting===pendingPresets.meeting ? "Đã áp dụng mẫu. Bạn có thể tùy chỉnh cho phiên này; mẫu gốc được giữ nguyên." : "Đã chọn mẫu. Bấm Áp mẫu để đưa thiết lập vào phiên này." : "Tùy chỉnh các mục bên dưới cho phiên này, hoặc chọn một mẫu đã lưu."}</p>{/if}<button class="text-button" disabled={!!data.active_id || captionRunning} onclick={()=>{taskMode="meeting";editPreset();page="presets";}}>Lưu thành mẫu</button></div>
             <div class="setup-panel" onchange={()=>markPresetCustom("meeting")}>
+              {#if transcribe}
+              <section class="meeting-speaker-plan">
+                <label class="checkbox"><input type="checkbox" bind:checked={speakerPlanEnabled} disabled={busy} /> Phân biệt người nói sau khi kết thúc cuộc họp</label>
+                {#if speakerPlanEnabled}
+                  <p class="quality-hint">Sau khi bấm Kết thúc, Innote sẽ xử lý thêm vài phút. Bản chép gốc và bản ghi âm không bị thay đổi. Mặc định dùng Sherpa trên máy; chỉ đổi sang Soniox async nếu bạn muốn xử lý trên cloud.</p>
+                  <div class="speaker-config-grid">
+                    <label>Xử lý bằng
+                      <select bind:value={speakerPlanProvider} disabled={busy} onchange={(e)=>{speakerPlanProvider=e.currentTarget.value;speakerPlanModel=speakerPlanProvider === "soniox" ? "stt-async-v6" : "sherpa-pyannote-3.0-campplus";}}>
+                        <option value="local">Trên máy · Sherpa ONNX</option>
+                        <option value="soniox" disabled={!data.soniox_configured && !sonioxProfiles(aiProfiles).length}>Soniox async · cloud</option>
+                      </select>
+                    </label>
+                    {#if speakerPlanProvider === "soniox"}
+                      <label>Cấu hình Soniox
+                        <select bind:value={speakerPlanProfileId} disabled={busy}>
+                          <option value="">Dùng API key Soniox mặc định</option>
+                          {#each sonioxProfiles(aiProfiles) as p}<option value={p.id}>{p.name} · …{p.key_tail}</option>{/each}
+                        </select>
+                      </label>
+                      <p class="quality-hint">Soniox async gửi file ghi âm lên cloud, tốn phí theo thời lượng và có thể mất vài phút. Chỉ chạy khi bạn đã tích chọn mục này.</p>
+                    {:else}
+                      <label>Model
+                        <select bind:value={speakerPlanModel} disabled={busy}>
+                          <option value="sherpa-pyannote-3.0-campplus">Sherpa ONNX · pyannote 3.0 · CAM++</option>
+                        </select>
+                      </label>
+                      <label>Số người nói
+                        <select bind:value={speakerPlanNum} disabled={busy}>
+                          <option value={0}>Tự động</option><option value={1}>1 người</option><option value={2}>2 người</option><option value={3}>3 người</option><option value={4}>4 người</option><option value={5}>5 người</option><option value={6}>6 người</option>
+                        </select>
+                      </label>
+                    {/if}
+                  </div>
+                {/if}
+              </section>
+              {/if}
               <div class="setup-heading">
                 <h2>{tr.sourceTitle}</h2>
                 <button
@@ -3297,6 +3796,21 @@
               {#if translationLanguages.length>1}<label class="transcript-language-view">Ngôn ngữ bản dịch<select aria-label="Ngôn ngữ bản dịch đã lưu" bind:value={translationLanguage}>{#each translationLanguages as lang}<option value={lang}>{lang}</option>{/each}</select></label>{/if}
             {/if}
             <div class="transcript-tools">
+              {#if speakerAnalysis?.status === "ready"}<button
+                  class="button secondary small"
+                  class:active={speakerView}
+                  aria-pressed={speakerView}
+                  title="Chuyển sang bản có nhãn và mở bảng chỉnh người nói"
+                  onclick={() => { if (speakerView) speakerView = false; else void openSpeakerPanel(); }}
+                  ><Users size={14} /> {speakerView ? "Bản gốc" : "Bản người nói"}</button
+                >{/if}
+              {#if meeting && (meeting.segments.length > 0 || meeting.corrected) && !["recording", "paused", "processing"].includes(meeting.status)}<button
+                  class="button secondary small"
+                  title={speakerAnalysis?.status === "ready" ? "Mở bảng đổi tên, gộp và chỉnh từng đoạn người nói" : "Phân biệt ai nói đoạn nào trong cuộc họp"}
+                  disabled={busy || speakerBusy}
+                  onclick={() => speakerAnalysis?.status === "ready" ? void openSpeakerPanel() : void openSpeakerSetup()}
+                  ><Users size={14} /> {speakerAnalysis?.status === "ready" ? "Chỉnh người nói" : "Phân biệt người nói"}</button
+                >{/if}
               {#if canCorrect}<button
                   class="button secondary small"
                   title={meeting?.corrected ? tr.smoothAgain : tr.smoothButton}
@@ -3313,7 +3827,7 @@
                   title={meeting?.summary
                     ? tr.summaryRegenerate
                     : tr.summaryButton}
-                  disabled={busy}
+                  disabled={busy || summaryBusy}
                   onclick={() => {
                     summaryProfileId="";summaryModel="";summaryFallback=undefined;summaryError="";summaryStyle="overview";summaryPrompt="";
                     summarySource=transcriptView === "corrected" || !meeting?.segments.length ? "corrected" : "original";
@@ -3369,7 +3883,7 @@
             </div>
           </div>
           {#if correctionRunning}<div class="notice" role="status"><span>{(correctionJob?.model??correctionModel).startsWith("moonshine-") || (correctionJob?.model??correctionModel)==="nemotron-3.5-q8" ? "Hiệu chỉnh bản thu trên máy" : "Hiệu chỉnh bản thu qua cloud"} · {correctionJob?.model??correctionModel} · {correctionJob?.stage??"Đang chuẩn bị"}</span><button class="text-button" onclick={()=>correctionOpen=true}>Xem tiến trình</button></div>{/if}
-          <div class="workspace">
+          <div class="workspace" class:with-speaker={speakerOpen}>
             {#if transcriptTab !== "summary" && transcriptView === "corrected" && meeting?.corrected}
               <div
                 class="smooth-view"
@@ -3402,7 +3916,33 @@
                 <div class="smooth-result">
                   {#if correctedSegments.length}
                     {#each correctedSegments as seg (seg.id)}
+                      {@const badge = speakerAnalysis?.segments[seg.id] ?? null}
                       <article class="segment smooth-segment">
+                        <div class="segment-body">
+                          {#if speakerView && badge}<button
+                              class="speaker-badge"
+                              class:multiple={badge.state === "multiple"}
+                              class:unassigned={badge.state === "unassigned"}
+                              class:manual={badge.manual}
+                              title={badge.manual ? "Nhãn đã sửa tay" : "Nhãn do máy gợi ý; bấm để sửa"}
+                              style={speakerBadgeStyle(badge)}
+                              onclick={() => (speakerEditSegment = speakerEditSegment === seg.id ? "" : seg.id)}
+                              >{badge.state === "multiple" ? "⚠ Nhiều người" : badge.state === "unassigned" ? "? Chưa xác định" : `${badge.source === "microphone" ? "Mic" : badge.source === "system" ? "Loa" : badge.source === "soniox" ? "Cuộc họp" : "Nguồn"} · ${badge.label}`}</button
+                            >{/if}
+                          {#if speakerView && badge && speakerEditSegment === seg.id}<div class="speaker-edit" role="group" aria-label="Sửa người nói cho đoạn">
+                              <select
+                                aria-label="Chọn người nói cho đoạn này"
+                                disabled={speakerBusy}
+                                onchange={(e) => { const value = e.currentTarget.value; if (value) void reassignSpeakerSegment(seg.id, value); }}
+                              >
+                                <option value="">Chọn người nói…</option>
+                                {#each speakerAnalysis?.participants ?? [] as p}<option value={`single|${p.id}`}>{p.name} ({p.source === "microphone" ? "Mic" : "Loa"})</option>{/each}
+                                <option value="unassigned">Chưa xác định</option>
+                              </select>
+                              <button class="text-button" onclick={() => (speakerEditSegment = "")}>Đóng</button>
+                            </div>{/if}
+                          <p>{seg.text}</p>
+                        </div>
                         <button
                           type="button"
                           class="timestamp"
@@ -3411,9 +3951,6 @@
                           onclick={() => seek(seg.start,seg.end)}
                           >{clock(seg.start)}</button
                         >
-                        <div class="segment-body">
-                          <p>{seg.text}</p>
-                        </div>
                       </article>
                     {/each}
                   {:else}
@@ -3525,14 +4062,32 @@
                   </article>
                 {:else}
                 {#each segments as s (s.id)}
+                  {@const badge = speakerAnalysis?.segments[s.id] ?? null}
                   <article class="segment">
-                    {#if translationView !== "translation"}<button
-                      class="timestamp"
-                      title="Nghe đoạn này"
-                      disabled={!audioUrl || s.end <= s.start}
-                      onclick={() => seek(s.start, s.end)}>{clock(s.start)}</button
-                    >{/if}
                     <div class="segment-body">
+                      {#if speakerView && badge}<button
+                          class="speaker-badge"
+                          class:multiple={badge.state === "multiple"}
+                          class:unassigned={badge.state === "unassigned"}
+                          class:manual={badge.manual}
+                          title={badge.manual ? "Nhãn đã sửa tay" : "Nhãn do máy gợi ý; bấm để sửa"}
+                          aria-expanded={speakerEditSegment === s.id}
+                          style={speakerBadgeStyle(badge)}
+                          onclick={() => (speakerEditSegment = speakerEditSegment === s.id ? "" : s.id)}
+                          >{badge.state === "multiple" ? "⚠ Nhiều người" : badge.state === "unassigned" ? "? Chưa xác định" : `${badge.source === "microphone" ? "Mic" : badge.source === "system" ? "Loa" : badge.source === "soniox" ? "Cuộc họp" : "Nguồn"} · ${badge.label}`}</button
+                        >{/if}
+                      {#if speakerView && badge && speakerEditSegment === s.id}<div class="speaker-edit" role="group" aria-label="Sửa người nói cho đoạn">
+                          <select
+                            aria-label="Chọn người nói cho đoạn này"
+                            disabled={speakerBusy}
+                            onchange={(e) => { const value = e.currentTarget.value; if (value) void reassignSpeakerSegment(s.id, value); }}
+                          >
+                            <option value="">Chọn người nói…</option>
+                            {#each speakerAnalysis?.participants ?? [] as p}<option value={`single|${p.id}`}>{p.name} ({p.source === "microphone" ? "Mic" : "Loa"})</option>{/each}
+                            <option value="unassigned">Chưa xác định</option>
+                          </select>
+                          <button class="text-button" onclick={() => (speakerEditSegment = "")}>Đóng</button>
+                        </div>{/if}
                       {#if editing === s.id}<textarea
                           aria-label={tr.editTranscriptAria}
                           bind:value={draft}></textarea>
@@ -3555,6 +4110,12 @@
                         </div>{:else}<p>{s.text}</p>
                         {#if s.edited}<small>{tr.edited}</small>{/if}{/if}
                     </div>
+                    {#if translationView !== "translation"}<button
+                      class="timestamp"
+                      title="Nghe đoạn này"
+                      disabled={!audioUrl || s.end <= s.start}
+                      onclick={() => seek(s.start, s.end)}>{clock(s.start)}</button
+                    >{/if}
                     {#if translationView !== "translation"}<button
                       class="icon-button edit-button"
                       title={tr.editSegment}
@@ -3584,8 +4145,8 @@
                 {/each}
                 {#if liveSegment && translationView !== "translation"}
                   <article class="segment pending" aria-label={tr.liveAria}>
-                    <button class="timestamp" title={tr.playFromHere} disabled={!audioUrl} onclick={() => seek(liveSegment.start)}>{clock(liveSegment.start)}</button>
                     <div class="segment-body"><p data-live-caption>{liveSegment.text}</p></div>
+                    <button class="timestamp" title={tr.playFromHere} disabled={!audioUrl} onclick={() => seek(liveSegment.start)}>{clock(liveSegment.start)}</button>
                   </article>
                 {/if}
                 {/if}
@@ -3612,6 +4173,21 @@
                       });
                   }}></textarea><small>{tr.notesAutosave}</small>
               </aside>{/if}
+{#if speakerOpen}<SpeakerPanel
+                analysis={speakerAnalysis}
+                busy={speakerBusy}
+                error={speakerError}
+                progress={speakerProgress}
+                exportSpeakers={speakerExport}
+                onToggleExportSpeakers={(value) => (speakerExport = value)}
+                onCancel={() => void cancelSpeakerAnalysis()}
+                onRename={renameSpeaker}
+                onMerge={mergeSpeaker}
+                onUndo={() => void undoSpeaker()}
+                onPreview={previewSpeaker}
+                onRetry={() => void openSpeakerSetup()}
+                onClose={() => (speakerOpen = false)}
+              />{/if}
           </div>
           {#if meeting}<div class="transcript-footer-tools">
               <label class="inline-search"
@@ -3682,6 +4258,70 @@
       {/if}
     </main>
   </div>
+{#if speakerSetupOpen}
+    <dialog
+      class="confirm-dialog speaker-setup"
+      bind:this={speakerSetupDialog}
+      aria-labelledby="speaker-setup-title"
+      onclose={() => (speakerSetupOpen = false)}
+      oncancel={() => (speakerSetupOpen = false)}
+      onkeydown={(e) => { if (e.key === "Escape") speakerSetupOpen = false; }}
+    >
+      <h3 id="speaker-setup-title"><Users size={18} /> Phân biệt người nói</h3>
+      <p>Gợi ý ai nói đoạn nào. Nhãn do máy tạo và có thể sửa; Innote không tự biết tên thật.</p>
+      <div class="speaker-config-grid">
+        <label>Xử lý bằng
+          <select bind:value={speakerProvider} disabled={speakerBusy} onchange={(e)=>{speakerProvider=e.currentTarget.value;speakerModel=speakerProvider === "soniox" ? "stt-async-v6" : "sherpa-pyannote-3.0-campplus";}}>
+            <option value="local">Trên máy · Sherpa ONNX</option>
+            <option value="soniox" disabled={!data.soniox_configured && !sonioxProfiles(aiProfiles).length}>Soniox async · cloud</option>
+          </select>
+        </label>
+        {#if speakerProvider === "soniox"}
+          <label>Cấu hình Soniox
+            <select bind:value={speakerProfileId} disabled={speakerBusy}>
+              <option value="">Dùng API key Soniox mặc định</option>
+              {#each sonioxProfiles(aiProfiles) as p}<option value={p.id}>{p.name} · …{p.key_tail}</option>{/each}
+            </select>
+          </label>
+          <p class="quality-hint">Gửi file ghi âm lên Soniox async để lấy lượt người nói. Tốn phí theo thời lượng; nhãn chỉ được gắn vào bản chép, không thay chữ.</p>
+        {:else}
+          <label>Model
+            <select bind:value={speakerModel} disabled={speakerBusy}>
+              <option value="sherpa-pyannote-3.0-campplus">Sherpa ONNX · pyannote 3.0</option>
+            </select>
+          </label>
+          <label>Số người nói
+            <select bind:value={speakerNumSpeakers} disabled={speakerBusy}>
+              <option value={0}>Tự động</option>
+              <option value={1}>1 người</option>
+              <option value={2}>2 người</option>
+              <option value={3}>3 người</option>
+              <option value={4}>4 người</option>
+              <option value={5}>5 người</option>
+              <option value={6}>6 người</option>
+            </select>
+          </label>
+        {/if}
+      </div>
+      <p class="quality-hint">{speakerProvider === "soniox" ? "Soniox async xử lý trên cloud và có thể mất vài phút. Bản chép gốc vẫn được giữ." : "Model gồm pyannote 3.0 + CAM++, chạy trên máy. Nên để Tự động nếu chưa chắc số người."}</p>
+      {#if speakerAnalysis?.status === "ready"}<p class="quality-hint">Chạy lại sẽ thay thế nhãn hiện có. Bản chép và audio không đổi.</p>{/if}
+      {#if speakerProvider === "local" && !speakerEngineAvailable}
+        <p class="test-error" role="alert">{speakerEngineError || "Chưa có bộ phân tích người nói trên máy."}</p>
+      {/if}
+      <div class="speaker-source-choice">
+        <span class="speaker-source-fixed"><Check size={15} /> {speakerProvider === "soniox" ? "Toàn bộ file ghi âm" : "Âm thanh cuộc họp (Loa)"}</span>
+        {#if speakerProvider === "local"}<span class="speaker-source-fixed"><Check size={15} /> Micro của bạn</span>{/if}
+      </div>
+      <p class="quality-hint">{speakerProvider === "soniox" ? "Soniox nhận diện lượt nói trên file ghi âm đã trộn; nhãn được gợi ý, không tự biết tên thật." : "Luôn phân tích cả hai nguồn có trong bản ghi. Bản ghi và bản chép không thay đổi; nguồn không có dữ liệu sẽ được bỏ qua."}</p>
+      <p class="quality-hint">{speakerProvider === "soniox" ? "Chạy sau khi cuộc họp đã kết thúc. Âm thanh được gửi lên Soniox." : "Chạy sau khi cuộc họp đã kết thúc. Âm thanh được xử lý trên máy; không gửi lên cloud."}</p>
+      {#if speakerError}<p class="test-error" role="alert">{speakerError}</p>{/if}
+      <div class="dialog-actions">
+        <button class="text-button" disabled={speakerBusy} onclick={() => (speakerSetupOpen = false)}>Hủy</button>
+        {#if speakerAnalysis?.status === "ready"}<button class="button secondary" disabled={speakerBusy} onclick={() => void openSpeakerPanel()}>Xem kết quả</button>{/if}
+        <button class="button primary" disabled={speakerBusy || (speakerProvider === "local" && !speakerEngineAvailable)} onclick={() => void startSpeakerAnalysis()}>{speakerBusy ? "Đang chuẩn bị…" : "Bắt đầu phân tích"}</button>
+      </div>
+    </dialog>
+  {/if}
   {#if toast}<div class="toast" role="status">
       <Check size={17} />{toast}
     </div>{/if}

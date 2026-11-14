@@ -2,6 +2,19 @@
 
 NeMo uses a GGUF conversion of the existing Silero VAD 5.1.2 MIT weights for speech-based endpointing. The stdlib converter in scripts/nemo-vad.py follows tensor names/layout and metadata documented by NVIDIA NeMo-Speech.cpp v0.2.0 conversion/vad.py (Apache-2.0); no additional proprietary weights are included. The sidecar is reproducible from the existing GGML asset and pinned by SHA-256 in scripts/nemo-resources.json. Both license texts are included in this bundle.
 
+## Speaker diarization (0.8.11)
+
+Local "who spoke when" uses the prebuilt sherpa-onnx 2.0.1 offline speaker
+diarization sidecar (Apache-2.0), pyannote segmentation 3.0 int8 (MIT; the
+upstream LICENSE is bundled) and the CAM++ speaker embedding model (Apache-2.0,
+3D-Speaker). The worker runs in its own `diarization/` directory with its own
+ONNX Runtime 1.17.x DLL, so the Moonshine ONNX Runtime 14.x used by live
+transcription is never loaded into the same process. Models are unmodified and
+are prepared by `scripts/prepare-diarization.ps1` with pinned SHA-256 values in
+`scripts/diarization-resources.json`. Innote stores only time intervals and
+cluster labels; it does not create or export voiceprints. Pyannote and CAM++
+license texts are included in the packaged `diarization/` directory.
+
 # Third-party notices
 
 Innote source code is licensed under PolyForm Noncommercial 1.0.0; see

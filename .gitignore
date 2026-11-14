@@ -22,6 +22,7 @@ release/
 
 src-tauri/resources/nemo-runtime/
 src-tauri/resources/models/
+src-tauri/resources/diarization/
 
 # Internal engineering notes (not part of the public repository)
 /AUDIT.md

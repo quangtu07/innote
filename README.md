@@ -14,6 +14,9 @@ Innote là ứng dụng desktop Windows ghi âm cuộc họp và micro, chép l�
 - Chọn model **Tóm tắt** ngay khi thực hiện; dùng Bản gốc hoặc Bản hiệu chỉnh. Mẫu chỉ cấu hình công việc realtime, không bắt buộc chọn AI hậu xử lý trước cuộc họp.
 - Chọn ngôn ngữ giao diện: Tiếng Việt, English, 한국어, 中文（简体）.
 - Nghe lại, sửa từng đoạn, ghi chú, tìm kiếm và xuất `.md`, `.txt`, `.srt`; tải thêm bản ghi âm `.mp3`.
+- Trong lúc đang ghi, có thể đổi **loa/tai nghe** hoặc **micro** ngay trên màn hình cuộc họp; nếu thiết bị bị rút, bấm Làm mới thiết bị và chọn thiết bị mới mà không kết thúc cuộc họp. Audio và transcript trước đó vẫn được giữ.
+- Sau cuộc họp, phân biệt **ai nói đoạn nào** trên máy (không gửi audio/voiceprint lên cloud); mỗi người nói có màu riêng, nhãn có thể đổi tên, gộp, gán lại và hoàn tác, kèm tên khi xuất. Có thể chọn Soniox async cho bước này nếu đã cấu hình key; khi đó file ghi âm được gửi lên Soniox và có thể tính phí.
+- Trước khi ghi, có thể tích chọn **Phân biệt người nói sau khi kết thúc**; Innote tự chạy sau khi xử lý xong, hiển thị trong **Tác vụ nền** và không khóa màn hình để bạn tiếp tục xem/xuất bản gốc. Kết quả có chế độ xem **Bản người nói** riêng, có thể chuyển về bản gốc trước khi tải.
 - Tự thông báo và cập nhật khi có bản mới qua GitHub Releases.
 - Dữ liệu lưu tại `%LOCALAPPDATA%\Innote`, không tự gửi lên cloud.
 - Soniox là lựa chọn tắt mặc định; nếu bật, audio phiên đó được gửi tới Soniox và có thể tính phí.

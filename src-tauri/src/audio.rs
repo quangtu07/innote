@@ -51,11 +51,33 @@ pub fn devices() -> Result<Vec<Device>> {
     }
     Ok(out)
 }
+/// Pick a safe replacement when the selected endpoint disappeared (for example
+/// headphones were unplugged). A still-enumerated endpoint is left alone so a
+/// transient stream error does not silently switch the user's device.
+pub fn fallback_device(kind: &str, current: &str) -> Option<Device> {
+    let available = devices().ok()?;
+    if available
+        .iter()
+        .any(|device| device.kind == kind && device.id == current)
+    {
+        return None;
+    }
+    available
+        .iter()
+        .find(|device| device.kind == kind && device.id != current && device.default)
+        .or_else(|| {
+            available
+                .iter()
+                .find(|device| device.kind == kind && device.id != current)
+        })
+        .cloned()
+}
 #[derive(Clone, Debug)]
 pub enum AudioEvent {
     Level(String, f32),
     Warning(String),
     Error(String, String),
+    DeviceChanged(String, String, String),
     Ready(String),
 }
 
@@ -132,6 +154,7 @@ pub fn capture_test(dir: &Path, seconds: f64, source: &str) -> Result<CaptureRep
                 flag,
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
                 sender,
             )
         }));
@@ -150,6 +173,7 @@ pub fn capture_test(dir: &Path, seconds: f64, source: &str) -> Result<CaptureRep
                 }
             }
             Ok(AudioEvent::Warning(w)) | Ok(AudioEvent::Error(_, w)) => warnings.push(w),
+            Ok(AudioEvent::DeviceChanged(_, _, _)) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
@@ -197,6 +221,7 @@ pub fn capture_resilient(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     muted: Arc<AtomicBool>,
+    reopen: Arc<AtomicBool>,
     tx: Sender<AudioEvent>,
 ) -> Result<()> {
     for attempt in 0..3 {
@@ -211,6 +236,7 @@ pub fn capture_resilient(
             stop.clone(),
             paused.clone(),
             muted.clone(),
+            reopen.clone(),
             tx.clone(),
         ) {
             Ok(()) => return Ok(()),
@@ -240,6 +266,7 @@ pub fn capture(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     muted: Arc<AtomicBool>,
+    reopen: Arc<AtomicBool>,
     tx: Sender<AudioEvent>,
 ) -> Result<()> {
     initialize_mta().ok()?;
@@ -260,6 +287,9 @@ pub fn capture(
     let mut last_level = std::time::Instant::now();
     let outcome = (|| -> Result<()> {
         while !stop.load(Ordering::Relaxed) {
+            if reopen.load(Ordering::Acquire) {
+                break;
+            }
             while let Some(frames) = input.get_next_packet_size()? {
                 if frames == 0 {
                     break;

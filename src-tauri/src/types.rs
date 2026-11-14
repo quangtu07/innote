@@ -122,6 +122,10 @@ pub struct Snapshot {
     pub models: Vec<ModelInfo>,
     pub data_dir: String,
     pub active_id: Option<String>,
+    #[serde(default)]
+    pub system_device: Option<String>,
+    #[serde(default)]
+    pub microphone_device: Option<String>,
     /// True when the current meeting captured the user's microphone at all.
     #[serde(default)]
     pub has_microphone: bool,

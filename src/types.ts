@@ -58,6 +58,14 @@ export interface Model {
   bytes: number;
   installed: boolean;
 }
+export interface SpeakerInterval { start:number; end:number; cluster:number; confidence?:number|null }
+export interface SpeakerParticipant { id:string; name:string; source:"system"|"microphone"|string; segments:number }
+export interface SegmentSpeaker { state:"single"|"multiple"|"unassigned"|string; participant_ids:string[]; source?:string|null; label:string; confidence?:number|null; manual?:boolean }
+export interface SpeakerSource { source:string; status:string; error?:string|null; intervals:SpeakerInterval[] }
+export interface SpeakerAnalysis {
+  session_id:string; transcript_version:string; transcript_hash:string; revision:number; status:"none"|"ready"|"empty"|"stale"|string;
+  sources:SpeakerSource[]; participants:SpeakerParticipant[]; segments:Record<string,SegmentSpeaker>; updated_at?:string|null;
+}
 export interface Snapshot {
   corrections?:{id:string;stage:string;processed:number;total:number;model:string;cancelling:boolean}[];
   translation_preview?: { id: string; language: string; text: string; committed: number } | null;
@@ -66,6 +74,8 @@ export interface Snapshot {
   models: Model[];
   data_dir: string;
   active_id: string | null;
+  system_device?: string | null;
+  microphone_device?: string | null;
   has_microphone?: boolean;
   mic_muted?: boolean;
   soniox_configured?: boolean;
